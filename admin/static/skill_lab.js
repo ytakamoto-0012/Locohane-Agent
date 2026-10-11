@@ -784,15 +784,67 @@ function openNewFileModal(state, skill) {
 
 /* サブエージェントのフォーム編集（frontmatter の name・description・tools・model と本文、run_script の許可） */
 
+/* frontmatter を項目ごとに分ける。値は1行の文字列・["a", "b"] のリスト・次の行からの「- 項目」の
+ * リスト・| や > の複数行の文字列を読む。フォームで扱わない項目は元の行のまま残し（raw）、保存時に書き戻す。
+ * 読めない形（入れ子等）があれば complex を立て、フォームではなくファイルの直接編集に回す。 */
 function splitFrontmatter(text) {
-  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(text);
-  if (!m) return { fm: {}, body: text };
+  const m = /^\s*---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)([\s\S]*)$/.exec(text);
+  if (!m) return { fm: {}, raw: {}, order: [], body: text, complex: false };
+  const lines = m[1].split(/\r?\n/);
   const fm = {};
-  for (const line of m[1].split(/\r?\n/)) {
-    const i = line.indexOf(":");
-    if (i > 0 && !/^\s/.test(line)) fm[line.slice(0, i).trim()] = line.slice(i + 1).trim().replace(/^["']|["']$/g, "");
+  const raw = {};
+  const order = [];
+  let complex = false;
+  const unquote = (v) => {
+    const t = v.trim();
+    if (/^"(.*)"$/.test(t)) {
+      try {
+        return JSON.parse(t);
+      } catch (e) {
+        return t.slice(1, -1);
+      }
+    }
+    if (/^'(.*)'$/.test(t)) return t.slice(1, -1).replace(/''/g, "'");
+    return t;
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim() || /^\s*#/.test(line)) continue;
+    const km = /^([A-Za-z_][\w-]*)\s*:(.*)$/.exec(line);
+    if (!km) {
+      complex = true;
+      continue;
+    }
+    const key = km[1];
+    const rest = [];
+    while (i + 1 < lines.length && (/^\s/.test(lines[i + 1]) || !lines[i + 1].trim())) rest.push(lines[++i]);
+    order.push(key);
+    raw[key] = [line, ...rest].join("\n");
+    const value = km[2].trim();
+    const items = rest.filter((l) => l.trim());
+    if (/^[|>][+-]?$/.test(value)) {
+      const indent = Math.min(...items.map((l) => /^\s*/.exec(l)[0].length));
+      fm[key] = items.map((l) => l.slice(indent)).join(value.startsWith(">") ? " " : "\n");
+    } else if (!value && items.length && items.every((l) => /^\s*-\s+/.test(l))) {
+      fm[key] = items.map((l) => unquote(l.replace(/^\s*-\s+/, "")));
+    } else if (/^\[.*\]$/.test(value)) {
+      fm[key] = value.slice(1, -1).split(",").map(unquote).filter(Boolean);
+    } else if (items.length) {
+      // フォームで扱わない項目の入れ子は raw のまま書き戻せるので、扱う項目のときだけ直接編集に回す。
+      if (["name", "description", "tools", "model"].includes(key)) complex = true;
+    } else {
+      fm[key] = unquote(value);
+    }
   }
-  return { fm, body: m[2] };
+  return { fm, raw, order, body: m[2], complex };
+}
+
+/* YAML の1行の文字列として安全な形（記号を含むときは二重引用符で囲む）。 */
+function yamlScalar(text) {
+  const t = String(text).replace(/\r?\n/g, " ").trim();
+  const plain = /^[\w　-鿿＀-￯]/.test(t) && !/[:#]\s|[:#]$|\s#|[{}[\],]/.test(t);
+  const looksTyped = /^(true|false|yes|no|on|off|null|~|[-+]?[\d.][\d._]*(e[-+]?\d+)?)$/i.test(t);
+  return plain && !looksTyped ? t : JSON.stringify(t);
 }
 
 async function openAgentEditor(state, agent) {
@@ -801,13 +853,20 @@ async function openAgentEditor(state, agent) {
     api(themePath(state.name, state.id, `/files?path=${encodeURIComponent(path)}`)),
     api(themePath(state.name, state.id, `/files?path=${encodeURIComponent("config_patch.json")}`)),
   ]);
-  const { fm, body } = splitFrontmatter(file.content);
+  const { fm, raw, order, body, complex } = splitFrontmatter(file.content);
+  if (complex || typeof fm.description === "object" || typeof fm.model === "object") {
+    // フォームで書き戻すと項目が欠けるおそれがある形は、ファイルをそのまま編集させる。
+    alert("このサブエージェントの定義はフォームで扱えない書き方を含むため、ファイルを直接編集します。");
+    return openFileEditor(state, path, true);
+  }
   const desc = el("textarea", { rows: 3 });
   desc.value = fm.description || "";
   const model = el("input", { type: "text", placeholder: "空欄なら本番と同じ（inherit）" });
   model.value = fm.model || "";
-  const current = new Set((fm.tools || "").split(",").map((t) => t.trim()).filter(Boolean));
-  const tools = state.sources.tools || [];
+  const hadTools = "tools" in fm;
+  const toolList = Array.isArray(fm.tools) ? fm.tools : String(fm.tools || "").split(",");
+  const current = new Set(toolList.map((t) => String(t).trim()).filter(Boolean));
+  const tools = [...new Set([...(state.sources.tools || []), ...current])];
   const toolBoxes = tools.map((t) => {
     const cb = el("input", { type: "checkbox", value: t });
     cb.checked = current.has(t);
@@ -830,7 +889,10 @@ async function openAgentEditor(state, agent) {
     `サブエージェント ${agent}`,
     [
       el("label", {}, ["説明（description。メインのアシスタントが委譲先を選ぶ手がかり）", desc]),
-      el("div", {}, [el("div", { class: "hint", text: "使えるツール（tools）" }), el("div", { class: "tool-grid" }, toolBoxes.length ? toolBoxes : [el("span", { class: "hint", text: state.sources.tools_error || "ツール一覧を取得できません" })])]),
+      el("div", {}, [
+        el("div", { class: "hint", text: "使えるツール（tools）。1つも選ばないと、既定のツール一式をすべて使えるサブエージェントになります。" }),
+        el("div", { class: "tool-grid" }, toolBoxes.length ? toolBoxes : [el("span", { class: "hint", text: state.sources.tools_error || "ツール一覧を取得できません" })]),
+      ]),
       el("label", {}, ["モデル（model、任意）", model]),
       el("label", {}, ["run_script で呼んでよいスキル（空欄なら制限なし）", allowInput]),
       el("p", { class: "hint", text: `スキル名の候補: ${[...new Set(skillNames)].join(", ")}` }),
@@ -840,13 +902,16 @@ async function openAgentEditor(state, agent) {
   );
   save.addEventListener("click", async () => {
     const selected = toolBoxes.map((l) => l.querySelector("input")).filter((cb) => cb.checked).map((cb) => cb.value);
-    const lines = ["---", `name: ${agent}`, `description: ${desc.value.replace(/\r?\n/g, " ").trim()}`];
+    if (!selected.length && hadTools && current.size && !confirm("ツールを1つも選んでいません。既定のツール一式をすべて使えるようになります。よろしいですか？")) return;
+    const lines = ["---", `name: ${agent}`, `description: ${yamlScalar(desc.value)}`];
     if (selected.length) lines.push(`tools: ${selected.join(", ")}`);
-    if (model.value.trim()) lines.push(`model: ${model.value.trim()}`);
+    if (model.value.trim()) lines.push(`model: ${yamlScalar(model.value)}`);
+    // フォームで扱わない項目は元の書き方のまま残す。
+    for (const key of order) if (!["name", "description", "tools", "model"].includes(key)) lines.push(raw[key]);
     lines.push("---", "");
     const content = lines.join("\n") + bodyArea.value.replace(/^\r?\n/, "");
     if (!(await saveThemeFile(state, path, content, m.errorBox))) return;
-    const entries = allowInput.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).map((s) => (s.includes("/") ? [agent, s.split("/", 2)] : [agent, s]));
+    const entries = allowInput.value.split(/\r?\n/).map((s) => s.trim()).filter(Boolean).map((s) => (s.includes("/") ? [agent, [s.slice(0, s.indexOf("/")).trim(), s.slice(s.indexOf("/") + 1).trim()]] : [agent, s]));
     patch.subagent = patch.subagent || {};
     const others = (patch.subagent.agent_type_run_script_allowlist || []).filter((e) => e[0] !== agent);
     patch.subagent.agent_type_run_script_allowlist = [...others, ...entries];
