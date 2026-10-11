@@ -59,6 +59,14 @@ label.checkbox { display: flex; align-items: center; gap: 6px; }
 label.checkbox input { width: auto; }
 
 .hint { color: var(--text-dim); font-size: 12px; }
+.req-mark { color: #f0a050; font-size: 12px; font-weight: normal; margin-left: 4px; }
+h4 .hint { margin-left: 4px; font-weight: normal; }
+.add-way { border-left: 3px solid var(--border, #333); padding: 4px 0 8px 12px; margin: 12px 0; }
+.add-way h5 { margin: 0 0 4px; font-size: 13px; }
+.seg-group { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.seg-btn.active { background: var(--accent, #4a86e8); border-color: var(--accent, #4a86e8); color: #fff; }
+.theme-intro { margin: 8px 0 16px; padding: 8px 12px; border-left: 3px solid var(--border); }
+.theme-section h5 { margin: 12px 0 4px; font-size: 13px; }
 .error { color: var(--danger); font-size: 13px; min-height: 1.2em; }
 
 /* Login */

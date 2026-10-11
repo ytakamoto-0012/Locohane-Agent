@@ -146,7 +146,7 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
         result.problems.append("ループ・トライアウトの実行中は昇格できません（停止するか、終わるのを待ってください）")
     assets = themes.list_assets(directory)
     if not assets["skills"] and not assets["agents"]:
-        result.problems.append("昇格する資産（スキル・サブエージェント）がありません")
+        result.problems.append("昇格する研究対象（スキル・サブエージェント）がありません")
 
     target_cfg = instance_config(instances_root, instance)
     tryout = data.get("tryout")
@@ -179,7 +179,7 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
                 now = (tree_sha256(origin) if asset_type == "skills" else file_sha256(origin)) if exists else None
                 if now is not None and now != src.get("origin_sha256"):
                     result.problems.append(
-                        f"複製元の正式資産 {name}（{origin}）が複製後に変更されています（上書きすると変更が失われるため、複製し直してください）"
+                        f"複製元の正式な {name}（{origin}）が複製後に変更されています（上書きすると変更が失われるため、複製し直してください）"
                     )
 
     # 配置先（対象インスタンス + 配布先）
@@ -209,7 +209,7 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
                     else:
                         result.problems.append(
                             f"{name} の専用の置き場に同じ名前の {asset} が既にあります（{target}）。"
-                            "その資産を複製して改善するテーマにするか、名前を変えてください"
+                            "それを複製して改善するテーマにするか、名前を変えてください"
                         )
                 elif _exists_in_shared(cfg, asset_type, asset):
                     placement["overrides_builtin"].append(f"{asset_type}/{asset}")

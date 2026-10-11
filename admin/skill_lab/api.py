@@ -275,6 +275,7 @@ def build_router(
             "fixtures": themes.list_fixtures(directory),
             "tryout_problems": themes.tryout_matches(directory, data.get("tryout")) if data.get("tryout") else None,
             "labs": _labs(),
+            "start_missing": themes.start_missing(directory),
         }
 
     @router.put("/api/instances/{name}/skill-lab/themes/{theme_id}")
@@ -475,11 +476,9 @@ def build_router(
         data = _guard_editable(directory)
         if body.mode not in ("loop", "tryout"):
             raise HTTPException(status_code=400, detail="mode は loop か tryout にしてください。")
-        if not themes.list_cases(directory):
-            raise HTTPException(status_code=400, detail="ケースが1件もありません。")
-        assets = themes.list_assets(directory)
-        if not assets["skills"] and not assets["agents"]:
-            raise HTTPException(status_code=400, detail="資産（スキル・サブエージェント）が1つもありません。")
+        missing = themes.start_missing(directory)
+        if missing:
+            raise HTTPException(status_code=400, detail="開始するには次を入れてください: " + "、".join(missing))
         labs = _labs()
         if not data.get("lab") and len(labs) != 1:
             raise HTTPException(status_code=400, detail="担当のスキル研究室を選んでください。")

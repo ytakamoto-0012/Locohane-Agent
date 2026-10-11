@@ -466,7 +466,7 @@ $C -X POST $BASE/api/instances/default/skill-lab/themes -H "$H" -H "$J" -d '{"ti
 $C $BASE/api/instances/default/skill-lab/themes/<テーマID>
 ```
 
-資産の追加（`mode`: `draft`＝ドラフトの取り込み（`origin` にドラフトのフォルダ）／`official`＝正式資産の複製／
+研究対象（スキル・サブエージェント）の追加（`mode`: `draft`＝ドラフトの取り込み（`origin` にドラフトのフォルダ）／`official`＝正式なものの複製／
 `new`＝`content` で新規／`ai`＝`request` を AI に下書きさせる）と削除:
 
 ```bash
@@ -487,7 +487,8 @@ $C -X POST $BASE/api/instances/default/skill-lab/themes/<テーマID>/fixtures -
 ```
 
 AI への依頼（`type`: `trial`＝1回試行（`params.case_id`）／`draft_spec`／`draft_cases`（`params.count`）／`draft_asset`）と、
-ループの開始（`mode`: `loop`＝スキル調整ループ／`tryout`＝トライアウトだけ）・停止・取りやめ:
+ループの開始（`mode`: `loop`＝スキル調整ループ／`tryout`＝トライアウトだけ）・停止・取りやめ。
+開始には `spec.md` の「目的」・研究対象1つ以上・ケース1件以上が要り、足りなければ 400（テーマ詳細の `start_missing` に足りないものの一覧が入る）:
 
 ```bash
 $C -X POST $BASE/api/instances/default/skill-lab/themes/<テーマID>/tasks -H "$H" -H "$J" -d '{"type": "trial", "params": {"case_id": "001_basic"}}'

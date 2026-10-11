@@ -550,3 +550,55 @@ def test_api_overview_shows_worker_workload(client, lab_env):
     labs = client.get("/api/skill-lab/overview").json()["labs"]
     assert labs[0]["name"] == "lab1" and labs[0]["queued"] == 1 and labs[0]["running"] == []
     assert labs[0]["endpoint"] == "http://lab-host:9999/v1"
+
+
+def test_spec_filled_requires_purpose(lab_env):
+    """仕様の「目的」が見出しだけ・「要確認:」だけなら書かれていないとみなす（開始の条件）。"""
+    directory = _theme(lab_env)
+    assert not themes.spec_filled(directory)  # 作成直後のひな形
+    spec = directory / themes.SPEC_FILENAME
+    spec.write_text("# t\n## 目的\n要確認:\n## 使う場面\n営業の確認\n", encoding="utf-8")
+    assert not themes.spec_filled(directory)  # 目的以外が書かれていても足りない
+    spec.write_text("# t\n## 目的\n見積書の計算ミスを見つける\n## 使う場面\n", encoding="utf-8")
+    assert themes.spec_filled(directory)
+    spec.write_text("# t\n見出しを使わずに書いた仕様\n", encoding="utf-8")
+    assert themes.spec_filled(directory)
+
+
+def test_api_start_requires_spec_targets_and_cases(client, lab_env):
+    theme = client.post("/api/instances/org_a/skill-lab/themes", json={"title": "A", "lab": "lab1"}).json()
+    base = f"/api/instances/org_a/skill-lab/themes/{theme['id']}"
+    assert len(client.get(base).json()["start_missing"]) == 3
+    res = client.post(f"{base}/start", json={"mode": "loop"})
+    assert res.status_code == 400 and "① 研究対象" in res.json()["detail"] and "② やってほしいこと" in res.json()["detail"]
+
+    directory = themes.theme_dir(themes.themes_root(_cfg(lab_env, "org_a").common_data_dir), theme["id"])
+    _add_skill(directory)
+    case = {"data": {"turns": ["見積書を確認して"], "judge": "誤りを指摘している"}}
+    assert client.put(f"{base}/cases/case_001", json=case).status_code == 200
+    assert client.get(base).json()["start_missing"] == ["② やってほしいことの「目的」"]
+    spec = "# A\n\n## 目的\n見積書の計算ミスを見つける\n"
+    assert client.put(f"{base}/files", json={"path": "spec.md", "content": spec}).status_code == 200
+    assert client.get(base).json()["start_missing"] == []
+    assert client.post(f"{base}/start", json={"mode": "loop"}).status_code == 200
+
+
+def test_drafting_uses_targets_and_spec(lab_env, monkeypatch):
+    """② の下書きは ① の研究対象（入手元・注文・作成中のものも）を、③ の下書きは ① と ② を AI に渡す。"""
+    from admin.skill_lab import drafting
+
+    directory = _theme(lab_env)
+    themes.add_asset_new(directory, "skills", "estimate-check", _skill_md("estimate-check", "見積書の計算ミスを探す"), actor="admin", description="見積書の計算ミスを一覧にする")
+    themes.add_task(directory, "draft_asset", {"asset_type": "agents", "name": "reviewer", "request": "見積書を総合的に見直す"}, actor="admin")
+    brief = drafting.targets_brief(directory)
+    assert "スキル estimate-check: このテーマで新しく作ったもの（注文: 見積書の計算ミスを一覧にする）" in brief
+    assert "サブエージェント reviewer: AI が作成中（注文: 見積書を総合的に見直す）" in brief
+
+    prompts = []
+    monkeypatch.setattr(drafting, "ask_text", lambda _c, _s, user: prompts.append(user) or "# テスト\n## 目的\n計算ミスを見つける\n")
+    drafting.draft_spec(None, directory, max_file_chars=10000)
+    assert "## 研究対象の一覧" in prompts[0] and "assets/skills/estimate-check/SKILL.md" in prompts[0]
+
+    monkeypatch.setattr(drafting, "ask_json", lambda _c, _s, user: prompts.append(user) or [{"id": "c1", "turns": ["見積書を確認して"], "judge": "誤りを指摘している"}])
+    assert drafting.draft_cases(None, directory, max_file_chars=10000, count=1) == ["c1"]
+    assert "## 研究対象の一覧" in prompts[1] and "計算ミスを見つける" in prompts[1]

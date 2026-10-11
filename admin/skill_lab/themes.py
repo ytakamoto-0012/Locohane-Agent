@@ -170,7 +170,7 @@ def create_theme(root: Path, *, instance: str, title: str, lab: str | None, acto
     for sub in (f"{ASSETS_DIRNAME}/skills", f"{ASSETS_DIRNAME}/agents", f"{CASES_DIRNAME}/{FIXTURES_DIRNAME}", RUNS_DIRNAME):
         (directory / sub).mkdir(parents=True)
     (directory / SPEC_FILENAME).write_text(
-        f"# {title}\n\n## 目的\n\n## 使う場面（利用者が実際に打つ指示の例）\n\n## 期待する出力\n\n## やってはいけないこと\n",
+        f"# {title}\n\n## 目的\n\n## 使う場面（どんな業務・状況で使うか。具体的な指示文はケースに書く）\n\n## 期待する出力\n\n## やってはいけないこと\n",
         encoding="utf-8",
     )
     (directory / CONFIG_PATCH_FILENAME).write_text("{}\n", encoding="utf-8")
@@ -415,7 +415,7 @@ def validate_python(content: str, rel: str) -> str | None:
 
 def asset_path(directory: Path, asset_type: str, name: str) -> Path:
     if asset_type not in ASSET_TYPES:
-        raise ThemeError(f"資産の種類が不正です: {asset_type!r}")
+        raise ThemeError(f"研究対象の種類が不正です: {asset_type!r}")
     if not NAME_RE.match(name or "") or len(name) > 64:
         raise ThemeError(f"名前は小文字英数字・ハイフン・アンダースコアのみにしてください: {name!r}")
     base = directory / ASSETS_DIRNAME / asset_type
@@ -433,7 +433,7 @@ def add_asset_copy(directory: Path, asset_type: str, name: str, origin: Path, *,
     """既存のスキル（フォルダ）・エージェント（.md）を複製して資産にする（baseline にも写す）。"""
     target = asset_path(directory, asset_type, name)
     if target.exists():
-        raise ThemeError(f"同じ名前の資産が既にあります: {name}")
+        raise ThemeError(f"同じ名前の研究対象が既にあります: {name}")
     baseline = directory / BASELINE_DIRNAME / ASSETS_DIRNAME / asset_type / target.name
     if asset_type == "skills":
         if not (origin / "SKILL.md").is_file():
@@ -463,7 +463,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
     """新しいスキル（SKILL.md だけ）・エージェント（.md）を作る。"""
     target = asset_path(directory, asset_type, name)
     if target.exists():
-        raise ThemeError(f"同じ名前の資産が既にあります: {name}")
+        raise ThemeError(f"同じ名前の研究対象が既にあります: {name}")
     if asset_type == "skills":
         error = validate_skill_md(content, name)
         if error:
@@ -488,7 +488,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
 def remove_asset(directory: Path, asset_type: str, name: str, *, actor: str) -> None:
     target = asset_path(directory, asset_type, name)
     if not target.exists():
-        raise ThemeError(f"資産が見つかりません: {name}")
+        raise ThemeError(f"研究対象が見つかりません: {name}")
     if target.is_dir():
         shutil.rmtree(target)
     else:
@@ -531,6 +531,55 @@ def list_cases(directory: Path) -> list[dict]:
             item["error"] = str(e)
         result.append(item)
     return result
+
+
+_SPEC_HEADING = re.compile(r"^#{1,6}\s*(.*?)\s*$")
+_SPEC_UNSURE = re.compile(r"^要確認\s*[:：]?")
+
+
+def _spec_section_lines(text: str, heading_prefix: str) -> list[str] | None:
+    """仕様の `## <見出し>` の本文の行（見出しが無ければ None）。"""
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        m = _SPEC_HEADING.match(line)
+        if line.startswith("##") and m and m.group(1).startswith(heading_prefix):
+            body = []
+            for rest in lines[i + 1 :]:
+                if rest.startswith("#"):
+                    break
+                body.append(rest)
+            return body
+    return None
+
+
+def spec_filled(directory: Path) -> bool:
+    """仕様の「目的」が書かれているか。
+
+    仕様は AI 修正と AI judge の正解の基準で、無いと AI がケースに通るだけの直し方をしても
+    気づけないため、開始の条件にする。見出しだけ・AI の下書きが「要確認:」しか書けなかった行は
+    書かれていないとみなす。「目的」の見出しが無い自由形式の仕様は、見出し以外の行があればよい。
+    """
+    try:
+        text = (directory / SPEC_FILENAME).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return False
+    body = _spec_section_lines(text, "目的")
+    if body is None:
+        body = [line for line in text.splitlines() if not line.startswith("#")]
+    return any(line.strip() and not _SPEC_UNSURE.match(line.strip()) for line in body)
+
+
+def start_missing(directory: Path) -> list[str]:
+    """ループ・トライアウトを始めるのに足りないもの（画面の ①②③ の言葉で）。"""
+    missing = []
+    assets = list_assets(directory)
+    if not assets["skills"] and not assets["agents"]:
+        missing.append("① 研究対象（スキルかサブエージェントを1つ以上）")
+    if not spec_filled(directory):
+        missing.append("② やってほしいことの「目的」")
+    if not list_cases(directory):
+        missing.append("③ 試験問題（1問以上）")
+    return missing
 
 
 def list_fixtures(directory: Path) -> list[str]:

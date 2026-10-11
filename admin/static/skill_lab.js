@@ -21,7 +21,7 @@ const LAB_STATUS_LABELS = {
 };
 const LAB_ACTIVE = ["queued", "running"];
 const LAB_CLOSED = ["promoted", "returned", "cancelled"];
-const TASK_LABELS = { trial: "1回試行", draft_spec: "仕様の下書き", draft_cases: "ケースの下書き", draft_asset: "資産の下書き" };
+const TASK_LABELS = { trial: "1回試行", draft_spec: "仕様の下書き", draft_cases: "ケースの下書き", draft_asset: "スキル・サブエージェントの下書き" };
 const TASK_STATUS_LABELS = { queued: "待ち", running: "実行中", done: "完了", error: "失敗" };
 
 let labSelectedInstance = null;
@@ -132,7 +132,7 @@ async function renderSkillLabPanel(container, name) {
     t.last ? `${t.last.phase === "tryout" ? "トライアウト" : "評価"} ${t.last.verdict === "pass" ? "合格" : "不合格"}（反復 ${t.iterations}）` : "-",
     fmtTime(t.updated_at),
   ]);
-  container.append(dataTable(["テーマ", "状態", "資産", "ケース", "最新の結果", "更新"], rows, "まだテーマはありません。"));
+  container.append(dataTable(["テーマ", "状態", "研究対象", "ケース", "最新の結果", "更新"], rows, "まだテーマはありません。"));
 
   container.append(el("h3", { text: "利用者のドラフト（このインスタンス）" }));
   const draftRows = src.drafts.map((d) => [
@@ -196,9 +196,7 @@ function openCreateThemeModal(container, name, labs) {
 /* ------------------------------------------------------------ テーマ詳細 */
 
 const THEME_SUBVIEWS = [
-  ["overview", "概要・仕様"],
-  ["assets", "資産"],
-  ["cases", "ケース"],
+  ["overview", "研究内容"],
   ["runs", "実行の記録"],
   ["review", "レビュー・昇格"],
   ["history", "履歴"],
@@ -236,7 +234,9 @@ async function renderThemeDetail(container, name, id, sub) {
     const busy = LAB_ACTIVE.includes(state.data.status) || (state.data.tasks || []).some((t) => t.status === "queued" || t.status === "running");
     if (!busy) return;
     await state.reload();
-    if (state.data.updated_at !== before && (state.sub === "runs" || state.sub === "overview")) renderThemeSub(state, body);
+    if (state.data.updated_at === before) return;
+    if (state.sub === "runs") renderThemeSub(state, body);
+    else if (state.sub === "overview") refreshThemeSections(state, true);
   });
 }
 
@@ -244,10 +244,12 @@ function renderThemeHeader(state, header, container) {
   const d = state.data;
   const editable = !LAB_ACTIVE.includes(d.status) && !LAB_CLOSED.includes(d.status);
   const buttons = [];
+  const missing = d.start_missing || [];
+  const startDisabled = missing.length ? "disabled" : null;
   if (editable) {
     buttons.push(
-      el("button", { class: "primary", text: "スキル調整ループを開始", onclick: () => startTheme(state, "loop") }),
-      el("button", { text: "トライアウトだけ実行", onclick: () => startTheme(state, "tryout") }),
+      el("button", { class: "primary", text: "スキル調整ループを開始", disabled: startDisabled, onclick: () => startTheme(state, "loop") }),
+      el("button", { text: "トライアウトだけ実行", disabled: startDisabled, onclick: () => startTheme(state, "tryout") }),
       el("button", {
         text: "取りやめ",
         onclick: async () => {
@@ -268,6 +270,7 @@ function renderThemeHeader(state, header, container) {
     notes.push(el("p", { class: "warn-box", text: `担当の スキル調整ワーカー ${lab.display_name} が起動していません。インスタンス一覧から起動してください。` }));
   }
   if (loop.message) notes.push(el("p", { class: "hint", text: loop.message }));
+  if (editable && missing.length) notes.push(el("p", { class: "warn-box", text: `開始に必要なもの（研究内容のページで入れてください）: ${missing.join("、")}` }));
   header.replaceChildren(
     el("div", { class: "theme-title-row" }, [el("h3", { text: d.title }), statusBadge(d.status)]),
     el("div", { class: "hint", text: `対象インスタンス: ${d.instance} ／ 担当の スキル調整ワーカー: ${lab ? lab.display_name : "未選択"} ／ 反復 ${(d.iterations || []).length} 回 ／ 作成 ${d.created_by || ""} ${fmtTime(d.created_at)}` }),
@@ -286,12 +289,74 @@ async function startTheme(state, mode) {
 
 function renderThemeSub(state, body) {
   body.innerHTML = "";
-  const fn = { overview: renderThemeOverview, assets: renderThemeAssets, cases: renderThemeCases, runs: renderThemeRuns, review: renderThemeReview, history: renderThemeHistory }[state.sub];
+  state.sections = null;
+  const fn = { overview: renderThemeOverview, runs: renderThemeRuns, review: renderThemeReview, history: renderThemeHistory }[state.sub];
   return fn(state, body);
+}
+
+/* 「研究内容」は節ごとに描き直す（1か所を変えるたびに全体を描き直すと、編集中の仕様が消えるため）。
+ * 各節の描画関数は、描き直してはいけない状態かを返す関数 dirty と、利用者の操作による描き直しでも
+ * 守るか（protect）を返してよい。 */
+const OVERVIEW_SECTIONS = [
+  ["targets", renderThemeTargets],
+  ["spec", renderThemeSpec],
+  ["cases", renderThemeCases],
+  ["patch", renderThemePatch],
+  ["tasks", renderThemeTasks],
+];
+
+async function renderThemeOverview(state, body) {
+  body.append(
+    el("p", {
+      class: "theme-intro",
+      text:
+        "上から順に埋めます。① で直す（作る）スキルを選び、② で採点の基準を書き、③ で試験問題を作ります。" +
+        "「スキル調整ループを開始」を押すと、AI が ③ の試験を解き、② に照らして不合格ならスキルを直して解き直します。",
+    }),
+  );
+  const sections = {};
+  for (const [key, fn] of OVERVIEW_SECTIONS) {
+    sections[key] = { box: el("section", { class: "theme-section" }), fn, guard: null };
+    body.append(sections[key].box);
+  }
+  state.sections = sections;
+  await Promise.all(Object.values(sections).map(async (s) => (s.guard = (await s.fn(state, s.box)) || null)));
+}
+
+async function refreshThemeSections(state, fromPolling) {
+  if (!state.sections) return renderThemeSub(state, $(".theme-body"));
+  for (const s of Object.values(state.sections)) {
+    if (s.guard && (fromPolling || s.guard.protect) && s.guard.dirty()) continue;
+    s.box.innerHTML = "";
+    s.guard = (await s.fn(state, s.box)) || null;
+  }
+}
+
+/* 節の入力欄が描いた時点から変わったか（自動更新で入力途中の欄を消さないため）。 */
+function inputsChanged(box) {
+  const values = () => JSON.stringify([...box.querySelectorAll("input, textarea, select")].map((x) => (x.type === "file" ? x.files.length : x.type === "checkbox" ? x.checked : x.value)));
+  const initial = values();
+  return { dirty: () => values() !== initial };
 }
 
 function themeEditable(state) {
   return !LAB_ACTIVE.includes(state.data.status) && !LAB_CLOSED.includes(state.data.status);
+}
+
+/* ② は ① を、③ は ① と ② をもとに AI が書くため、もとが足りなければ先に確かめる。 */
+async function draftWithCheck(state, type, params, errorBox) {
+  const d = state.data;
+  const hasTargets = d.summary.assets.skills.length + d.summary.assets.agents.length > 0
+    || (d.tasks || []).some((t) => t.type === "draft_asset" && (t.status === "queued" || t.status === "running"));
+  const specMissing = (d.start_missing || []).some((m) => m.startsWith("②"));
+  const lacks = [];
+  if (!hasTargets) lacks.push("① 研究対象がまだありません");
+  if (type === "draft_cases" && specMissing) lacks.push("② やってほしいことの「目的」が未記入です");
+  if (lacks.length) {
+    const what = type === "draft_spec" ? "② は補足欄の内容だけから書くことになります" : "③ は的外れな問題になりやすくなります";
+    if (!confirm(`${lacks.join("。")}。このまま頼むと、${what}。続けますか？`)) return undefined;
+  }
+  return addTask(state, type, params, errorBox);
 }
 
 async function addTask(state, type, params, errorBox) {
@@ -301,47 +366,147 @@ async function addTask(state, type, params, errorBox) {
   return res;
 }
 
-/* --- 概要・仕様 --- */
+/* --- 研究内容: 仕様・設定パッチ・AI への依頼 --- */
 
-async function renderThemeOverview(state, body) {
+/* 人が書いて保存するファイルの編集欄。未保存の変更がある間は描き直さない。 */
+async function themeFileEditor(state, box, path, rows, extraActions) {
   const editable = themeEditable(state);
-  const spec = await api(themePath(state.name, state.id, `/files?path=${encodeURIComponent("spec.md")}`));
-  const specArea = el("textarea", { rows: 16, class: "code-area" });
-  specArea.value = spec.content;
-  const specErr = el("div", { class: "error" });
-  const request = el("input", { type: "text", placeholder: "AI への補足（任意）" });
-  body.append(
-    el("h4", { text: "仕様（spec.md）" }),
-    el("p", { class: "hint", text: "目的・使う場面（利用者が打つ指示の例）・期待する出力・やってはいけないことを書きます。AI の修正・判定・ケースの下書きの基準になります（AI は仕様を変更しません）。" }),
-    specArea,
-    el("div", { class: "inline-form" }, [
-      el("button", { class: "primary", text: "保存", disabled: editable ? null : "disabled", onclick: () => saveThemeFile(state, "spec.md", specArea.value, specErr) }),
-      request,
-      el("button", { text: "AI に下書きを頼む", disabled: editable ? null : "disabled", onclick: () => addTask(state, "draft_spec", { request: request.value }, specErr) }),
-    ]),
-    specErr,
-  );
+  const file = await api(themePath(state.name, state.id, `/files?path=${encodeURIComponent(path)}`));
+  let saved = file.content;
+  const area = el("textarea", { rows, class: "code-area" });
+  area.value = saved;
+  const err = el("div", { class: "error" });
+  const save = el("button", {
+    class: "primary",
+    text: "保存",
+    disabled: editable ? null : "disabled",
+    onclick: async () => {
+      const value = area.value;
+      if (await saveThemeFile(state, path, value, err)) saved = value;
+    },
+  });
+  box.append(area, el("div", { class: "inline-form" }, [save, ...(extraActions ? extraActions(err) : [])]), err);
+  return { dirty: () => area.value !== saved, protect: true };
+}
 
-  const patch = await api(themePath(state.name, state.id, `/files?path=${encodeURIComponent("config_patch.json")}`));
-  const patchArea = el("textarea", { rows: 8, class: "code-area" });
-  patchArea.value = patch.content;
-  const patchErr = el("div", { class: "error" });
-  body.append(
-    el("h4", { text: "設定パッチ（config_patch.json）" }),
+/* ② やってほしいこと: spec.md を見出しごとの欄で編集する（必須は「目的」だけ）。
+ * 決まった見出し以外を含む spec.md は欄に振り分けられないため、そのまま編集する。 */
+const SPEC_FIELDS = [
+  ["目的", true, 3, "何のためのスキルか。例: 見積書の金額の計算ミスと記入漏れを、客先に出す前に見つける。"],
+  ["使う場面", false, 2, "どんな業務・状況で使うか。例: 営業担当が見積書を作り終えて、提出前に確認するとき。"],
+  ["期待する出力", false, 3, "例: 問題のある箇所を一覧にする。各行に場所・内容・正しい値。問題が無ければ「問題なし」とだけ答える。"],
+  ["やってはいけないこと", false, 2, "例: 値引きの提案など、頼まれていないことをしない。見積書のファイルを書き換えない。"],
+];
+
+function parseSpec(text) {
+  const values = Object.fromEntries(SPEC_FIELDS.map(([label]) => [label, []]));
+  let title = null;
+  let cur = null;
+  for (const line of text.split(/\r?\n/)) {
+    const h2 = /^##\s+(.*)$/.exec(line);
+    const h1 = /^#\s+(.*)$/.exec(line);
+    if (h2) {
+      const field = SPEC_FIELDS.find(([label]) => h2[1].trim().startsWith(label));
+      if (!field) return null;
+      cur = field[0];
+    } else if (h1 && title === null && cur === null) {
+      title = h1[1].trim();
+    } else if (/^#/.test(line)) {
+      return null;
+    } else if (cur) {
+      values[cur].push(line);
+    } else if (line.trim()) {
+      return null;
+    }
+  }
+  return { title, values: Object.fromEntries(Object.entries(values).map(([k, v]) => [k, v.join("\n").trim()])) };
+}
+
+function composeSpec(title, values) {
+  return `# ${title}\n\n` + SPEC_FIELDS.map(([label]) => `## ${label}\n${values[label] ? `${values[label]}\n` : ""}`).join("\n");
+}
+
+async function renderThemeSpec(state, box) {
+  const editable = themeEditable(state);
+  const file = await api(themePath(state.name, state.id, `/files?path=${encodeURIComponent("spec.md")}`));
+  const parsed = parseSpec(file.content);
+  const err = el("div", { class: "error" });
+  box.append(
+    el("h4", {}, [requiredLabel("② やってほしいこと（採点の基準）", true)]),
     el("p", {
       class: "hint",
       text:
-        "評価と昇格で対象インスタンスの設定へ足す項目です（足せるのは [subagent] agent_type_run_script_allowlist・[plan] plan_approval_exempt_scripts・[main_agent_tool_guard] allow_entries）。" +
-        "スキルのスクリプトの計画承認の免除は自動で足すため、ここに書く必要はありません。",
+        "このスキルに何をしてほしいかを、ふつうの文章で書きます。AI はここを正解として、スキルを直し、試験の合否を決めます（AI がここを書き換えることはありません）。" +
+        "③ の試験問題は例にすぎないため、ここが無いと、AI が試験にだけ通る直し方をしても見分けられません。",
     }),
-    patchArea,
-    el("button", { class: "primary", text: "保存", disabled: editable ? null : "disabled", onclick: () => saveThemeFile(state, "config_patch.json", patchArea.value, patchErr) }),
-    patchErr,
   );
+  let read;
+  if (parsed) {
+    const areas = SPEC_FIELDS.map(([label, required, rows, placeholder]) => {
+      const area = el("textarea", { rows, placeholder });
+      area.value = parsed.values[label];
+      box.append(el("label", {}, [requiredLabel(label, required), area]));
+      return [label, area];
+    });
+    const title = parsed.title || state.data.title;
+    read = () => composeSpec(title, Object.fromEntries(areas.map(([label, area]) => [label, area.value.trim()])));
+    if (areas.some(([, area]) => /^要確認/m.test(area.value))) {
+      box.append(el("p", { class: "warn-box", text: "「要確認:」の所は、AI が資料から読み取れなかった点です。書き直してください。" }));
+    }
+  } else {
+    const area = el("textarea", { rows: 14, class: "code-area" });
+    area.value = file.content;
+    box.append(el("p", { class: "hint", text: "決まった見出し（目的・使う場面・期待する出力・やってはいけないこと）以外を含むため、そのまま編集します。" }), area);
+    read = () => area.value;
+  }
+  let saved = read();
+  const request = el("input", { type: "text", placeholder: "AI への補足（任意）" });
+  box.append(
+    el("div", { class: "inline-form" }, [
+      el("button", {
+        class: "primary",
+        text: "保存",
+        disabled: editable ? null : "disabled",
+        onclick: async () => {
+          const value = read();
+          if (await saveThemeFile(state, "spec.md", value, err)) saved = value;
+        },
+      }),
+      request,
+      el("button", {
+        text: "AI に下書きを頼む",
+        title: "① の研究対象の中身を読んで、AI が ② を書きます（人が書いた所は残し、空いている所を埋めます）",
+        disabled: editable ? null : "disabled",
+        onclick: () => draftWithCheck(state, "draft_spec", { request: request.value }, err),
+      }),
+    ]),
+    err,
+  );
+  return { dirty: () => read() !== saved, protect: true };
+}
 
+async function renderThemePatch(state, box) {
+  box.append(
+    el("details", { class: "theme-advanced" }, [
+      el("summary", { text: "設定パッチ（config_patch.json、上級者向け）" }),
+      el("p", {
+        class: "hint",
+        text:
+          "評価と昇格で対象インスタンスの設定へ足す項目です（足せるのは [subagent] agent_type_run_script_allowlist・[plan] plan_approval_exempt_scripts・[main_agent_tool_guard] allow_entries）。" +
+          "スキルのスクリプトの計画承認の免除と、サブエージェントの「フォームで編集」で選んだ run_script の許可は自動で入るため、通常は書く必要はありません。",
+      }),
+    ]),
+  );
+  const guard = await themeFileEditor(state, box.firstChild, "config_patch.json", 8);
+  const details = box.firstChild;
+  if (details.querySelector("textarea").value.trim() && details.querySelector("textarea").value.trim() !== "{}") details.open = true;
+  return guard;
+}
+
+function renderThemeTasks(state, box) {
   const tasks = (state.data.tasks || []).slice().reverse();
-  body.append(el("h4", { text: "AI への依頼" }));
-  body.append(
+  box.append(el("h4", { text: "AI への依頼" }));
+  box.append(
     dataTable(
       ["依頼", "状態", "日時", "結果"],
       tasks.map((t) => [
@@ -379,21 +544,25 @@ function flashSaved(target) {
   }, 4000);
 }
 
-/* --- 資産 --- */
+/* --- 研究内容: 研究対象（スキル・サブエージェント） --- */
 
-function renderThemeAssets(state, body) {
+function renderThemeTargets(state, body) {
   const d = state.data;
   const editable = themeEditable(state);
   const files = d.files || [];
+  body.append(
+    el("h4", {}, [requiredLabel("① 研究対象（スキルかサブエージェントを1つ以上）", true)]),
+    el("p", { class: "hint", text: "下の ② のとおりに動くよう、AI に直させるスキル・サブエージェントです。" }),
+  );
   for (const [type, label] of [["skills", "スキル"], ["agents", "サブエージェント"]]) {
-    body.append(el("h4", { text: label }));
+    body.append(el("h5", { text: label }));
     const names = d.summary.assets[type];
     if (!names.length) body.append(el("p", { class: "hint", text: "まだありません。" }));
     for (const n of names) {
       const src = (d.sources[type] || {})[n] || {};
       const srcText =
         src.kind === "draft" ? `利用者のドラフト ${src.owner}/${n} から取り込み`
-        : src.kind === "official" ? `正式の${src.origin_label === "builtin" ? "同梱" : src.origin_label === "instance" ? "このインスタンス専用" : "共有"}資産を複製して改善`
+        : src.kind === "official" ? `正式の${src.origin_label === "builtin" ? "同梱" : src.origin_label === "instance" ? "このインスタンス専用" : "共有"}${type === "skills" ? "スキル" : "サブエージェント"}を複製して改善`
         : "新規";
       const prefix = type === "skills" ? `assets/skills/${n}/` : `assets/agents/${n}.md`;
       const fileLinks = files
@@ -408,10 +577,10 @@ function renderThemeAssets(state, body) {
           text: "外す",
           disabled: editable ? null : "disabled",
           onclick: async () => {
-            if (!confirm(`${n} をテーマから外します（テーマ内のファイルは削除されます。元のドラフト・正式資産は残ります）。`)) return;
+            if (!confirm(`${n} を研究対象から外します（テーマ内のファイルは削除されます。元のドラフト・正式のものは残ります）。`)) return;
             if (await labAction(() => api(themePath(state.name, state.id, `/assets/${type}/${encodeURIComponent(n)}`), { method: "DELETE" }))) {
               await state.reload();
-              renderThemeSub(state, body);
+              refreshThemeSections(state);
             }
           },
         }),
@@ -419,30 +588,34 @@ function renderThemeAssets(state, body) {
       body.append(el("div", { class: "asset-card" }, [el("div", { class: "asset-title" }, [el("strong", { text: n }), el("span", { class: "hint", text: ` ${srcText}` })]), el("ul", { class: "file-list" }, fileLinks), el("div", { class: "inline-form" }, actions)]));
     }
   }
-  if (editable) body.append(assetAddForms(state, body));
+  if (editable) body.append(targetAddForms(state));
+  return inputsChanged(body);
 }
 
-function assetAddForms(state, body) {
+function targetAddForms(state) {
   const src = state.sources;
   const err = el("div", { class: "error" });
   const reload = async () => {
     await state.reload();
-    renderThemeSub(state, body);
+    refreshThemeSections(state);
   };
   const post = (payload) => labAction(() => api(themePath(state.name, state.id, "/assets"), { method: "POST", body: payload }), err);
 
   const draftSel = el("select", {}, [el("option", { value: "", text: "（ドラフトを選ぶ）" }), ...src.drafts.map((d) => el("option", { value: d.path, text: `${d.owner}/${d.name}${d.imported_theme ? "（他のテーマに取り込み済み）" : ""}` }))]);
   const officialSel = el("select", {}, [
-    el("option", { value: "", text: "（正式資産を選ぶ）" }),
+    el("option", { value: "", text: "（正式なスキル・サブエージェントを選ぶ）" }),
     ...src.skills.map((s) => el("option", { value: `skills:${s.name}`, text: `スキル ${s.name}（${originText(s.origin)}）` })),
     ...src.agents.map((a) => el("option", { value: `agents:${a.name}`, text: `サブエージェント ${a.name}（${originText(a.origin)}）` })),
   ]);
-  const newType = el("select", {}, [el("option", { value: "skills", text: "スキル" }), el("option", { value: "agents", text: "サブエージェント" })]);
-  const newName = el("input", { type: "text", placeholder: "名前（小文字英数字・-・_）" });
-  const newRequest = el("textarea", { rows: 3, placeholder: "何をさせたいか（AI に下書きを頼む場合）" });
-  return el("div", { class: "asset-add" }, [
-    el("h4", { text: "資産を追加" }),
-    el("div", { class: "inline-form" }, [
+  const newType = el("select", {}, [
+    el("option", { value: "skills", text: "スキル（AI に覚えさせる仕事の手順）" }),
+    el("option", { value: "agents", text: "サブエージェント（仕事をまるごと任せる別の AI 担当者）" }),
+  ]);
+  const newName = el("input", { type: "text", placeholder: "例: estimate-check（小文字の英数字・-・_）" });
+  const newRequest = el("textarea", { rows: 3, placeholder: "例: 見積書の PDF を読んで、金額の計算ミスと記入漏れを一覧にする" });
+  const way = (hint, nodes) => el("div", { class: "add-way" }, [hint ? el("p", { class: "hint", text: hint }) : null, ...nodes]);
+  const panels = {
+    draft: way(src.drafts.length ? "利用者がチャットで作った試作のスキルを、ここで仕上げます。" : "このインスタンスには、利用者が作ったドラフトがありません。", src.drafts.length ? [el("div", { class: "inline-form" }, [
       draftSel,
       el("button", {
         text: "ドラフトを取り込む",
@@ -451,8 +624,8 @@ function assetAddForms(state, body) {
           if (d && (await post({ mode: "draft", asset_type: "skills", name: d.name, origin: d.path }))) reload();
         },
       }),
-    ]),
-    el("div", { class: "inline-form" }, [
+    ])] : []),
+    official: way("写しを作って直します。元のものは、昇格するまで変わりません。", [el("div", { class: "inline-form" }, [
       officialSel,
       el("button", {
         text: "複製して改善する",
@@ -463,30 +636,59 @@ function assetAddForms(state, body) {
         },
       }),
     ]),
-    el("p", { class: "hint", text: "正式資産を改善した場合も、昇格先はこのインスタンス専用の置き場です（同梱・共有の元ファイルと他のインスタンスは変わりません）。" }),
-    el("div", { class: "inline-form" }, [newType, newName]),
-    newRequest,
-    el("div", { class: "inline-form" }, [
+    el("p", { class: "hint", text: "昇格しても、置き換わるのはこのインスタンスの中だけです（ほかのインスタンスは変わりません）。" })]),
+    new: way(null, [
+      el("label", {}, ["種類", newType]),
+      el("label", {}, ["名前", newName]),
+      el("label", {}, ["どんな仕事をさせたいか（AI に作ってもらうときの注文。下の ② やってほしいこと が書いてあれば、それも一緒に AI へ渡します）", newRequest]),
+      el("div", { class: "inline-form" }, [
       el("button", {
         class: "primary",
-        text: "AI に下書きを頼む",
+        text: "AI に作ってもらう",
         onclick: async () => {
           const res = await post({ mode: "ai", asset_type: newType.value, name: newName.value.trim(), request: newRequest.value });
           if (res) {
-            alert("依頼しました。スキル調整ワーカーが下書きを作ると、資産に追加されます（「概要・仕様」の「AI への依頼」で状態を確認できます）。");
+            alert("依頼しました。スキル調整ワーカーが下書きを作ると、研究対象に追加されます（このページ下の「AI への依頼」で状態を確認できます）。");
             reload();
           }
         },
       }),
       el("button", {
-        text: "空のひな形で作る",
+        text: "白紙のひな形から自分で書く",
         onclick: async () => {
           const n = newName.value.trim();
           const content = newType.value === "skills" ? skillTemplate(n, newRequest.value) : agentTemplate(n, newRequest.value);
           if (await post({ mode: "new", asset_type: newType.value, name: n, content })) reload();
         },
       }),
+      ]),
+      el("p", { class: "hint", text: "自分で書く場合、注文の文章はスキルの説明文（いつ使うかを AI が判断する手がかり）として入ります。" }),
     ]),
+  };
+
+  // 方法を先に選ばせ、選んだ方法の欄だけを出す（選択は描き直しても state.addWay に残す）。
+  const ways = [
+    ["draft", `A. 利用者のドラフトを取り込む（${src.drafts.length}件）`],
+    ["official", "B. 今あるスキル・サブエージェントを改善する"],
+    ["new", "C. 新しく作る"],
+  ];
+  const placeholder = el("p", { class: "hint", text: "追加の方法を上のボタンから選んでください。" });
+  const buttons = ways.map(([key, label]) => el("button", { type: "button", class: "seg-btn", text: label, onclick: () => select(key) }));
+  const select = (key) => {
+    state.addWay = key;
+    ways.forEach(([k], i) => {
+      buttons[i].classList.toggle("active", k === key);
+      panels[k].hidden = k !== key;
+    });
+    placeholder.hidden = Boolean(key);
+    err.textContent = "";
+  };
+  select(state.addWay || null);
+  return el("details", { class: "asset-add", open: state.data.summary.assets.skills.length + state.data.summary.assets.agents.length ? null : "open" }, [
+    el("summary", { text: "研究対象を追加" }),
+    el("div", { class: "seg-group" }, buttons),
+    placeholder,
+    ...ways.map(([k]) => panels[k]),
     err,
   ]);
 }
@@ -531,7 +733,7 @@ async function deleteThemeFile(state, path, m) {
   if (await labAction(() => api(themePath(state.name, state.id, `/files?path=${encodeURIComponent(path)}`), { method: "DELETE" }), m.errorBox)) {
     m.close();
     await state.reload();
-    renderThemeSub(state, $(".theme-body"));
+    refreshThemeSections(state);
   }
 }
 
@@ -544,7 +746,7 @@ function openNewFileModal(state, skill) {
     const path = `assets/skills/${skill}/${rel.value.trim().replace(/^\/+/, "")}`;
     if (await saveThemeFile(state, path, area.value, m.errorBox)) {
       m.close();
-      renderThemeSub(state, $(".theme-body"));
+      refreshThemeSections(state);
     }
   });
 }
@@ -643,8 +845,14 @@ function renderThemeCases(state, body) {
     ]),
   ]);
   body.append(
-    el("p", { class: "hint", text: "1件のケースで、複数のスキル・サブエージェントを使う流れを確かめられます。ユーザーの指示（turns）は実際の利用者が打つような短い日本語にします。" }),
-    dataTable(["ID", "ユーザーの指示", "入力ファイル", "judge", ""], rows, "まだケースはありません。"),
+    el("h4", {}, [requiredLabel("③ 試験問題（1問以上）", true)]),
+    el("p", { class: "hint", text: "② のとおりに動くかを、実際に試すための問題です。1問ごとに「利用者が打ちそうな指示」と「どうなっていれば合格か」を決めます。" }),
+    el("p", { class: "hint", text: "例: 指示「この見積書をチェックして」（見積書のファイルを添えて）→ 合格の条件「回答に計算ミスの箇所が書かれている」" }),
+    el("p", {
+      class: "hint",
+      text: "「スキル調整ループを開始」を押すと、AI がこの試験を何度も解き、不合格ならスキルを直して解き直します。問題そのものが②と食い違っているときだけ、AI が問題の方を直すことがあります（直した内容は昇格前に確認できます）。",
+    }),
+    dataTable(["ID", "利用者の指示", "使うファイル", "AI が判断する点", ""], rows, "まだ試験問題はありません。"),
     err,
   );
   if (editable) {
@@ -652,17 +860,22 @@ function renderThemeCases(state, body) {
     const request = el("input", { type: "text", placeholder: "AI への補足（任意）" });
     body.append(
       el("div", { class: "inline-form" }, [
-        el("button", { class: "primary", text: "＋ 新しいケース", onclick: () => openCaseEditor(state, null) }),
-        el("span", { class: "hint", text: "AI に" }),
+        el("button", { class: "primary", text: "＋ 試験問題を自分で作る", onclick: () => openCaseEditor(state, null) }),
+      ]),
+      el("div", { class: "inline-form" }, [
+        el("span", { class: "hint", text: "または ① と ② をもとに AI に" }),
         count,
-        el("span", { class: "hint", text: "件" }),
+        el("span", { class: "hint", text: "問 作ってもらう" }),
         request,
-        el("button", { text: "下書きを頼む", onclick: () => addTask(state, "draft_cases", { count: Number(count.value) || 3, request: request.value }, err) }),
+        el("button", { text: "AI に作ってもらう", onclick: () => draftWithCheck(state, "draft_cases", { count: Number(count.value) || 3, request: request.value }, err) }),
       ]),
     );
   }
 
-  body.append(el("h4", { text: "入力ファイル（ケースの work_dir）" }));
+  body.append(
+    el("h5", {}, [requiredLabel("試験問題で使うファイル", false)]),
+    el("p", { class: "hint", text: "見積書など、試験問題で AI に渡すファイルをここに置きます。試験のたびに写しを使うので、元のファイルは変わりません。" }),
+  );
   const fixtureFiles = d.files.filter((f) => f.path.startsWith("cases/fixtures/"));
   body.append(
     dataTable(
@@ -694,27 +907,40 @@ function renderThemeCases(state, body) {
               if (!ok) return;
             }
             await state.reload();
-            renderThemeSub(state, body);
+            refreshThemeSections(state);
           },
         }),
       ]),
-      el("p", { class: "hint", text: "ケースの「入力ファイル」で fixtures/<フォルダ名> を選ぶと、評価のたびにそのフォルダの写しが作業フォルダになります（元のファイルは書き換わりません）。" }),
+      el("p", { class: "hint", text: "フォルダ名を付けてアップロードし、試験問題の「使うファイル」でそのフォルダ（fixtures/<フォルダ名>）を選びます。" }),
     );
   }
+  return inputsChanged(body);
 }
 
 function linesOf(text) {
   return text.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
 }
 
+function requiredLabel(text, required) {
+  return el("span", {}, [text, el("span", { class: required ? "req-mark" : "hint", text: required ? "【必須】" : "（任意）" })]);
+}
+
+/* 名前を空欄で保存したときの問題の名前（case_001 から空いている番号）。 */
+function nextCaseId(state) {
+  const used = new Set(state.data.cases_list.map((c) => c.id));
+  let n = 1;
+  while (used.has(`case_${String(n).padStart(3, "0")}`)) n++;
+  return `case_${String(n).padStart(3, "0")}`;
+}
+
 async function openCaseEditor(state, caseId) {
   const editable = themeEditable(state);
   const data = caseId ? (await api(themePath(state.name, state.id, `/cases/${encodeURIComponent(caseId)}`))).data : { turns: [""], auto_approve: true };
   const expect = data.expect || {};
-  const id = el("input", { type: "text", placeholder: "例: 001_basic（英数字・-・_）" });
+  const id = el("input", { type: "text", placeholder: `空欄なら ${nextCaseId(state)}（英数字・-・_）` });
   id.value = caseId || "";
   if (caseId) id.disabled = true;
-  const turns = el("textarea", { rows: 4, placeholder: "ユーザーの指示。複数ターンは --- だけの行で区切る" });
+  const turns = el("textarea", { rows: 4, placeholder: "例: この見積書をチェックして" });
   turns.value = (data.turns || []).join("\n---\n");
   const assets = state.data.summary.assets;
   const readArgs = ((expect.tool_call_args_contains || {}).read_skill || {}).skill_name;
@@ -731,7 +957,7 @@ async function openCaseEditor(state, caseId) {
   contains.value = (expect.response_contains || []).join("\n");
   const notContains = el("textarea", { rows: 2, placeholder: "1行に1つ（最終回答にどれも含まれなければ合格）" });
   notContains.value = (expect.response_not_contains || []).join("\n");
-  const judgeArea = el("textarea", { rows: 3, placeholder: "客観的に決まらない点の判定観点（AI judge が判定し、昇格時に人が確認します）" });
+  const judgeArea = el("textarea", { rows: 3, placeholder: "AI の判断は、昇格する前に人が確認します" });
   judgeArea.value = data.judge || "";
   const workDir = el("select", {}, [el("option", { value: "", text: "（使わない）" }), ...state.data.fixtures.map((f) => el("option", { value: f, text: f }))]);
   workDir.value = data.work_dir || "";
@@ -745,32 +971,37 @@ async function openCaseEditor(state, caseId) {
   notes.value = data.notes || "";
   const save = el("button", { class: "primary", text: "保存", disabled: editable ? null : "disabled" });
   const m = labModal(
-    caseId ? `ケース ${caseId}` : "新しいケース",
+    caseId ? `試験問題 ${caseId}` : "新しい試験問題",
     [
-      el("label", {}, ["ID", id]),
-      el("label", {}, ["ユーザーの指示（turns）", turns]),
+      el("p", { class: "hint", text: "必須なのは「利用者の指示」と、合格の決め方（言葉の条件か AI が判断する点の、どちらか1つ）だけです。ほかは空欄のままで構いません。" }),
+      el("label", {}, [requiredLabel("利用者の指示（AI に打つ文章）", true), turns]),
       el("fieldset", { class: "case-expect" }, [
-        el("legend", { text: "機械的な判定（expect）" }),
-        el("label", {}, ["このスキルを読んだか（read_skill）", skillSel]),
-        el("label", {}, ["このサブエージェントへ委譲したか（dispatch_agent）", agentSel]),
-        el("label", {}, ["呼ばれるべきツール", called]),
-        el("label", {}, ["呼ばれてはいけないツール", notCalled]),
-        el("label", {}, ["回答に含まれるべき文字列", contains]),
-        el("label", {}, ["回答に含まれてはいけない文字列", notContains]),
+        el("legend", { text: "合格の決め方【必須】下のどれか1つ以上を入れる" }),
+        el("label", {}, ["回答に必ず入っているべき言葉（1行に1つ）", contains]),
+        el("label", {}, ["回答に入っていてはいけない言葉（1行に1つ）", notContains]),
+        el("label", {}, ["AI が判断する点（言葉では決めにくい良し悪し。例: 指摘が具体的で、根拠の箇所が示されている）", judgeArea]),
       ]),
-      el("label", {}, ["判定観点（judge）", judgeArea]),
-      el("label", {}, ["入力ファイル（work_dir）", workDir]),
-      el("label", {}, ["質問への答え（scripted_text_answers）", answers]),
-      el("label", { class: "checkbox" }, [autoApprove, " スクリプト実行・計画の承認ダイアログを自動で承認する"]),
-      el("label", {}, ["タイムアウト（秒）", timeout]),
-      el("label", {}, ["メモ", notes]),
+      el("label", {}, [requiredLabel("使うファイル（「試験問題で使うファイル」でアップロードしたフォルダ）", false), workDir]),
+      el("details", { class: "theme-advanced" }, [
+        el("summary", { text: "細かい設定（任意。通常はそのままで構いません）" }),
+        el("label", {}, ["問題の名前（英数字・-・_）", id]),
+        el("label", {}, ["このスキルを使ったか", skillSel]),
+        el("label", {}, ["このサブエージェントに任せたか", agentSel]),
+        el("label", {}, ["使うべき機能（ツール名）", called]),
+        el("label", {}, ["使ってはいけない機能（ツール名）", notCalled]),
+        el("p", { class: "hint", text: "やり取りが続く場合: 利用者の指示に --- だけの行をはさむと、そこから先が2回目以降の発言になります。" }),
+        el("label", {}, ["AI が利用者に質問してきたときの返事（1行に1つ、順に使う）", answers]),
+        el("label", { class: "checkbox" }, [autoApprove, " 「実行してよいか」の確認には自動で「はい」と答える"]),
+        el("label", {}, ["制限時間（秒）", timeout]),
+        el("label", {}, ["メモ", notes]),
+      ]),
     ],
     { wide: true, actions: [save] },
   );
   save.addEventListener("click", async () => {
-    const cid = id.value.trim();
-    if (!cid) {
-      m.errorBox.textContent = "ID を入力してください。";
+    const cid = id.value.trim() || nextCaseId(state);
+    if (!turns.value.trim()) {
+      m.errorBox.textContent = "「利用者の指示」を入力してください。";
       return;
     }
     const exp = {};
@@ -789,6 +1020,10 @@ async function openCaseEditor(state, caseId) {
     if (csv(notCalled.value).length) exp.tool_not_called = csv(notCalled.value);
     if (linesOf(contains.value).length) exp.response_contains = linesOf(contains.value);
     if (linesOf(notContains.value).length) exp.response_not_contains = linesOf(notContains.value);
+    if (!Object.keys(exp).length && !judgeArea.value.trim()) {
+      m.errorBox.textContent = "合格の決め方を1つ以上入れてください（回答に入っているべき言葉、または AI が判断する点など）。";
+      return;
+    }
     const payload = {
       turns: turns.value.split(/\r?\n---\r?\n/).map((s) => s.trim()).filter(Boolean),
       expect: Object.keys(exp).length ? exp : null,
@@ -803,7 +1038,7 @@ async function openCaseEditor(state, caseId) {
     if (ok) {
       m.close();
       await state.reload();
-      renderThemeSub(state, $(".theme-body"));
+      refreshThemeSections(state);
     }
   });
 }
@@ -886,7 +1121,7 @@ async function renderThemeReview(state, body) {
     );
     if (d.tryout_problems && d.tryout_problems.length) body.append(el("p", { class: "error", text: d.tryout_problems.join(" / ") }));
   } else {
-    body.append(el("p", { class: "hint", text: "有効なトライアウトの結果がありません（資産・ケース・設定パッチを変えると0回からやり直しになります）。" }));
+    body.append(el("p", { class: "hint", text: "有効なトライアウトの結果がありません（研究対象・ケース・設定パッチを変えると0回からやり直しになります）。" }));
   }
 
   const diff = await api(themePath(state.name, state.id, "/diff"));

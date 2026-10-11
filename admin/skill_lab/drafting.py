@@ -18,16 +18,30 @@ from .fixer import theme_context
 from .llm import LabLLMError, ask_json, ask_text
 
 _SPEC_SYSTEM = """あなたは業務用AIアシスタントのスキル・サブエージェントの仕様をまとめる担当です。
-与えられた資料から、次の見出しを持つ Markdown の仕様書だけを出力してください（前置き不要）:
+仕様は、研究対象（このテーマで直す・作るスキルとサブエージェント）が何をすべきかを決める採点の基準になります。
+研究対象の一覧と中身（assets/ 配下の SKILL.md・scripts/・references/・サブエージェント定義）を読み、
+それが何のためのもので、どんな業務・状況で使い、何を出力し、何をしてはいけないかを読み取って書きます。
+- 研究対象が今使っている正式なものの複製なら、今の動きを基本にし、直したい点は依頼者の補足に従う。
+- AI が作成中の研究対象は、その注文を作りたいものとして扱う。
+- 依頼者の補足があれば、研究対象から読み取った内容より優先する。
+- 今の仕様に人が書いた内容（「要確認:」以外）があれば、それを残し、空いている所だけを埋める。
+次の見出しを持つ Markdown の仕様書だけを出力してください（前置き不要）:
 # <テーマ名>
 ## 目的
-## 使う場面（利用者が実際に打つ指示の例）
+## 使う場面
 ## 期待する出力
 ## やってはいけないこと
+「使う場面」にはどんな業務・状況で使うかを書き、利用者が打つ具体的な指示文は書かない（それは試験問題に書く）。
 推測で機能を足さず、資料から読み取れることだけを書く。分からない点は「要確認:」として書く。"""
 
 _CASES_SYSTEM = """あなたは業務用AIアシスタントの動作検証ケースを作る担当です。
 アシスタントはローカルの小さめのLLMで動くため、ユーザーの指示（turns）は実際の利用者が打つような短く端的な日本語にします。
+ケースは、研究対象（assets/ 配下のスキル・サブエージェント）が仕様（spec.md）のとおりに動くかを確かめる試験問題です。
+- 仕様の「目的」「使う場面」から、利用者が実際に打ちそうな指示を作る。
+- 仕様の「期待する出力」を合格の条件（response_contains・judge）に、「やってはいけないこと」を不合格の条件
+  （response_not_contains・tool_not_called・judge）にする。
+- スキル名・サブエージェント名・ツール名は、研究対象の中身に実際にあるものだけを使う。
+- 仕様に無い機能や「要確認:」の点は確かめない。既にあるケースと同じことを確かめるケースは作らない。
 1件のケースで複数のスキル・サブエージェントを使う流れを確かめてもかまいません。
 次の形式の JSON 配列だけを出力してください:
 [{"id": "001_basic", "turns": ["ユーザーの指示"],
@@ -58,9 +72,38 @@ _AGENT_SYSTEM = """あなたは業務用AIアシスタントのサブエージ�
 allowlist は run_script で呼ばせたいスキルがある場合だけ書く（無ければ空配列）。"""
 
 
+def targets_brief(directory: Path) -> str:
+    """研究対象の一覧（入手元と、新規に作ったものの注文。AI が作成中のものも含む）。"""
+    data = themes.read(directory)
+    sources = data.get("sources") or {}
+    labels = {"skills": "スキル", "agents": "サブエージェント"}
+    lines = []
+    for asset_type, names in themes.list_assets(directory).items():
+        for name in names:
+            src = (sources.get(asset_type) or {}).get(name) or {}
+            kind = src.get("kind")
+            if kind == "draft":
+                origin = f"利用者 {src.get('owner') or ''} が試作したドラフトを仕上げるもの"
+            elif kind == "official":
+                origin = "今使っている正式なものを改善するために複製したもの"
+            else:
+                origin = "このテーマで新しく作ったもの"
+            if src.get("description"):
+                origin += f"（注文: {src['description']}）"
+            lines.append(f"- {labels[asset_type]} {name}: {origin}")
+    for task in data.get("tasks") or []:
+        params = task.get("params") or {}
+        if task.get("type") == "draft_asset" and task.get("status") in ("queued", "running"):
+            lines.append(f"- {labels.get(params.get('asset_type'), '')} {params.get('name')}: AI が作成中（注文: {params.get('request', '')}）")
+    return "\n".join(lines) or "（まだありません）"
+
+
 def draft_spec(config: Config, directory: Path, *, max_file_chars: int, request: str = "") -> None:
     data = themes.read(directory)
-    user = f"テーマ名: {data.get('title')}\n\n{theme_context(directory, max_file_chars, include_cases=False)}"
+    user = (
+        f"テーマ名: {data.get('title')}\n\n## 研究対象の一覧\n{targets_brief(directory)}\n\n"
+        f"{theme_context(directory, max_file_chars, include_cases=False)}"
+    )
     if request:
         user += f"\n\n## 依頼者からの補足\n{request}"
     text = ask_text(config, _SPEC_SYSTEM, user)
@@ -70,6 +113,7 @@ def draft_spec(config: Config, directory: Path, *, max_file_chars: int, request:
 def draft_cases(config: Config, directory: Path, *, max_file_chars: int, count: int, request: str = "") -> list[str]:
     existing = {c["id"] for c in themes.list_cases(directory)}
     user = (
+        f"## 研究対象の一覧\n{targets_brief(directory)}\n\n"
         f"{theme_context(directory, max_file_chars)}\n\n"
         f"既にあるケース ID: {sorted(existing) or 'なし'}\n"
         f"使える入力ファイルのフォルダ（work_dir に書ける値）: {themes.list_fixtures(directory) or 'なし'}\n"
