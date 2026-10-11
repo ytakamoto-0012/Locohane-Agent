@@ -133,11 +133,38 @@ def _locked(directory: Path) -> Iterator[None]:
 def _atomic_write_text(path: Path, text: str) -> None:
     tmp = path.with_name(f".{path.name}.{secrets.token_hex(4)}.tmp")
     tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    # Windows では、他のプロセス（画面のポーリング等）が読んでいる間は置き換えられない
+    # （PermissionError）。読み取りは一瞬なので、少し待って置き換え直す。
+    for attempt in range(40):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if attempt == 39:
+                tmp.unlink(missing_ok=True)
+                raise
+            time.sleep(0.05)
 
 
 def read(directory: Path) -> dict:
-    return json.loads((directory / THEME_FILENAME).read_text(encoding="utf-8"))
+    path = directory / THEME_FILENAME
+    # 置き換えの瞬間に読むと、Windows では開けない（PermissionError）ことがあるため少し待って読み直す。
+    for attempt in range(40):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (PermissionError, json.JSONDecodeError):
+            if attempt == 39:
+                raise
+            time.sleep(0.05)
+    raise AssertionError("unreachable")
+
+
+def read_or_none(directory: Path) -> dict | None:
+    """一覧用の read()。theme.json が壊れていれば None（1件のために一覧全体を止めない）。"""
+    try:
+        return read(directory)
+    except (OSError, ValueError):
+        return None
 
 
 def update(directory: Path, fn: Callable[[dict], object]) -> dict:

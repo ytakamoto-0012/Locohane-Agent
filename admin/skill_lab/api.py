@@ -125,7 +125,10 @@ def build_router(
             directory = themes.theme_dir(_root(name), theme_id)
         except themes.ThemeError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
-        if themes.read(directory).get("instance") != name:
+        data = themes.read_or_none(directory)
+        if data is None:
+            raise HTTPException(status_code=409, detail=f"テーマ {theme_id} の theme.json を読めません（手で直すか、テーマのフォルダを退避してください）。")
+        if data.get("instance") != name:
             raise HTTPException(status_code=404, detail="このインスタンスのテーマではありません。")
         return directory
 
@@ -149,7 +152,9 @@ def build_router(
             except Exception:  # noqa: BLE001 - 設定エラーのインスタンスは数えない
                 continue
             for d in themes.list_theme_dirs(root):
-                data = themes.read(d)
+                data = themes.read_or_none(d)
+                if data is None:
+                    continue
                 row = by_name.get(data.get("lab") or sole)
                 if row is None:
                     continue
@@ -180,7 +185,22 @@ def build_router(
         return data
 
     def _summary(directory: Path) -> dict:
-        data = themes.read(directory)
+        data = themes.read_or_none(directory)
+        if data is None:
+            # 壊れた theme.json は一覧に理由付きで出す（開くと 500 にならず、ほかのテーマは見られる）
+            return {
+                "id": directory.name,
+                "title": f"（{directory.name}: theme.json を読めません）",
+                "status": themes.STATUS_ERROR,
+                "lab": None,
+                "updated_at": None,
+                "created_by": None,
+                "assets": {"skills": [], "agents": []},
+                "cases": 0,
+                "iterations": 0,
+                "last": None,
+                "message": None,
+            }
         iterations = data.get("iterations") or []
         last = iterations[-1] if iterations else None
         return {
@@ -210,7 +230,7 @@ def build_router(
             try:
                 cfg = promotion.instance_config(instances_root, n)
                 dirs = themes.list_theme_dirs(themes.themes_root(cfg.common_data_dir))
-                statuses = [themes.read(d).get("status") for d in dirs]
+                statuses = [(themes.read_or_none(d) or {}).get("status") for d in dirs]
                 row["counts"] = {
                     "drafts": len(sources.list_drafts(cfg)),
                     "open": sum(1 for s in statuses if s not in themes.CLOSED_STATUSES),

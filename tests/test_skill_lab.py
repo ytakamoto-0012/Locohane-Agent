@@ -602,3 +602,30 @@ def test_drafting_uses_targets_and_spec(lab_env, monkeypatch):
     monkeypatch.setattr(drafting, "ask_json", lambda _c, _s, user: prompts.append(user) or [{"id": "c1", "turns": ["見積書を確認して"], "judge": "誤りを指摘している"}])
     assert drafting.draft_cases(None, directory, max_file_chars=10000, count=1) == ["c1"]
     assert "## 研究対象の一覧" in prompts[1] and "計算ミスを見つける" in prompts[1]
+
+
+# --- あらゆる状況への備え（抜け道・競合・異常終了） -------------------------------------------
+
+
+def _lab_worker(lab_env):
+    from admin.skill_lab import worker as worker_mod
+
+    w = worker_mod.Worker.__new__(worker_mod.Worker)
+    w.lab, w.instances_root, w.shutdown, w.base_env = "lab1", lab_env["root"], False, dict(os.environ)
+    w.config = type(
+        "C",
+        (),
+        {"skill_lab_max_iterations": 3, "skill_lab_max_hours": 6, "skill_lab_transcript_excerpt_chars": 100, "skill_lab_fixer_max_file_chars": 100},
+    )()
+    return w
+
+
+def test_worker_evaluates_theme_only_with_its_own_instance(lab_env):
+    """データフォルダを共有するインスタンスがあっても、テーマは作ったインスタンスの構成でだけ処理する。"""
+    shared = _cfg(lab_env, "org_a").common_data_dir
+    path = lab_env["root"] / "org_b" / "config_overrides.json"
+    path.write_text(json.dumps({"paths": {"common_data_dir": str(shared)}}), encoding="utf-8")
+    directory = _theme(lab_env)
+    assert _lab_worker(lab_env)._theme_dirs() == [("org_a", directory)]
+
+

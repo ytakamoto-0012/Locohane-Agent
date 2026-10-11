@@ -46,6 +46,7 @@ class Worker:
         self.instances_root = resolve_instances_root()
         self.config = load_config()  # apply_instance(lab) 済み = 研究室の設定
         self.shutdown = False
+        self._broken: set[Path] = set()  # theme.json を読めなかったテーマ（警告は1回だけ出す）
 
     # --- テーマの列挙 -----------------------------------------------------
 
@@ -63,6 +64,7 @@ class Worker:
         from src.config import load_config
 
         result = []
+        seen: set[Path] = set()
         for name in inst.list_instance_names(self.instances_root):
             try:
                 meta = inst.read_instance(self.instances_root, name)
@@ -73,6 +75,18 @@ class Worker:
                 logger.warning("インスタンス %s の設定を読めないため飛ばします: %s", name, e)
                 continue
             for directory in themes.list_theme_dirs(themes.themes_root(cfg.common_data_dir)):
+                # データフォルダを共有しているインスタンスがあっても、テーマは作ったインスタンス
+                # （theme.json の instance）の構成でだけ評価する。
+                try:
+                    owner = themes.read(directory).get("instance")
+                except Exception as e:  # noqa: BLE001 - 壊れたテーマ1件で他のテーマを止めない
+                    if directory not in self._broken:
+                        self._broken.add(directory)
+                        logger.warning("テーマ %s の theme.json を読めないため飛ばします: %s", directory, e)
+                    continue
+                if directory.resolve() in seen or owner != name:
+                    continue
+                seen.add(directory.resolve())
                 result.append((name, directory))
         return result
 

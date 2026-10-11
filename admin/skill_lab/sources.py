@@ -125,7 +125,9 @@ def imported_drafts(root: Path) -> dict[str, str]:
     """このインスタンスのテーマに取り込まれているドラフト（パス → テーマ ID、終わったテーマは除く）。"""
     result = {}
     for directory in themes.list_theme_dirs(root):
-        data = themes.read(directory)
+        data = themes.read_or_none(directory)
+        if data is None:
+            continue
         if data.get("status") in themes.CLOSED_STATUSES:
             continue
         for src in (data.get("sources") or {}).get("skills", {}).values():
