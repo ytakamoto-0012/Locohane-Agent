@@ -388,6 +388,8 @@ def build_router(
     ):
         directory = _theme(name, theme_id)
         _guard_editable(directory)
+        if asset_type == "skills":
+            promotion.unmark_imported(directory, only=asset_name)
         try:
             themes.remove_asset(directory, asset_type, asset_name, actor=user)
         except themes.ThemeError as exc:

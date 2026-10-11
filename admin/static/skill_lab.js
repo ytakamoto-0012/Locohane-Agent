@@ -1257,6 +1257,8 @@ async function renderThemeReview(state, body) {
   body.append(promoBox);
   await renderPromoteBox(state, promoBox, []);
 
+  // 差し戻し先は取り込み元のドラフトなので、ドラフトから始めたテーマにだけ出す（それ以外は「取りやめ」で終える）。
+  if (!Object.values(d.sources.skills || {}).some((s) => s.kind === "draft")) return;
   body.append(el("h4", { text: "差し戻し・不採用" }));
   const reason = el("textarea", { rows: 3, placeholder: "作成者が直せるよう、具体的に（作成者の skill-creator に表示されます）" });
   const applyFixes = el("input", { type: "checkbox" });

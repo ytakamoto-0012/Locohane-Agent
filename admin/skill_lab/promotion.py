@@ -25,12 +25,13 @@ from __future__ import annotations
 
 import json
 import shutil
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
 from evals.config_patch import PATCHABLE_KEYS, load_patch, merged_value
-from evals.skill_tree import DRAFT_META_FILENAME, FIXTURES_DIRNAME, file_sha256, tree_sha256
+from evals.skill_tree import DRAFT_META_FILENAME, FIXTURES_DIRNAME, copy_ignore_for, file_sha256, tree_sha256
 from src.config import PROJECT_ROOT, Config, load_config
 
 from .. import instances as inst
@@ -44,6 +45,9 @@ CONFIG_INI_PATH = PROJECT_ROOT / "config.ini"
 WORKSPACE_DIRNAME = "_workspace"
 
 _PLAN_KEY = ("plan", "plan_approval_exempt_scripts")
+# 昇格・差し戻しは管理ツールの1プロセスの中で1件ずつ行う（二重クリック等で同じテーマを
+# 2回昇格すると、1回目に置いたものを2回目が「置き換え」として退避してしまう）。
+_LOCK = threading.Lock()
 _ALLOW_KEY = ("main_agent_tool_guard", "allow_entries")
 
 
@@ -269,6 +273,34 @@ def promote(
     remote_addr: str,
     backup_keep: int,
 ) -> dict:
+    if not _LOCK.acquire(blocking=False):
+        raise PromotionError("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。")
+    try:
+        return _promote(
+            instances_root,
+            directory,
+            distribute_to=distribute_to,
+            discard_source_changes=discard_source_changes,
+            note=note,
+            actor=actor,
+            remote_addr=remote_addr,
+            backup_keep=backup_keep,
+        )
+    finally:
+        _LOCK.release()
+
+
+def _promote(
+    instances_root: Path,
+    directory: Path,
+    *,
+    distribute_to: list[str] | None,
+    discard_source_changes: bool,
+    note: str,
+    actor: str,
+    remote_addr: str,
+    backup_keep: int,
+) -> dict:
     result = check(instances_root, directory, distribute_to=distribute_to)
     if result.problems:
         raise PromotionError("昇格できません: " + " / ".join(result.problems))
@@ -349,20 +381,25 @@ def promote(
             f"昇格に失敗したため、置いたファイルを元に戻しました（設定を保存済みのインスタンス: {saved_instances or 'なし'}）: {e}"
         ) from e
 
-    # 取り込み元のドラフトをアーカイブ
+    # 取り込み元のドラフトをアーカイブ（配置と設定の登録は済んでいるため、ここで失敗しても昇格は取り消さず、
+    # 失敗したものを記録に残す。取り消すと、置いたものと記録が食い違い、やり直しも名前の重複で止まる）。
     target_cfg = instance_config(instances_root, instance)
     archived = []
+    archive_errors = []
     for name, src in (data.get("sources") or {}).get("skills", {}).items():
-        if src.get("kind") == "draft" and src.get("origin") and (Path(src["origin"]) / "SKILL.md").is_file():
-            archived.append(
-                str(
-                    archive_draft(
-                        Path(src["origin"]),
-                        target_cfg.skill_archive_dir,
-                        extra={"promoted_to": str(target_cfg.instance_locohane_dir / "skills" / name), "lab_theme": data["id"]},
+        if name in assets["skills"] and src.get("kind") == "draft" and src.get("origin") and (Path(src["origin"]) / "SKILL.md").is_file():
+            try:
+                archived.append(
+                    str(
+                        archive_draft(
+                            Path(src["origin"]),
+                            target_cfg.skill_archive_dir,
+                            extra={"promoted_to": str(target_cfg.instance_locohane_dir / "skills" / name), "lab_theme": data["id"]},
+                        )
                     )
                 )
-            )
+            except (OSError, ValueError) as e:
+                archive_errors.append(f"{src.get('owner')}/{name}: {e}")
 
     record = {
         "at": themes.now_iso(),
@@ -370,6 +407,7 @@ def promote(
         "instances": list(result.placements),
         "placements": result.placements,
         "archived_drafts": archived,
+        "archive_errors": archive_errors,
         "backup": str(backup_root) if backup_root.exists() else None,
         "note": note,
         "tryout": {k: data["tryout"].get(k) for k in ("repeat", "out_dir", "ai_judged", "iteration")},
@@ -417,6 +455,8 @@ def _append_log(data: dict, record: dict) -> None:
     lines.append(f"- 承認: {record['by']}")
     if record["archived_drafts"]:
         lines.append(f"- アーカイブしたドラフト: {', '.join(record['archived_drafts'])}")
+    if record.get("archive_errors"):
+        lines.append(f"- アーカイブできなかったドラフト（手で移してください）: {' / '.join(record['archive_errors'])}")
     if record["backup"]:
         lines.append(f"- 置き換え前のバックアップ: {record['backup']}")
     if record["discarded_source_changes"]:
@@ -436,6 +476,15 @@ def _append_log(data: dict, record: dict) -> None:
 
 def return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reject: bool, actor: str) -> dict:
     """取り込み元のドラフトへ差し戻す（apply_fixes なら研究室での修正をドラフトへ写す）。"""
+    if not _LOCK.acquire(blocking=False):
+        raise PromotionError("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。")
+    try:
+        return _return_to_creators(directory, reason=reason, apply_fixes=apply_fixes, reject=reject, actor=actor)
+    finally:
+        _LOCK.release()
+
+
+def _return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reject: bool, actor: str) -> dict:
     reason = (reason or "").strip()
     if not reason:
         raise PromotionError("差し戻しの理由を書いてください（作成者の skill-creator に表示されます）。")
@@ -444,29 +493,25 @@ def return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, rejec
         raise PromotionError(f"このテーマは既に終了しています（{data.get('status')}）")
     if data.get("status") in themes.ACTIVE_STATUSES:
         raise PromotionError("ループ・トライアウトの実行中は差し戻せません（先に停止してください）")
+    drafts = [
+        (name, src)
+        for name, src in (data.get("sources") or {}).get("skills", {}).items()
+        if src.get("kind") == "draft" and src.get("origin") and (Path(src["origin"]) / "SKILL.md").is_file()
+    ]
+    if not drafts:
+        raise PromotionError("差し戻せる取り込み元のドラフトがありません（テーマを終えるには「取りやめ」を使ってください）。")
     returned = []
-    for name, src in (data.get("sources") or {}).get("skills", {}).items():
-        if src.get("kind") != "draft" or not src.get("origin"):
-            continue
+    for name, src in drafts:
         draft = Path(src["origin"])
-        if not (draft / "SKILL.md").is_file():
-            continue
-        if apply_fixes:
-            work = directory / themes.ASSETS_DIRNAME / "skills" / name
-            meta_path = draft / DRAFT_META_FILENAME
-            meta_text = meta_path.read_text(encoding="utf-8") if meta_path.is_file() else None
-            evals_dir = draft / "evals"
-            keep_evals = None
-            if evals_dir.is_dir():
-                keep_evals = directory / themes.RUNS_DIRNAME / f"_draft_evals_{name}"
-                shutil.rmtree(keep_evals, ignore_errors=True)
-                shutil.copytree(evals_dir, keep_evals)
-            shutil.rmtree(draft)
-            shutil.copytree(work, draft, ignore=shutil.ignore_patterns("__pycache__"))
-            if keep_evals is not None:
-                shutil.copytree(keep_evals, draft / "evals", dirs_exist_ok=True)
-            if meta_text is not None:
-                meta_path.write_text(meta_text, encoding="utf-8")
+        work = directory / themes.ASSETS_DIRNAME / "skills" / name
+        if apply_fixes and (work / "SKILL.md").is_file():
+            try:
+                _replace_draft_with(draft, work)
+            except OSError as e:
+                raise PromotionError(
+                    f"ドラフト {src.get('owner')}/{name} へ修正を写せませんでした（ドラフトは元のままです。"
+                    f"作成者がファイルを開いていないか確かめてください。差し戻し済み: {returned or 'なし'}）: {e}"
+                ) from e
         meta_path = draft / DRAFT_META_FILENAME
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
         if apply_fixes and meta.get("tryouts"):
@@ -492,6 +537,30 @@ def return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, rejec
     return {"drafts": returned}
 
 
+def _replace_draft_with(draft: Path, work: Path) -> None:
+    """ドラフトの中身を研究室で直したもの（work）に置き換える（来歴・ケースはドラフトのものを残す）。
+
+    先に隣へ新しい中身を組み立ててから入れ替えるため、途中で失敗してもドラフトは元のまま残る。
+    """
+    # 「_」で始まる名前は、ドラフトの一覧（sources.list_drafts・skill-creator）に出ない。
+    staging = draft.with_name(f"_lab_new_{draft.name}")
+    old = draft.with_name(f"_lab_old_{draft.name}")
+    for leftover in (staging, old):
+        shutil.rmtree(leftover, ignore_errors=True)
+    shutil.copytree(work, staging, ignore=copy_ignore_for(work))
+    if (draft / "evals").is_dir():
+        shutil.copytree(draft / "evals", staging / "evals")
+    if (draft / DRAFT_META_FILENAME).is_file():
+        shutil.copy2(draft / DRAFT_META_FILENAME, staging / DRAFT_META_FILENAME)
+    draft.rename(old)
+    try:
+        staging.rename(draft)
+    except OSError:
+        old.rename(draft)
+        raise
+    shutil.rmtree(old, ignore_errors=True)
+
+
 def mark_imported(draft: Path, theme_id: str) -> None:
     """取り込んだドラフトの来歴に、研究室のテーマを記録する（作成者の list_drafts.py に出る）。"""
     meta_path = draft / DRAFT_META_FILENAME
@@ -500,11 +569,12 @@ def mark_imported(draft: Path, theme_id: str) -> None:
     meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def unmark_imported(directory: Path) -> None:
-    """テーマを取りやめたとき、取り込み元のドラフトから研究室の印を外す（作成者の一覧に誤った案内を残さない）。"""
+def unmark_imported(directory: Path, only: str | None = None) -> None:
+    """テーマを取りやめた・ドラフトを研究対象から外したとき、取り込み元のドラフトから研究室の印を外す
+    （作成者の一覧に誤った案内を残さない）。only を指定すると、そのスキル名のドラフトだけ。"""
     data = themes.read(directory)
-    for src in (data.get("sources") or {}).get("skills", {}).values():
-        if src.get("kind") != "draft" or not src.get("origin"):
+    for name, src in (data.get("sources") or {}).get("skills", {}).items():
+        if src.get("kind") != "draft" or not src.get("origin") or (only is not None and name != only):
             continue
         meta_path = Path(src["origin"]) / DRAFT_META_FILENAME
         if not meta_path.is_file():

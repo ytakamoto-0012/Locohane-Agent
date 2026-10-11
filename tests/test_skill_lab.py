@@ -788,3 +788,36 @@ def test_api_rejects_importing_a_draft_twice_and_bad_uploads(client, lab_env):
     assert client.post(f"/api/instances/org_a/skill-lab/themes/{ids[0]}/fixtures", json=upload).status_code == 400
 
 
+def test_return_without_drafts_is_refused(lab_env):
+    directory, _ = _ready_theme(lab_env, with_draft=False)
+    with pytest.raises(promotion.PromotionError, match="取りやめ"):
+        promotion.return_to_creators(directory, reason="x", apply_fixes=False, reject=False, actor="admin")
+    assert themes.read(directory)["status"] == themes.STATUS_REVIEW
+
+
+def test_return_keeps_draft_when_copy_fails(lab_env, monkeypatch):
+    directory, draft = _ready_theme(lab_env)
+    before = tree_sha256(draft)
+
+    def boom(*_a, **_kw):
+        raise OSError("コピーに失敗")
+
+    monkeypatch.setattr(promotion.shutil, "copytree", boom)
+    with pytest.raises(promotion.PromotionError, match="元のまま"):
+        promotion.return_to_creators(directory, reason="x", apply_fixes=True, reject=False, actor="admin")
+    assert tree_sha256(draft) == before and themes.read(directory)["status"] == themes.STATUS_REVIEW
+
+
+def test_promote_keeps_promotion_when_archiving_fails(lab_env, monkeypatch):
+    """配置と設定の登録の後でアーカイブに失敗しても、昇格は取り消さずに記録へ残す。"""
+    monkeypatch.setattr(promotion, "PROMOTION_LOG", lab_env["tmp"] / "promotion_log.md")
+    monkeypatch.setattr(promotion, "PROMOTE_HISTORY_DIR", lab_env["tmp"] / "history")
+    directory, draft = _ready_theme(lab_env)
+
+    def boom(*_a, **_kw):
+        raise OSError("使用中")
+
+    monkeypatch.setattr(promotion, "archive_draft", boom)
+    record = _promote(lab_env, directory)
+    assert record["archive_errors"] and draft.is_dir()
+    assert themes.read(directory)["status"] == themes.STATUS_PROMOTED
