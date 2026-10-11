@@ -316,7 +316,7 @@ async function renderThemeOverview(state, body) {
   );
   const sections = {};
   for (const [key, fn] of OVERVIEW_SECTIONS) {
-    sections[key] = { box: el("section", { class: "theme-section" }), fn, guard: null };
+    sections[key] = { box: el("section", { class: `theme-section theme-section-${key}` }), fn, guard: null };
     body.append(sections[key].box);
   }
   state.sections = sections;

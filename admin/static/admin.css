@@ -66,7 +66,17 @@ h4 .hint { margin-left: 4px; font-weight: normal; }
 .seg-group { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .seg-btn.active { background: var(--accent, #4a86e8); border-color: var(--accent, #4a86e8); color: #fff; }
 .theme-intro { margin: 8px 0 16px; padding: 8px 12px; border-left: 3px solid var(--border); }
-.theme-section h5 { margin: 12px 0 4px; font-size: 13px; }
+/* 研究内容の各節（①②③・設定パッチ・AI への依頼）は config.ini の項目と同じくパネルに分ける */
+.theme-section { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 0 16px 14px; margin-bottom: 16px; }
+.theme-section > h4:first-child { margin: 0 -16px 12px; padding: 10px 16px; font-size: 15px; background: var(--panel-2); border-bottom: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; }
+.theme-section > .hint { margin: 0 0 8px; }
+.theme-section h5 { margin: 16px 0 6px; padding-top: 12px; border-top: 1px dashed var(--border); font-size: 13px; }
+.theme-section .asset-card { background: var(--panel-2); }
+.theme-section .asset-add { margin-top: 14px; padding-top: 10px; }
+.theme-section-patch { padding-bottom: 0; }
+.theme-section-patch > details > summary { margin: 0 -16px; padding: 10px 16px; font-size: 15px; font-weight: 600; background: var(--panel-2); border-radius: var(--radius); cursor: pointer; }
+.theme-section-patch > details[open] { padding-bottom: 14px; }
+.theme-section-patch > details[open] > summary { margin-bottom: 12px; border-bottom: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; }
 .error { color: var(--danger); font-size: 13px; min-height: 1.2em; }
 
 /* Login */
