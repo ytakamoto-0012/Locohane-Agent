@@ -11,6 +11,8 @@ type IconName =
   | 'trash'
   | 'pencil'
   | 'panel-left'
+  | 'panel-right'
+  | 'menu'
   | 'user'
   | 'log-out';
 
@@ -69,6 +71,15 @@ function IconPath({ name }: { name: IconName }) {
           <path d="M9.5 4v16" />
         </>
       );
+    case 'panel-right':
+      return (
+        <>
+          <rect x="2.5" y="4" width="19" height="16" rx="2" />
+          <path d="M14.5 4v16" />
+        </>
+      );
+    case 'menu':
+      return <path d="M3 6h18M3 12h18M3 18h18" />;
     case 'user':
       return (
         <>

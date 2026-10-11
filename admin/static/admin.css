@@ -80,20 +80,22 @@ h4 .hint { margin-left: 4px; font-weight: normal; }
 .error { color: var(--danger); font-size: 13px; min-height: 1.2em; }
 
 /* Login */
-.login-screen { display: flex; align-items: center; justify-content: center; height: 100vh; }
+.login-screen { display: flex; align-items: center; justify-content: center; height: 100vh; height: 100dvh; padding: 12px; }
 .login-box {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 32px;
   width: 320px;
+  max-width: 100%;
 }
 .login-box h1 { font-size: 18px; margin: 0 0 8px; }
 /* セッション切れ時の再ログイン（ダッシュボードの上に重ねて表示し、入力内容を保持する） */
 .relogin-overlay { position: fixed; inset: 0; z-index: 1000; background: rgba(0, 0, 0, 0.5); }
 
 /* Shell */
-.shell { display: flex; flex-direction: column; height: 100vh; }
+/* 100dvh: スマホのブラウザはアドレスバーの分だけ 100vh が画面より高くなるため */
+.shell { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .topbar {
   display: flex;
   align-items: center;
@@ -113,7 +115,7 @@ h4 .hint { margin-left: 4px; font-weight: normal; }
 .view-header h2 { margin: 0; }
 
 /* Instance cards */
-.instance-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.instance-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 14px; }
 .lab-instance-section { margin-top: 24px; }
 .lab-instance-section h3 { margin: 0 0 10px; font-size: 15px; color: var(--text-dim); }
 .instance-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
@@ -140,7 +142,7 @@ h4 .hint { margin-left: 4px; font-weight: normal; }
 
 /* Modal */
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 100; }
-.modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; width: 420px; max-height: 85vh; overflow: auto; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; width: 420px; max-width: calc(100vw - 24px); max-height: 85vh; overflow: auto; }
 .modal-wide { width: 640px; }
 .modal h3 { margin-top: 0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
@@ -302,7 +304,7 @@ select.inline-select { width: auto; }
 .msg details summary { cursor: pointer; color: var(--text-dim); }
 
 .token-charts { margin-bottom: 14px; }
-.chart-grid-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(480px, 1fr)); gap: 12px; margin-bottom: 8px; }
+.chart-grid-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(480px, 100%), 1fr)); gap: 12px; margin-bottom: 8px; }
 .viewer-section .section-head h3 { word-break: break-all; }
 .chart-card { margin: 0; background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 .chart-card figcaption { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
@@ -374,3 +376,52 @@ input.narrow { width: 80px; }
 .placement { margin: 6px 0; font-size: 13px; }
 .promote-box { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; }
 .lab-card { border-style: dashed; }
+
+/* ---------------------------------------------------------- スマホ幅 */
+@media (max-width: 768px) {
+  /* 上部バー: ブランド・ユーザー名を1段目、タブを2段目に置き、タブは横スクロールにする */
+  .topbar { flex-wrap: wrap; gap: 6px 12px; padding: 8px 10px; }
+  .brand { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tabs { order: 3; flex: 1 0 100%; overflow-x: auto; scrollbar-width: none; }
+  .tab-btn { white-space: nowrap; flex-shrink: 0; padding: 8px 10px; }
+  .subtabs { overflow-x: auto; scrollbar-width: none; }
+  .subtab-btn { white-space: nowrap; flex-shrink: 0; }
+  #main { padding: 12px 10px; }
+
+  .view-header { flex-wrap: wrap; gap: 8px; }
+  .view-header h2 { font-size: 18px; }
+  .modal { padding: 16px; max-height: 90vh; }
+  .modal-actions { flex-wrap: wrap; }
+
+  /* iOS Safari は 16px 未満の入力欄にフォーカスすると画面を拡大するため */
+  input, textarea, select { font-size: 16px; }
+
+  /* 表は画面幅を超える分だけ横スクロールにする */
+  .data-table, .markdown-body table { display: block; overflow-x: auto; }
+  .data-table th { white-space: nowrap; }
+  .markdown-body pre { max-width: 100%; }
+
+  /* 設定エディター: セクション一覧を上に、項目を下に並べる */
+  .config-editor { flex-direction: column; align-items: stretch; gap: 12px; }
+  .config-sidebar { width: 100%; position: static; }
+  .section-list { max-height: 30vh; }
+  .restart-banner { flex-wrap: wrap; gap: 8px; }
+  .key-row-head { flex-wrap: wrap; }
+  .key-input-wrap .choice-select { min-width: 0; width: 100%; }
+  .le-field { flex-wrap: wrap; }
+  .le-field-name { width: 100%; padding-top: 0; }
+  .le-group-head input { width: auto; flex: 1; min-width: 0; }
+
+  .inline-form, .filter-row input[type=search] { max-width: 100%; width: 100%; }
+  .inline-form { flex-wrap: wrap; }
+  .monitor-toolbar, .section-head, .log-head, .msg-head { flex-wrap: wrap; }
+  .stat-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+  /* スキル研究室: インスタンス一覧を上に、テーマを下に並べる */
+  .lab-layout { grid-template-columns: minmax(0, 1fr); }
+  .lab-panel-header { flex-wrap: wrap; align-items: flex-start; }
+  .theme-title-row { flex-wrap: wrap; }
+  .theme-section { padding: 0 10px 12px; }
+  .theme-section > h4:first-child { margin: 0 -10px 12px; padding: 10px; }
+  .theme-section-patch > details > summary { margin: 0 -10px; padding: 10px; }
+}

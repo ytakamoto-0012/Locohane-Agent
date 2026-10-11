@@ -46,6 +46,8 @@
 .app-shell {
   display: flex;
   height: 100vh;
+  /* スマホのブラウザはアドレスバーの分だけ 100vh が画面より高くなり、入力欄が隠れるため */
+  height: 100dvh;
   overflow: hidden;
   background: var(--bg);
   color: var(--text);
@@ -1663,4 +1665,172 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+/* ---------------------------------------------------------- スマホ幅
+   ブレークポイントは utils/useIsMobile.ts の MOBILE_MEDIA_QUERY と揃えること。
+   左右のパネルは App.tsx が引き出し（drawer）として開閉する。 */
+.header-icon-button {
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: var(--radius-sm);
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.drawer-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.thread-sidebar--drawer,
+.side-panel--drawer {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  z-index: 50;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.thread-sidebar--drawer {
+  left: 0;
+  width: min(300px, 85vw);
+}
+
+.side-panel--drawer {
+  right: 0;
+  width: min(360px, 92vw);
+  padding: 12px;
+}
+
+@media (max-width: 768px) {
+  .app-header {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+
+  .app-header-brand {
+    min-width: 0;
+  }
+
+  /* 表示設定のヘッダー文字・アイコンの大きさは PC 向けのため、スマホでは上限を設ける */
+  .app-header-icon {
+    width: min(var(--header-icon-size), 28px);
+    height: min(var(--header-icon-size), 28px);
+  }
+
+  .app-header-title {
+    font-size: min(var(--header-title-font-size), 18px);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .app-header-actions {
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .app-header .new-chat-button {
+    padding: 0;
+    width: 32px;
+    justify-content: center;
+  }
+
+  .new-chat-button-label {
+    display: none;
+  }
+
+  .messages-scroll {
+    padding: 14px 10px;
+  }
+
+  .message-row {
+    gap: 6px;
+  }
+
+  .avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 9px;
+  }
+
+  /* アバター分を除いた幅いっぱいまで使う（既定の 560px はスマホでは画面より広い） */
+  .message-bubble {
+    max-width: calc(100% - 30px);
+    padding: 9px 12px;
+  }
+
+  .message-bubble-content pre,
+  .message-bubble-content table {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .message-bubble-content table {
+    display: block;
+  }
+
+  .message-image {
+    max-width: 100%;
+  }
+
+  .ask-action-bar,
+  .starter-prompts {
+    padding: 0 10px 10px;
+  }
+
+  .ask-form-bar,
+  .ask-text-bar,
+  .ask-file-dropzone {
+    margin-left: 10px;
+    margin-right: 10px;
+    width: auto;
+    padding: 12px;
+  }
+
+  .composer {
+    padding: 8px 10px calc(10px + env(safe-area-inset-bottom));
+  }
+
+  /* iOS Safari は 16px 未満の入力欄にフォーカスすると画面を拡大するため */
+  .composer-textarea,
+  .ask-form-input,
+  .ask-text-input,
+  .work-dir-popover-input {
+    font-size: 16px;
+  }
+
+  /* rows=4 のままだとキーボード表示中に会話がほとんど見えなくなるため */
+  .composer-textarea {
+    height: calc(1.5em * 2 + 16px);
+  }
+
+  .composer-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .work-dir-popover {
+    width: min(320px, calc(100vw - 40px));
+  }
+
+  /* タッチ操作では hover が無いため、名前変更・削除ボタンを常に出す */
+  .thread-list-item-actions {
+    opacity: 1;
+  }
+
+  .thread-list-item {
+    padding: 10px;
+  }
 }

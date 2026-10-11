@@ -38,6 +38,7 @@ import {
   selectLatestMaxDisplaySideSteps,
   selectLatestInputLimits
 } from './utils/messageTree';
+import { useIsMobile } from './utils/useIsMobile';
 import './styles.css';
 
 // 他セッション（別スレッドを開いた同じタブ・別タブ）が裏で処理中かどうかを
@@ -58,6 +59,15 @@ function App() {
   const { config } = useConfig();
   const currentThreadId = useRecoilValue(currentThreadIdState);
   const sessionId = useRecoilValue(sessionIdState);
+
+  // スマホ幅では左右のパネルを引き出し式にし、同時に開くのは片方だけにする
+  // （PC 幅では各パネルが自分の折りたたみ状態を持つため使わない）。
+  const isMobile = useIsMobile();
+  const [mobileDrawer, setMobileDrawer] = useState<'threads' | 'details' | null>(null);
+  const closeMobileDrawer = useCallback(() => setMobileDrawer(null), []);
+  useEffect(() => {
+    if (!isMobile) setMobileDrawer(null);
+  }, [isMobile]);
 
   const requireLogin = authData?.requireLogin ?? false;
   const canConnect = authReady && (!requireLogin || isAuthenticated);
@@ -334,9 +344,13 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar />
+      <Sidebar mobile={isMobile} open={mobileDrawer === 'threads'} onClose={closeMobileDrawer} />
       <div className="main-column">
-        <Header />
+        <Header
+          mobile={isMobile}
+          onOpenThreads={config?.dataPersistence ? () => setMobileDrawer('threads') : undefined}
+          onOpenDetails={() => setMobileDrawer('details')}
+        />
         <MessagePane messages={displayMessages} showTyping={showTyping} />
         <AskActionBar />
         <AskFormBar />
@@ -364,7 +378,16 @@ function App() {
           inputLimits={inputLimits}
         />
       </div>
-      <SidePanel sideSteps={displaySideSteps} tokenUsage={tokenUsage} workDir={workDir} plan={plan} />
+      <SidePanel
+        sideSteps={displaySideSteps}
+        tokenUsage={tokenUsage}
+        workDir={workDir}
+        plan={plan}
+        mobile={isMobile}
+        open={mobileDrawer === 'details'}
+        onClose={closeMobileDrawer}
+      />
+      {isMobile && mobileDrawer ? <div className="drawer-backdrop" onClick={closeMobileDrawer} /> : null}
     </div>
   );
 }

@@ -9,16 +9,25 @@ export function SidePanel({
   sideSteps,
   tokenUsage,
   workDir,
-  plan
+  plan,
+  mobile,
+  open,
+  onClose
 }: {
   sideSteps: IStep[];
   tokenUsage: IStep | undefined;
   workDir: IStep | undefined;
   plan: IStep | undefined;
+  /** スマホ幅では折りたたみボタンの代わりに引き出し（open/onClose は App が持つ）で表示する */
+  mobile: boolean;
+  open: boolean;
+  onClose: () => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
-  if (collapsed) {
+  if (mobile && !open) return null;
+
+  if (!mobile && collapsed) {
     return (
       <button type="button" className="side-panel-collapsed" onClick={() => setCollapsed(false)}>
         ◂ 詳細
@@ -27,13 +36,18 @@ export function SidePanel({
   }
 
   return (
-    <aside className="side-panel">
+    <aside className={mobile ? 'side-panel side-panel--drawer' : 'side-panel'}>
       <div className="side-panel-fixed">
         <WorkDirCard step={workDir} />
         <div className="side-panel-header">
           <span>実行の詳細</span>
-          <button type="button" className="side-panel-toggle" onClick={() => setCollapsed(true)}>
-            ▸
+          <button
+            type="button"
+            className="side-panel-toggle"
+            title={mobile ? '実行の詳細を閉じる' : undefined}
+            onClick={() => (mobile ? onClose() : setCollapsed(true))}
+          >
+            {mobile ? '✕' : '▸'}
           </button>
         </div>
         <TokenUsageCard step={tokenUsage} />

@@ -6,7 +6,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { ChainlitContext, elementState, sessionIdState, type IStep } from '@chainlit/react-client';
 import type { IMessageElement } from '@chainlit/react-client';
-import { Icon } from './Icon';
+import { FileLink } from './FileLink';
 import { SUBAGENT_MESSAGE_AUTHOR } from '../utils/messageTree';
 
 function MessageElements({ messageId }: { messageId: string }) {
@@ -37,10 +37,7 @@ function MessageElements({ messageId }: { messageId: string }) {
       {fileElements.length > 0 ? (
         <div className="message-files">
           {fileElements.map((e) => (
-            <a key={e.id} href={resolveUrl(e)} download={e.name} className="message-file-link">
-              <Icon name="paperclip" size={13} />
-              {e.name}
-            </a>
+            <FileLink key={e.id} href={resolveUrl(e)} name={e.name} />
           ))}
         </div>
       ) : null}

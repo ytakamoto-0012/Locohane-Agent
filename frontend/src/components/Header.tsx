@@ -6,7 +6,16 @@ import { Icon } from './Icon';
 const DEFAULT_TITLE = 'Locohane';
 const ICON_EXTENSIONS = ['png', 'svg', 'jpg', 'jpeg'];
 
-export function Header() {
+export function Header({
+  mobile,
+  onOpenThreads,
+  onOpenDetails
+}: {
+  mobile: boolean;
+  /** 会話一覧の引き出しを開く（[thread_store] 無効で会話一覧が無いときは undefined） */
+  onOpenThreads?: () => void;
+  onOpenDetails: () => void;
+}) {
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [iconExtIndex, setIconExtIndex] = useState(0);
 
@@ -38,6 +47,11 @@ export function Header() {
   return (
     <header className="app-header">
       <div className="app-header-brand">
+        {mobile && onOpenThreads ? (
+          <button type="button" className="header-icon-button" title="会話一覧を開く" onClick={onOpenThreads}>
+            <Icon name="menu" size={16} />
+          </button>
+        ) : null}
         {iconExtIndex < ICON_EXTENSIONS.length ? (
           <img
             className="app-header-icon"
@@ -51,9 +65,14 @@ export function Header() {
       <div className="app-header-actions">
         <button type="button" className="new-chat-button" title="新規チャット" onClick={handleNewChat}>
           <Icon name="plus" size={14} />
-          新規チャット
+          <span className="new-chat-button-label">新規チャット</span>
         </button>
         <ThemePicker />
+        {mobile ? (
+          <button type="button" className="header-icon-button" title="実行の詳細を開く" onClick={onOpenDetails}>
+            <Icon name="panel-right" size={16} />
+          </button>
+        ) : null}
       </div>
     </header>
   );

@@ -31,7 +31,16 @@ function goToThread(threadId: string | null) {
   window.location.href = url.pathname + url.search;
 }
 
-export function Sidebar() {
+export function Sidebar({
+  mobile,
+  open,
+  onClose
+}: {
+  /** スマホ幅では折りたたみボタンの代わりに引き出し（open/onClose は App が持つ）で表示する */
+  mobile: boolean;
+  open: boolean;
+  onClose: () => void;
+}) {
   const { config } = useConfig();
   const { user, logout } = useAuth();
   const currentThreadId = useRecoilValue(currentThreadIdState);
@@ -68,7 +77,9 @@ export function Sidebar() {
   // [thread_store].enabled=false（データレイヤー未登録）なら何も描画しない。
   if (!config?.dataPersistence) return null;
 
-  if (collapsed) {
+  if (mobile && !open) return null;
+
+  if (!mobile && collapsed) {
     return (
       <button
         type="button"
@@ -126,7 +137,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="thread-sidebar">
+    <aside className={mobile ? 'thread-sidebar thread-sidebar--drawer' : 'thread-sidebar'}>
       <div className="thread-sidebar-header">
         <button type="button" className="new-chat-button" onClick={() => goToThread(null)}>
           <Icon name="plus" size={14} />
@@ -135,10 +146,10 @@ export function Sidebar() {
         <button
           type="button"
           className="thread-sidebar-toggle"
-          title="サイドバーを折りたたむ"
-          onClick={() => setCollapsed(true)}
+          title={mobile ? '会話一覧を閉じる' : 'サイドバーを折りたたむ'}
+          onClick={() => (mobile ? onClose() : setCollapsed(true))}
         >
-          <Icon name="panel-left" size={14} />
+          <Icon name={mobile ? 'x' : 'panel-left'} size={14} />
         </button>
       </div>
       <ul className="thread-list">
