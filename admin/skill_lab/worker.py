@@ -143,7 +143,7 @@ class Worker:
         cfg = self.config
         try:
             if task["type"] == "trial":
-                result = self._trial(instance, directory, params["case_id"])
+                result = self._trial(instance, directory, params["case_id"], task["id"])
             elif task["type"] == "draft_spec":
                 drafting.draft_spec(cfg, directory, max_file_chars=cfg.skill_lab_fixer_max_file_chars, request=params.get("request", ""))
                 result = {"message": "spec.md を下書きしました。"}
@@ -179,13 +179,14 @@ class Worker:
             logger.warning("タスク %s（%s）に失敗しました: %s", task["id"], task["type"], e)
             self._set_task(directory, task["id"], status="error", finished_at=themes.now_iso(), error=str(e)[:2000])
 
-    def _trial(self, instance: str, directory: Path, case_id: str) -> dict:
+    def _trial(self, instance: str, directory: Path, case_id: str, task_id: str) -> dict:
         run = evaluation.run(
             directory,
             instance=instance,
             lab=self.lab,
             repeat=1,
-            results_root=directory / themes.RUNS_DIRNAME / "trials",
+            # 結果のフォルダ名は秒単位の日時のため、試行ごとにフォルダを分けて取り違えないようにする。
+            results_root=directory / themes.RUNS_DIRNAME / "trials" / task_id,
             case_ids=[case_id],
             base_env=self.base_env,
             should_stop=lambda: self.shutdown,
@@ -375,19 +376,33 @@ class Worker:
             # 合間に、他のテーマの短いタスク（1回試行・下書き）を片付ける。
             self.process_tasks()
             outcome = self._evaluate(instance, directory, 1, "eval")
+            if self._stop_for_infra(directory, outcome):
+                return
             if not outcome["passed"]:
                 self._fix(directory, outcome)
                 continue
             if self._stop_requested(directory):
                 raise _Stop()
             outcome = self._evaluate(instance, directory, tryout_repeats, "tryout")
+            if self._stop_for_infra(directory, outcome):
+                return
             if outcome["passed"]:
                 self._finish(directory, themes.STATUS_REVIEW, f"トライアウト（各ケース{tryout_repeats}回）に全回合格しました")
                 return
             self._fix(directory, outcome)
 
+    def _stop_for_infra(self, directory: Path, outcome: dict) -> bool:
+        """研究対象を直しても解決しない失敗なら、AI 修正に回さずエラーで止める。"""
+        message = evaluation.infra_error(outcome["run"]["results"])
+        if message:
+            self._finish(directory, themes.STATUS_ERROR, message)
+            return True
+        return False
+
     def _tryout_only(self, instance: str, directory: Path, tryout_repeats: int) -> None:
         outcome = self._evaluate(instance, directory, tryout_repeats, "tryout")
+        if self._stop_for_infra(directory, outcome):
+            return
         if outcome["passed"]:
             self._finish(directory, themes.STATUS_REVIEW, f"トライアウト（各ケース{tryout_repeats}回）に全回合格しました")
         else:

@@ -660,6 +660,20 @@ def _lab_worker(lab_env):
     return w
 
 
+def test_worker_stops_without_fixing_when_llm_is_unreachable(lab_env, monkeypatch):
+    """評価の LLM に接続できないときは、AI 修正で研究対象を書き換えずにエラーで止める。"""
+    directory = _theme(lab_env)
+    themes.update(directory, lambda d: d.update({"status": themes.STATUS_QUEUED, "loop": {"mode": "loop"}}))
+    w = _lab_worker(lab_env)
+    run = {"results": [{"case_id": "001", "error": "llm_unreachable", "detail": "接続できません"}]}
+    monkeypatch.setattr(w, "_evaluate", lambda *a: {"iteration": {"n": 1}, "run": run, "verdicts": [], "passed": False})
+    monkeypatch.setattr(w, "_fix", lambda *a: pytest.fail("接続できないのに AI 修正した"))
+    monkeypatch.setattr(w, "process_tasks", lambda: False)
+    w.run_theme("org_a", directory)
+    data = themes.read(directory)
+    assert data["status"] == themes.STATUS_ERROR and "LLM" in data["loop"]["message"]
+
+
 def test_worker_evaluates_theme_only_with_its_own_instance(lab_env):
     """データフォルダを共有するインスタンスがあっても、テーマは作ったインスタンスの構成でだけ処理する。"""
     shared = _cfg(lab_env, "org_a").common_data_dir

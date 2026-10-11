@@ -105,11 +105,7 @@ def run(
         proc = subprocess.Popen(cmd, cwd=str(PROJECT_ROOT), env=clean_env(base_env), stdout=log, stderr=subprocess.STDOUT)
         while proc.poll() is None:
             if should_stop and should_stop():
-                proc.terminate()
-                try:
-                    proc.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
+                _kill_tree(proc)
                 raise EvaluationStopped()
             time.sleep(2)
     new_dirs = sorted(p for p in results_root.iterdir() if p.is_dir() and p.name not in before)
@@ -122,6 +118,35 @@ def run(
         "results": json.loads((out_dir / "results.json").read_text(encoding="utf-8")),
         "tryout": json.loads((out_dir / "tryout.json").read_text(encoding="utf-8")),
     }
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """評価の子プロセス（run_all.py）と、その下で動いているケース（run_case.py）をまとめて止める。
+
+    run_all.py だけを止めると、実行中のケースが最後まで LLM を使い続ける（Windows では
+    子プロセスが親と一緒に終わらない）。
+    """
+    if sys.platform == "win32":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(proc.pid)], capture_output=True, check=False)
+    else:
+        proc.terminate()
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=30)
+
+
+def infra_error(results: list[dict]) -> str | None:
+    """研究対象を直しても解決しない失敗（評価で使う LLM に接続できない）なら、その説明を返す。
+
+    このまま AI 修正に回すと、関係のないところを書き換えて反復を使い切ってしまう。
+    """
+    unreachable = [r for r in results if r.get("error") == "llm_unreachable"]
+    if not unreachable:
+        return None
+    detail = unreachable[0].get("detail") or ""
+    return f"評価で使う LLM（スキル調整ワーカーの [llm] main_url）に接続できませんでした。推論サーバーを確かめてください。{detail}"[:2000]
 
 
 def classify(result: dict) -> str:
