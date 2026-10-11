@@ -225,6 +225,7 @@ def test_fixer_applies_all_or_nothing(lab_env):
     applied, errors = fixer.apply_edits(directory, bad, known_tools=["Read"])
     assert applied == [] and any("仕様" in e for e in errors)
     assert skill_md.read_text(encoding="utf-8") == original
+    themes.add_asset_new(directory, "agents", "helper", _agent_md("helper", "Read"), actor="admin")
     invalid_agent = [{"path": "assets/agents/helper.md", "content": _agent_md("helper", "Read, NoSuchTool")}]
     assert fixer.apply_edits(directory, invalid_agent, known_tools=["Read"])[1]
     good = [
@@ -605,6 +606,45 @@ def test_drafting_uses_targets_and_spec(lab_env, monkeypatch):
 
 
 # --- あらゆる状況への備え（抜け道・競合・異常終了） -------------------------------------------
+
+
+def test_fixer_cannot_game_the_cases_or_targets(lab_env):
+    """AI 修正は、ケースの削除・追加、入力ファイルの書き換え、研究対象そのものの削除・新規作成をできない。"""
+    directory = _theme(lab_env)
+    _add_skill(directory)
+    themes.write_text(directory, "cases/001.yaml", _CASE.format(id="001"), actor="admin")
+    (directory / "cases" / "fixtures" / "s1").mkdir(parents=True)
+    (directory / "cases" / "fixtures" / "s1" / "in.txt").write_text("入力", encoding="utf-8")
+    forbidden = [
+        [{"path": "cases/001.yaml", "delete": True}],
+        [{"path": "cases/002.yaml", "content": _CASE.format(id="002")}],
+        [{"path": "cases/fixtures/s1/in.txt", "content": "都合のよい入力"}],
+        [{"path": "assets/skills/my-skill/SKILL.md", "delete": True}],
+        [{"path": "assets/skills/other/SKILL.md", "content": _skill_md("other")}],
+        [{"path": "assets/agents/new-agent.md", "content": _agent_md("new-agent", "Read")}],
+    ]
+    for edits in forbidden:
+        applied, errors = fixer.apply_edits(directory, edits, known_tools=["Read"])
+        assert applied == [] and errors, edits
+    assert (directory / "cases" / "001.yaml").is_file()
+    assert (directory / "cases" / "fixtures" / "s1" / "in.txt").read_text(encoding="utf-8") == "入力"
+    # 今あるケースの中身を直すのはよい（レビューで強調表示する）
+    fixed = _CASE.format(id="001").replace("judge: x", "judge: y")
+    assert fixer.apply_edits(directory, [{"path": "cases/001.yaml", "content": fixed}], known_tools=["Read"])[1] == []
+
+
+def test_case_without_effective_condition_is_rejected(lab_env):
+    """expect の項目がすべて空で judge も無いケースは、何をしても合格になるため保存させない。"""
+    directory = _theme(lab_env)
+    empty = "id: '001'\ntarget: skill_lab\nturns: [x]\nexpect:\n  response_contains: []\n"
+    with pytest.raises(themes.ThemeError, match="合格の決め方"):
+        themes.write_text(directory, "cases/001.yaml", empty, actor="admin")
+    # 手で置かれた壊れたケース・無い入力フォルダは、開始の条件で知らせる
+    (directory / "cases" / "001.yaml").write_text(empty, encoding="utf-8")
+    (directory / "cases" / "002.yaml").write_text(_CASE.format(id="002") + "work_dir: fixtures/nothing\n", encoding="utf-8")
+    cases = {c["id"]: c for c in themes.list_cases(directory)}
+    assert "合格の決め方" in cases["001"]["error"] and "fixtures/nothing" in cases["002"]["error"]
+    assert any("001" in m and "002" in m for m in themes.start_missing(directory))
 
 
 def _lab_worker(lab_env):

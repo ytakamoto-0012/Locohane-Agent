@@ -33,7 +33,9 @@ _SYSTEM = """あなたは業務用AIアシスタント（ローカルLLMで動�
 - SKILL.md・エージェント定義の frontmatter の name はフォルダ名・ファイル名と同じにする。
 - スクリプトは正常時に終了コード0で1行のJSONを標準出力へ、異常時は終了コード1で標準エラーへ理由を出す。
 - ケース（cases/*.yaml）を直してよいのは、ケース自体が仕様と矛盾している場合だけ。直したら analysis にその理由を書く。
-- 直せるパス: assets/skills/<名前>/... 、assets/agents/<名前>.md 、cases/<ID>.yaml 、config_patch.json
+  ケースの削除・追加と、ケースの入力ファイル（cases/fixtures/）の変更はできない。
+- 直せるパス: 今ある研究対象の assets/skills/<名前>/... 、assets/agents/<名前>.md 、今ある cases/<ID>.yaml 、config_patch.json
+  （新しいスキル・サブエージェントは作れない。SKILL.md・エージェント定義そのものは削除できない）
 
 次の形式の JSON だけを出力してください:
 {"analysis": "失敗の原因と直し方（日本語）",
@@ -124,6 +126,31 @@ def propose(config: Config, directory: Path, *, failures: str, history: str, max
     return {"analysis": str(data.get("analysis", "")), "edits": data["edits"]}
 
 
+def _forbidden(directory: Path, rel: str, path: Path, *, delete: bool) -> str | None:
+    """AI 修正でしてはいけない変更なら理由を返す。
+
+    試験に通るだけの直し方（失敗したケースを消す・入力ファイルを都合よく書き換える・
+    研究対象そのものを消す・別の資産を作って差し替える）を防ぐ。ケースの中身を直すのは、
+    仕様と矛盾している場合に限って認め、レビューで強調表示する。
+    """
+    parts = rel.split("/")
+    if parts[0] == themes.CASES_DIRNAME and len(parts) >= 3:
+        return "ケースの入力ファイルは AI では変更できません"
+    if parts[0] == themes.CASES_DIRNAME:
+        if delete:
+            return "ケースは AI では削除できません"
+        if not path.is_file():
+            return "ケースは AI では追加できません（今あるケースを直すことだけができます）"
+    if parts[0] == themes.ASSETS_DIRNAME:
+        asset = path if parts[1] == "agents" else directory / themes.ASSETS_DIRNAME / "skills" / parts[2]
+        exists = asset.is_file() if parts[1] == "agents" else (asset / "SKILL.md").is_file()
+        if not exists:
+            return "研究対象に無いスキル・サブエージェントは AI では作れません"
+        if delete and (parts[1] == "agents" or parts[3:] == ["SKILL.md"]):
+            return "研究対象そのもの（SKILL.md・エージェント定義）は AI では削除できません"
+    return None
+
+
 def apply_edits(directory: Path, edits: list, *, known_tools: list[str] | None) -> tuple[list[str], list[str]]:
     """edits をすべて適用する（1つでも失敗したら全部元に戻す）。(適用したパス, エラー) を返す。"""
     errors: list[str] = []
@@ -133,7 +160,7 @@ def apply_edits(directory: Path, edits: list, *, known_tools: list[str] | None) 
         if not isinstance(edit, dict) or not isinstance(edit.get("path"), str):
             errors.append(f"{i + 1}件目: path がありません")
             continue
-        rel = edit["path"].replace("\\", "/").strip()
+        rel = edit["path"].replace("\\", "/").strip().strip("/")
         if rel == themes.SPEC_FILENAME:
             errors.append(f"{rel}: 仕様は AI では変更できません")
             continue
@@ -142,7 +169,15 @@ def apply_edits(directory: Path, edits: list, *, known_tools: list[str] | None) 
         except themes.ThemeError as e:
             errors.append(str(e))
             continue
-        current = pending[path] if path in pending else (path.read_text(encoding="utf-8") if path.is_file() else None)
+        forbidden = _forbidden(directory, rel, path, delete=bool(edit.get("delete")))
+        if forbidden:
+            errors.append(f"{rel}: {forbidden}")
+            continue
+        try:
+            current = pending[path] if path in pending else (path.read_text(encoding="utf-8") if path.is_file() else None)
+        except UnicodeDecodeError:
+            errors.append(f"{rel}: テキストファイルではないため AI では直せません")
+            continue
         if edit.get("delete"):
             new_content = None
         elif isinstance(edit.get("content"), str):

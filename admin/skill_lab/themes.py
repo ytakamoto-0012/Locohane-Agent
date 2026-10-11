@@ -355,7 +355,7 @@ def validate_content(rel: str, content: str) -> None:
     """
     from evals.config_patch import ConfigPatchError, validate_patch
 
-    parts = rel.replace("\\", "/").split("/")
+    parts = rel.replace("\\", "/").strip().strip("/").split("/")
     if parts[0] == ASSETS_DIRNAME and parts[1] == "skills" and parts[-1] == "SKILL.md" and len(parts) == 4:
         error = validate_skill_md(content, parts[2])
     elif parts[0] == ASSETS_DIRNAME and parts[1] == "agents":
@@ -419,10 +419,23 @@ def validate_case_yaml(content: str, case_id: str) -> str | None:
         path = Path(tmp) / f"{case_id}.yaml"
         path.write_text(content, encoding="utf-8")
         try:
-            load_case(path)
+            case = load_case(path)
         except (ValueError, TypeError) as e:
-            return f"ケース {case_id}: {e}"
+            return f"ケース {case_id}: {str(e).replace(str(path), path.name)}"
+    if not case_has_condition(case):
+        # expect の項目がすべて空で judge も無いケースは何をしても合格になり、AI 修正の抜け道にもなる。
+        return f"ケース {case_id}: 合格の決め方（expect のいずれかの条件、または judge）を1つ以上入れてください。"
     return None
+
+
+def case_has_condition(case) -> bool:
+    """ケースに合否を決める条件が1つ以上あるか（evals.case_schema.EvalCase）。"""
+    if case.judge and case.judge.strip():
+        return True
+    e = case.expect
+    if e is None:
+        return False
+    return bool(e.tool_called_any or e.tool_not_called or e.tool_call_args_contains or e.response_contains or e.response_not_contains)
 
 
 def validate_python(content: str, rel: str) -> str | None:
@@ -554,6 +567,10 @@ def list_cases(directory: Path) -> list[dict]:
                     "notes": case.notes,
                 }
             )
+            if not case_has_condition(case):
+                item["error"] = "合格の決め方（expect の条件か judge）がありません"
+            elif case.work_dir and not _work_dir_exists(directory, case.work_dir):
+                item["error"] = f"使うファイルのフォルダ {case.work_dir} がありません"
         except Exception as e:  # noqa: BLE001 - 一覧では壊れたケースも理由付きで出す
             item["error"] = str(e)
         result.append(item)
@@ -604,9 +621,25 @@ def start_missing(directory: Path) -> list[str]:
         missing.append("① 研究対象（スキルかサブエージェントを1つ以上）")
     if not spec_filled(directory):
         missing.append("② やってほしいことの「目的」")
-    if not list_cases(directory):
+    cases = list_cases(directory)
+    if not cases:
         missing.append("③ 試験問題（1問以上）")
+    broken = [c["id"] for c in cases if c.get("error")]
+    if broken:
+        # 読めないケースがあると評価がエラーになり、AI 修正の手がかりにもならない。
+        missing.append(f"③ 試験問題の直し（読めない・条件や使うファイルが足りない: {', '.join(broken)}）")
     return missing
+
+
+def _work_dir_exists(directory: Path, work_dir: str) -> bool:
+    """ケースの work_dir（fixtures/<フォルダ>）がテーマの中にあるか。
+
+    fixtures/ で始まらない書き方（プロジェクトルートからの相対パス・絶対パス）は確かめない。
+    """
+    raw = Path(work_dir)
+    if raw.is_absolute() or raw.parts[:1] != (FIXTURES_DIRNAME,):
+        return True
+    return (directory / CASES_DIRNAME / raw).is_dir()
 
 
 def list_fixtures(directory: Path) -> list[str]:
