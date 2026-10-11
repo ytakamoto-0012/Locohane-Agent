@@ -97,12 +97,38 @@ class Worker:
 
     # --- メインループ -----------------------------------------------------
 
+    def recover(self) -> None:
+        """前回の異常終了で「実行中」のまま残ったタスクを待ちに戻す（そのままだと二度と処理されない）。
+
+        テーマ（status=running）は process_one_theme() が中断から再開するものとして先に拾う。
+        """
+        for _instance, directory in self._theme_dirs():
+            data = themes.read(directory)
+            if not self._assigned(data) or not any(t.get("status") == "running" for t in data.get("tasks") or []):
+                continue
+
+            def _apply(d: dict) -> None:
+                for t in d.get("tasks") or []:
+                    if t.get("status") == "running":
+                        t["status"] = "queued"
+
+            themes.update(directory, _apply)
+            logger.info("テーマ %s の中断していたタスクを待ちに戻しました。", directory.name)
+
     def run_forever(self) -> None:
         logger.info("スキル調整ワーカー %s を開始しました。", self.lab)
+        recovered = False
         while not self.shutdown:
-            worked = self.process_tasks()
-            if not self.shutdown:
-                worked = self.process_one_theme() or worked
+            try:
+                if not recovered:
+                    self.recover()
+                    recovered = True
+                worked = self.process_tasks()
+                if not self.shutdown:
+                    worked = self.process_one_theme() or worked
+            except Exception as e:  # noqa: BLE001 - 1件の想定外の失敗（壊れた theme.json 等）でワーカーを止めない
+                logger.error("処理中に想定外のエラーが起きました（少し待って続けます）: %s\n%s", e, traceback.format_exc())
+                worked = False
             if not worked:
                 self._sleep(self.config.skill_lab_poll_interval_seconds)
         logger.info("スキル調整ワーカー %s を終了します。", self.lab)
@@ -126,6 +152,18 @@ class Worker:
                 if task.get("status") != "queued" or self.shutdown:
                     continue
                 worked = True
+                # 依頼した後にテーマが終わった・ループが始まったときは、テーマのファイルを書き換える依頼を実行しない
+                # （ループの途中で仕様やケースが変わると、評価と修正の前提が崩れる）。
+                status = themes.read(directory).get("status")
+                if status in themes.CLOSED_STATUSES:
+                    self._set_task(directory, task["id"], status="error", finished_at=themes.now_iso(), error="テーマが終了したため実行しませんでした。")
+                    continue
+                if task.get("type") != "trial" and status in themes.ACTIVE_STATUSES:
+                    self._set_task(
+                        directory, task["id"], status="error", finished_at=themes.now_iso(),
+                        error="スキル調整ループ・トライアウトの開始後のため実行しませんでした（止めてから頼み直してください）。",
+                    )
+                    continue
                 self._run_task(instance, directory, task)
         return worked
 
@@ -244,12 +282,27 @@ class Worker:
                 "iterations_used": 0,
             }
 
+        picked = {"ok": False, "stopped": False}
+
         def _start(d: dict) -> None:
+            # 一覧を読んでからここまでの間に、人が停止・担当替えをしていれば始めない。
+            if d.get("status") not in themes.ACTIVE_STATUSES or not self._assigned(d):
+                return
+            if (d.get("loop") or {}).get("stop_requested"):
+                # ワーカーが止まっている間に押された停止（再開せずに停止として終える）。
+                picked["stopped"] = True
+                return
+            picked["ok"] = True
             d["status"] = themes.STATUS_RUNNING
             d["loop"] = {**loop, "stop_requested": False, "lab": self.lab}
             themes.add_history(d, f"スキル調整ワーカー {self.lab}", "loop_start" if mode == "loop" else "tryout_start")
 
         themes.update(directory, _start)
+        if picked["stopped"]:
+            self._finish(directory, themes.STATUS_STOPPED, "停止の要求により中断")
+            return
+        if not picked["ok"]:
+            return
         try:
             target_cfg = self._target_config(instance)
             if mode == "tryout":

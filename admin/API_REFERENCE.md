@@ -488,7 +488,9 @@ $C -X POST $BASE/api/instances/default/skill-lab/themes/<テーマID>/fixtures -
 
 AI への依頼（`type`: `trial`＝1回試行（`params.case_id`）／`draft_spec`／`draft_cases`（`params.count`）／`draft_asset`）と、
 ループの開始（`mode`: `loop`＝スキル調整ループ／`tryout`＝トライアウトだけ）・停止・取りやめ。
-開始には `spec.md` の「目的」・研究対象1つ以上・ケース1件以上が要り、足りなければ 400（テーマ詳細の `start_missing` に足りないものの一覧が入る）:
+開始には `spec.md` の「目的」・研究対象1つ以上・読めるケース1件以上が要り、足りなければ 400（テーマ詳細の `start_missing` に足りないものの一覧が入る）。
+下書きの依頼が残っている間・状態が変わった後の開始は 409。開始すると担当（`lab`）が決まる（変えるのは `PUT .../themes/<テーマID>` の `lab`）。
+停止は、担当のワーカーが動いていなければその場で `stopped` になる。差し戻し（`return`）は取り込み元のドラフトがあるテーマだけ:
 
 ```bash
 $C -X POST $BASE/api/instances/default/skill-lab/themes/<テーマID>/tasks -H "$H" -H "$J" -d '{"type": "trial", "params": {"case_id": "001_basic"}}'

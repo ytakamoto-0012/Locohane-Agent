@@ -660,6 +660,40 @@ def _lab_worker(lab_env):
     return w
 
 
+def test_worker_honours_stop_pressed_while_it_was_down(lab_env, monkeypatch):
+    """ワーカーが止まっている間に押された停止は、再起動したワーカーが打ち消さない。"""
+    directory = _theme(lab_env)
+    themes.update(directory, lambda d: d.update({"status": themes.STATUS_RUNNING, "loop": {"mode": "loop", "stop_requested": True}}))
+    w = _lab_worker(lab_env)
+    monkeypatch.setattr(w, "_loop", lambda *a: pytest.fail("停止されたテーマを再開した"))
+    w.run_theme("org_a", directory)
+    assert themes.read(directory)["status"] == themes.STATUS_STOPPED
+    # 一覧を読んだ後に停止されたテーマも始めない
+    themes.update(directory, lambda d: d.update({"status": themes.STATUS_STOPPED, "loop": {"mode": "loop"}}))
+    w.run_theme("org_a", directory)
+    assert themes.read(directory)["status"] == themes.STATUS_STOPPED
+
+
+def test_worker_recovers_tasks_left_running(lab_env):
+    directory = _theme(lab_env)
+    task_id = themes.add_task(directory, "draft_spec", {}, actor="admin")
+    w = _lab_worker(lab_env)
+    w._set_task(directory, task_id, status="running")
+    w.recover()
+    assert themes.read(directory)["tasks"][0]["status"] == "queued"
+
+
+def test_worker_does_not_run_drafts_after_loop_started(lab_env, monkeypatch):
+    directory = _theme(lab_env)
+    themes.add_task(directory, "draft_spec", {}, actor="admin")
+    themes.update(directory, lambda d: d.update({"status": themes.STATUS_QUEUED}))
+    w = _lab_worker(lab_env)
+    monkeypatch.setattr(w, "_run_task", lambda *a: pytest.fail("ループ開始後に下書きを実行した"))
+    w.process_tasks()
+    task = themes.read(directory)["tasks"][0]
+    assert task["status"] == "error" and "開始後" in task["error"]
+
+
 def test_worker_stops_without_fixing_when_llm_is_unreachable(lab_env, monkeypatch):
     """評価の LLM に接続できないときは、AI 修正で研究対象を書き換えずにエラーで止める。"""
     directory = _theme(lab_env)
@@ -681,5 +715,34 @@ def test_worker_evaluates_theme_only_with_its_own_instance(lab_env):
     path.write_text(json.dumps({"paths": {"common_data_dir": str(shared)}}), encoding="utf-8")
     directory = _theme(lab_env)
     assert _lab_worker(lab_env)._theme_dirs() == [("org_a", directory)]
+
+
+def _ready_api_theme(client, lab_env):
+    theme = client.post("/api/instances/org_a/skill-lab/themes", json={"title": "A"}).json()
+    base = f"/api/instances/org_a/skill-lab/themes/{theme['id']}"
+    directory = themes.theme_dir(themes.themes_root(_cfg(lab_env, "org_a").common_data_dir), theme["id"])
+    _add_skill(directory)
+    assert client.put(f"{base}/cases/case_001", json={"data": {"turns": ["x"], "judge": "y"}}).status_code == 200
+    assert client.put(f"{base}/files", json={"path": "spec.md", "content": "# A\n## 目的\n確かめる\n"}).status_code == 200
+    return base, directory
+
+
+def test_api_start_pins_lab_and_waits_for_drafts(client, lab_env):
+    base, directory = _ready_api_theme(client, lab_env)
+    themes.add_task(directory, "draft_cases", {}, actor="admin")
+    assert client.post(f"{base}/start", json={"mode": "loop"}).status_code == 409
+    themes.update(directory, lambda d: d.update({"tasks": []}))
+    assert client.post(f"{base}/start", json={"mode": "loop"}).status_code == 200
+    data = themes.read(directory)
+    # 研究室が1つのときの「自動」でも担当を決めておく（後から研究室が増えても拾われる）
+    assert data["status"] == themes.STATUS_QUEUED and data["lab"] == "lab1"
+    assert client.post(f"{base}/start", json={"mode": "loop"}).status_code == 409
+
+
+def test_api_stop_when_worker_is_down_stops_immediately(client, lab_env):
+    base, directory = _ready_api_theme(client, lab_env)
+    themes.update(directory, lambda d: d.update({"status": themes.STATUS_RUNNING, "loop": {"mode": "loop"}}))
+    assert client.post(f"{base}/stop").status_code == 200  # テストの Supervisor は「停止中」
+    assert themes.read(directory)["status"] == themes.STATUS_STOPPED
 
 

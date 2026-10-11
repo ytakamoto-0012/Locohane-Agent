@@ -250,6 +250,7 @@ function renderThemeHeader(state, header, container) {
     buttons.push(
       el("button", { class: "primary", text: "スキル調整ループを開始", disabled: startDisabled, onclick: () => startTheme(state, "loop") }),
       el("button", { text: "トライアウトだけ実行", disabled: startDisabled, onclick: () => startTheme(state, "tryout") }),
+      el("button", { text: "担当・名前を変更", onclick: () => openThemeSettingsModal(state) }),
       el("button", {
         text: "取りやめ",
         onclick: async () => {
@@ -269,6 +270,21 @@ function renderThemeHeader(state, header, container) {
   if (LAB_ACTIVE.includes(d.status) && lab && !["running", "external"].includes(lab.state)) {
     notes.push(el("p", { class: "warn-box", text: `担当の スキル調整ワーカー ${lab.display_name} が起動していません。インスタンス一覧から起動してください。` }));
   }
+  if (LAB_ACTIVE.includes(d.status) && !lab) {
+    notes.push(el("p", { class: "warn-box", text: "担当の スキル調整ワーカーが見つからないため、このままでは始まりません。停止してから「担当・名前を変更」で選び直してください。" }));
+  }
+  if (editable && !lab) {
+    notes.push(
+      el("p", {
+        class: "warn-box",
+        text: d.lab
+          ? `担当の スキル調整ワーカー ${d.lab} が見つかりません。「担当・名前を変更」で選び直してください。`
+          : d.labs.length
+            ? "担当の スキル調整ワーカーが決まっていません。「担当・名前を変更」で選んでください。"
+            : "スキル調整ワーカーがありません。インスタンス一覧で種類「スキル調整ワーカー」を作成してください。",
+      }),
+    );
+  }
   if (loop.message) notes.push(el("p", { class: "hint", text: loop.message }));
   if (editable && missing.length) notes.push(el("p", { class: "warn-box", text: `開始に必要なもの（研究内容のページで入れてください）: ${missing.join("、")}` }));
   header.replaceChildren(
@@ -277,6 +293,21 @@ function renderThemeHeader(state, header, container) {
     ...notes,
     el("div", { class: "theme-actions" }, buttons),
   );
+}
+
+function openThemeSettingsModal(state) {
+  const d = state.data;
+  const title = el("input", { type: "text" });
+  title.value = d.title;
+  const lab = labSelect(d.labs, d.lab);
+  const ok = el("button", { class: "primary", type: "button", text: "保存" });
+  const m = labModal("担当・名前を変更", [el("label", {}, ["テーマ名", title]), el("label", {}, ["担当の スキル調整ワーカー", lab])], { actions: [ok] });
+  ok.addEventListener("click", async () => {
+    const res = await labAction(() => api(themePath(state.name, state.id), { method: "PUT", body: { title: title.value, lab: lab.value } }), m.errorBox);
+    if (!res) return;
+    m.close();
+    await state.reload();
+  });
 }
 
 async function startTheme(state, mode) {

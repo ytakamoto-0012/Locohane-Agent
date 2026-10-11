@@ -302,6 +302,8 @@ def build_router(
     def update_theme(name: str, theme_id: str, body: UpdateThemeBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
         directory = _theme(name, theme_id)
         _check_lab(body.lab)
+        if themes.read(directory).get("status") in themes.CLOSED_STATUSES:
+            raise HTTPException(status_code=409, detail="このテーマは終了しています。")
         if body.lab is not None and themes.read(directory).get("status") in themes.ACTIVE_STATUSES:
             # 実行中に担当を替えると、元のワーカーが続けている間に新しいワーカーも同じテーマを拾ってしまう。
             raise HTTPException(status_code=409, detail="ループ・トライアウトの実行中・開始待ちの間は担当のワーカーを変えられません。先に停止してください。")
@@ -500,29 +502,52 @@ def build_router(
         if missing:
             raise HTTPException(status_code=400, detail="開始するには次を入れてください: " + "、".join(missing))
         labs = _labs()
-        if not data.get("lab") and len(labs) != 1:
-            raise HTTPException(status_code=400, detail="担当のスキル研究室を選んでください。")
+        lab = data.get("lab")
+        if lab and lab not in {x["name"] for x in labs}:
+            raise HTTPException(status_code=400, detail=f"担当のスキル調整ワーカー {lab} が見つかりません。「担当・名前を変更」で選び直してください。")
+        if not lab and len(labs) != 1:
+            raise HTTPException(
+                status_code=400,
+                detail="担当のスキル調整ワーカーを選んでください（「担当・名前を変更」）。" if labs else "スキル調整ワーカーがありません。先にインスタンス一覧で作成してください。",
+            )
+        pending = [t for t in data.get("tasks") or [] if t.get("type") != "trial" and t.get("status") in ("queued", "running")]
+        if pending:
+            # 下書きがループの途中で仕様・ケースを書き換えると、評価と修正の前提が崩れる。
+            raise HTTPException(status_code=409, detail="AI への依頼（下書き）が終わるまで待ってから開始してください。")
+        # 担当が決まっていなければ今の唯一のワーカーに決める（後からワーカーが増えても、どれも拾わなくならないように）。
+        lab = lab or labs[0]["name"]
+        changed = {"ok": False}
 
         def _apply(d: dict) -> None:
+            if d.get("status") in themes.ACTIVE_STATUSES | themes.CLOSED_STATUSES:
+                return  # 確かめてから書き込むまでの間に、別の操作で始まった・終わった
+            changed["ok"] = True
             d["status"] = themes.STATUS_QUEUED
+            d["lab"] = lab
             d["loop"] = {"mode": body.mode, "queued_at": themes.now_iso(), "stop_requested": False}
             themes.add_history(d, user, "start", body.mode)
 
         themes.update(directory, _apply)
+        if not changed["ok"]:
+            raise HTTPException(status_code=409, detail="テーマの状態が変わったため開始できませんでした。画面を更新してください。")
         _audit(request, user, name, "skill_lab_start", theme=theme_id, mode=body.mode)
-        return {"success": True, "lab_running": _lab_running(data)}
+        return {"success": True, "lab_running": _lab_running({**data, "lab": lab})}
 
     @router.post("/api/instances/{name}/skill-lab/themes/{theme_id}/stop")
     def stop(name: str, theme_id: str, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
         directory = _theme(name, theme_id)
+        # 担当のワーカーが動いていなければ、実行中の印が残っていても止める者がいないため、その場で停止にする。
+        worker_alive = _lab_running(themes.read(directory))
 
         def _apply(d: dict) -> None:
-            if d.get("status") == themes.STATUS_QUEUED:
+            if d.get("status") == themes.STATUS_QUEUED or (d.get("status") == themes.STATUS_RUNNING and not worker_alive):
                 d["status"] = themes.STATUS_STOPPED
                 if d.get("loop"):
-                    d["loop"]["deadline"] = None
-            elif d.get("status") == themes.STATUS_RUNNING and d.get("loop"):
-                d["loop"]["stop_requested"] = True
+                    d["loop"].update({"deadline": None, "stop_requested": False, "message": "停止しました"})
+            elif d.get("status") == themes.STATUS_RUNNING:
+                d["loop"] = {**(d.get("loop") or {}), "stop_requested": True}
+            else:
+                return
             themes.add_history(d, user, "stop")
 
         themes.update(directory, _apply)
@@ -533,12 +558,18 @@ def build_router(
     def cancel(name: str, theme_id: str, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
         directory = _theme(name, theme_id)
         _guard_editable(directory)
+        changed = {"ok": False}
 
         def _apply(d: dict) -> None:
+            if d.get("status") in themes.ACTIVE_STATUSES | themes.CLOSED_STATUSES:
+                return
+            changed["ok"] = True
             d["status"] = themes.STATUS_CANCELLED
             themes.add_history(d, user, "cancel")
 
         themes.update(directory, _apply)
+        if not changed["ok"]:
+            raise HTTPException(status_code=409, detail="テーマの状態が変わったため取りやめられませんでした。画面を更新してください。")
         promotion.unmark_imported(directory)
         _audit(request, user, name, "skill_lab_cancel", theme=theme_id)
         return {"success": True}
