@@ -647,6 +647,30 @@ def test_case_without_effective_condition_is_rejected(lab_env):
     assert any("001" in m and "002" in m for m in themes.start_missing(directory))
 
 
+def test_fixture_paths_and_reserved_names(lab_env):
+    directory = _theme(lab_env)
+    for rel in ("cases/fixtures/in.txt", "cases/fixtures/s1/CON", "cases/fixtures/s1/nul.txt"):
+        with pytest.raises(themes.ThemeError):
+            themes.resolve_path(directory, rel, for_write=True)
+    # 入力ファイルの .py は「直させる題材」なので、構文が壊れていても置ける
+    themes.write_text(directory, "cases/fixtures/s1/broken.py", "def (:\n", actor="admin")
+    assert (directory / "cases" / "fixtures" / "s1" / "broken.py").is_file()
+
+
+def test_spec_purpose_may_have_subheadings(lab_env):
+    directory = _theme(lab_env)
+    (directory / themes.SPEC_FILENAME).write_text("# t\n## 目的\n### 背景\n見積書の誤りを見つける\n## 使う場面\n", encoding="utf-8")
+    assert themes.spec_filled(directory)
+
+
+def test_config_patch_rejects_malformed_items():
+    with pytest.raises(config_patch.ConfigPatchError):
+        config_patch.validate_patch({"plan": {"plan_approval_exempt_scripts": [["only-one"]]}})
+    with pytest.raises(config_patch.ConfigPatchError):
+        config_patch.validate_patch({"subagent": {"agent_type_run_script_allowlist": [{"agent": "x"}]}})
+    assert config_patch.validate_patch({"plan": {"plan_approval_exempt_scripts": [["my-skill", "run.py"]]}})
+
+
 def _lab_worker(lab_env):
     from admin.skill_lab import worker as worker_mod
 
@@ -744,5 +768,23 @@ def test_api_stop_when_worker_is_down_stops_immediately(client, lab_env):
     themes.update(directory, lambda d: d.update({"status": themes.STATUS_RUNNING, "loop": {"mode": "loop"}}))
     assert client.post(f"{base}/stop").status_code == 200  # テストの Supervisor は「停止中」
     assert themes.read(directory)["status"] == themes.STATUS_STOPPED
+
+
+def test_api_new_case_does_not_overwrite_existing(client, lab_env):
+    base, _ = _ready_api_theme(client, lab_env)
+    res = client.put(f"{base}/cases/case_001?create=true", json={"data": {"turns": ["上書き"], "judge": "z"}})
+    assert res.status_code == 409
+    assert client.get(f"{base}/cases/case_001").json()["data"]["turns"] == ["x"]
+
+
+def test_api_rejects_importing_a_draft_twice_and_bad_uploads(client, lab_env):
+    draft = _draft(lab_env)
+    ids = [client.post("/api/instances/org_a/skill-lab/themes", json={"title": t, "lab": "lab1"}).json()["id"] for t in ("A", "B")]
+    body = {"mode": "draft", "asset_type": "skills", "name": "my-skill", "origin": str(draft)}
+    assert client.post(f"/api/instances/org_a/skill-lab/themes/{ids[0]}/assets", json=body).status_code == 200
+    res = client.post(f"/api/instances/org_a/skill-lab/themes/{ids[1]}/assets", json=body)
+    assert res.status_code == 400 and "取り込み済み" in res.json()["detail"]
+    upload = {"folder": "s1", "filename": "", "content_base64": "eA=="}
+    assert client.post(f"/api/instances/org_a/skill-lab/themes/{ids[0]}/fixtures", json=upload).status_code == 400
 
 

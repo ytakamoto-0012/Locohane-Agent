@@ -67,6 +67,8 @@ NAME_RE = re.compile(r"^[a-z0-9]+([_-][a-z0-9]+)*$")
 _CASE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 _THEME_ID_RE = re.compile(r"^[0-9]{14}_[0-9a-f]{4}$")
 _FIXTURE_PART_RE = re.compile(r"^[^\\/:*?\"<>|]+$")
+# Windows の予約デバイス名（拡張子付きでもデバイスを指す）。
+_RESERVED_NAME_RE = re.compile(r"^(con|prn|aux|nul|com[0-9]|lpt[0-9])(\..*)?$", re.IGNORECASE)
 
 
 class ThemeError(Exception):
@@ -228,7 +230,7 @@ def create_theme(root: Path, *, instance: str, title: str, lab: str | None, acto
 
 
 def _check_part(part: str) -> None:
-    if part in ("", ".", "..") or not _FIXTURE_PART_RE.match(part) or part.endswith((".", " ")):
+    if part in ("", ".", "..") or not _FIXTURE_PART_RE.match(part) or part.endswith((".", " ")) or _RESERVED_NAME_RE.match(part):
         raise ThemeError(f"パスに使えない名前が含まれています: {part!r}")
 
 
@@ -263,6 +265,11 @@ def resolve_path(directory: Path, rel: str, *, for_write: bool = False) -> Path:
         raise ThemeError(f"テーマの外を指すパスです: {rel}")
     if for_write and parts[0] == ASSETS_DIRNAME and parts[1] == "skills" and len(parts) == 3:
         raise ThemeError("スキルのフォルダそのものではなく、その中のファイルを指定してください。")
+    if for_write and parts[0] == CASES_DIRNAME and len(parts) == 3:
+        # 入力ファイルはフォルダ（ケースの work_dir: fixtures/<フォルダ>）の中に置く。
+        raise ThemeError("入力ファイルは cases/fixtures/<フォルダ名>/ の中に置いてください。")
+    if for_write and path.is_dir():
+        raise ThemeError(f"同じ名前のフォルダがあります: {rel}")
     return path
 
 
@@ -325,6 +332,12 @@ def write_bytes(directory: Path, rel: str, content: bytes, *, actor: str) -> Non
 
 def delete_path(directory: Path, rel: str, *, actor: str) -> None:
     path = resolve_path(directory, rel)
+    parts = rel.replace("\\", "/").strip().strip("/").split("/")
+    if parts in (["spec.md"], ["config_patch.json"]):
+        raise ThemeError(f"{rel} は削除できません（中身を空にして保存してください）。")
+    if parts[0] == ASSETS_DIRNAME and (parts[1] == "agents" or len(parts) == 3 or parts[3:] == ["SKILL.md"]):
+        # 研究対象の本体だけを消すと、入手元の記録（取り込んだドラフト等）と食い違う。
+        raise ThemeError("研究対象そのものを除くには、研究対象の「外す」を使ってください。")
     if not path.exists():
         raise ThemeError(f"見つかりません: {rel}")
     if path.is_dir():
@@ -368,7 +381,8 @@ def validate_content(rel: str, content: str) -> None:
             error = None
         except (json.JSONDecodeError, ConfigPatchError) as e:
             error = f"config_patch.json: {e}"
-    elif parts[-1].endswith(".py"):
+    elif parts[0] == ASSETS_DIRNAME and parts[-1].endswith(".py"):
+        # 入力ファイル（cases/fixtures/）の .py は「直させる題材」として壊れていてもよいため確かめない。
         error = validate_python(content, rel)
     else:
         error = None
@@ -579,6 +593,8 @@ def list_cases(directory: Path) -> list[dict]:
 
 _SPEC_HEADING = re.compile(r"^#{1,6}\s*(.*?)\s*$")
 _SPEC_UNSURE = re.compile(r"^要確認\s*[:：]?")
+# 節の終わり（# か ## の見出し）。### 以下の小見出しは節の本文に含める。
+_SPEC_SECTION_END = re.compile(r"^#{1,2}(?!#)")
 
 
 def _spec_section_lines(text: str, heading_prefix: str) -> list[str] | None:
@@ -589,7 +605,7 @@ def _spec_section_lines(text: str, heading_prefix: str) -> list[str] | None:
         if line.startswith("##") and m and m.group(1).startswith(heading_prefix):
             body = []
             for rest in lines[i + 1 :]:
-                if rest.startswith("#"):
+                if _SPEC_SECTION_END.match(rest):
                     break
                 body.append(rest)
             return body

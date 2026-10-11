@@ -480,7 +480,8 @@ $C -X DELETE $BASE/api/instances/default/skill-lab/themes/<テーマID>/assets/a
 ```bash
 $C "$BASE/api/instances/default/skill-lab/themes/<テーマID>/files?path=spec.md"
 $C -X PUT $BASE/api/instances/default/skill-lab/themes/<テーマID>/files -H "$H" -H "$J" -d '{"path": "spec.md", "content": "# ..."}'
-$C -X PUT $BASE/api/instances/default/skill-lab/themes/<テーマID>/cases/001_basic -H "$H" -H "$J" \
+# ?create=true を付けると、同じ名前のケースがあれば上書きせずに 409（新しく作るとき）
+$C -X PUT "$BASE/api/instances/default/skill-lab/themes/<テーマID>/cases/001_basic?create=true" -H "$H" -H "$J" \
   -d '{"data": {"turns": ["見積書を確認して"], "expect": {"tool_call_args_contains": {"dispatch_agent": {"agent_type": "estimate-checker"}}}}}'
 $C -X POST $BASE/api/instances/default/skill-lab/themes/<テーマID>/fixtures -H "$H" -H "$J" \
   -d '{"folder": "sample1", "filename": "見積書.xlsx", "content_base64": "<base64>"}'

@@ -990,7 +990,13 @@ async function openCaseEditor(state, caseId) {
   notContains.value = (expect.response_not_contains || []).join("\n");
   const judgeArea = el("textarea", { rows: 3, placeholder: "AI の判断は、昇格する前に人が確認します" });
   judgeArea.value = data.judge || "";
-  const workDir = el("select", {}, [el("option", { value: "", text: "（使わない）" }), ...state.data.fixtures.map((f) => el("option", { value: f, text: f }))]);
+  // 今の値が一覧に無い（フォルダを消した・fixtures/ 以外の書き方）ときも選択肢に残し、保存で黙って消さない。
+  const workDirChoices = [...state.data.fixtures];
+  if (data.work_dir && !workDirChoices.includes(data.work_dir)) workDirChoices.push(data.work_dir);
+  const workDir = el("select", {}, [
+    el("option", { value: "", text: "（使わない）" }),
+    ...workDirChoices.map((f) => el("option", { value: f, text: state.data.fixtures.includes(f) ? f : `${f}（見つかりません）` })),
+  ]);
   workDir.value = data.work_dir || "";
   const answers = el("textarea", { rows: 2, placeholder: "AI がユーザーに質問したときに返す答え（1行に1つ、順に使う）" });
   answers.value = (data.scripted_text_answers || []).join("\n");
@@ -1031,6 +1037,10 @@ async function openCaseEditor(state, caseId) {
   );
   save.addEventListener("click", async () => {
     const cid = id.value.trim() || nextCaseId(state);
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(cid)) {
+      m.errorBox.textContent = "問題の名前は、英数字で始まる英数字・-・_ にしてください（空欄なら自動で付けます）。";
+      return;
+    }
     if (!turns.value.trim()) {
       m.errorBox.textContent = "「利用者の指示」を入力してください。";
       return;
@@ -1055,7 +1065,9 @@ async function openCaseEditor(state, caseId) {
       m.errorBox.textContent = "合格の決め方を1つ以上入れてください（回答に入っているべき言葉、または AI が判断する点など）。";
       return;
     }
+    // フォームに無い項目（env 等）は、読み込んだケースの値のまま残す。
     const payload = {
+      ...data,
       turns: turns.value.split(/\r?\n---\r?\n/).map((s) => s.trim()).filter(Boolean),
       expect: Object.keys(exp).length ? exp : null,
       judge: judgeArea.value.trim() || null,
@@ -1065,7 +1077,8 @@ async function openCaseEditor(state, caseId) {
       timeout_seconds: timeout.value ? Number(timeout.value) : null,
       notes: notes.value.trim() || null,
     };
-    const ok = await labAction(() => api(themePath(state.name, state.id, `/cases/${encodeURIComponent(cid)}`), { method: "PUT", body: { data: payload } }), m.errorBox);
+    const url = themePath(state.name, state.id, `/cases/${encodeURIComponent(cid)}${caseId ? "" : "?create=true"}`);
+    const ok = await labAction(() => api(url, { method: "PUT", body: { data: payload } }), m.errorBox);
     if (ok) {
       m.close();
       await state.reload();

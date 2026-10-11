@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import yaml
@@ -130,13 +131,16 @@ def draft_cases(config: Config, directory: Path, *, max_file_chars: int, count: 
     for item in items[: max(1, count)]:
         if not isinstance(item, dict):
             continue
-        case_id = str(item.get("id") or "").strip()
+        case_id = re.sub(r"[^A-Za-z0-9_-]+", "_", str(item.get("id") or "")).strip("_-")[:48]
         n = 1
         base_id = case_id or "case"
         while not case_id or case_id in existing:
             case_id = f"{base_id}_{n}"
             n += 1
-        case = {"id": case_id, "target": "skill_lab", "turns": item.get("turns") or []}
+        turns = item.get("turns") or []
+        if isinstance(turns, str):
+            turns = [turns]
+        case = {"id": case_id, "target": "skill_lab", "turns": turns}
         for key in ("expect", "judge", "work_dir", "notes"):
             if item.get(key):
                 case[key] = item[key]
@@ -189,7 +193,11 @@ def draft_asset(
     themes.add_asset_new(directory, "agents", name, content, actor="AI（下書き）", description=request)
     allowlist = [e for e in data.get("allowlist") or [] if isinstance(e, list) and len(e) == 2 and e[0] == name]
     if allowlist:
-        merge_config_patch(directory, ("subagent", "agent_type_run_script_allowlist"), allowlist, actor="AI（下書き）")
+        try:
+            merge_config_patch(directory, ("subagent", "agent_type_run_script_allowlist"), allowlist, actor="AI（下書き）")
+        except (themes.ThemeError, ValueError):
+            # 形の崩れた許可はあきらめる（エージェントは作れているので、許可は「フォームで編集」で足せる）。
+            pass
 
 
 def merge_config_patch(directory: Path, key: tuple[str, str], items: list, *, actor: str) -> None:

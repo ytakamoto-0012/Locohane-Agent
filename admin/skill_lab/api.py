@@ -335,6 +335,10 @@ def build_router(
                 if not origin.is_relative_to(draft_root) or len(origin.relative_to(draft_root).parts) != 2:
                     raise themes.ThemeError("このインスタンスのドラフトではありません。")
                 owner = origin.parent.name
+                other = sources.imported_drafts(_root(name)).get(str(origin))
+                if other and other != theme_id:
+                    # 2つのテーマで同じドラフトを仕上げると、昇格・差し戻しが食い違う。
+                    raise themes.ThemeError(f"このドラフトは別のテーマ（{other}）に取り込み済みです。そのテーマで続けるか、取りやめてから取り込んでください。")
                 themes.add_asset_copy(
                     directory, "skills", origin.name, origin, source={"kind": "draft", "origin": str(origin), "owner": owner}, actor=user
                 )
@@ -362,7 +366,8 @@ def build_router(
             elif body.mode == "new":
                 themes.add_asset_new(directory, body.asset_type, body.name, body.content or "", actor=user)
             elif body.mode == "ai":
-                themes.asset_path(directory, body.asset_type, body.name)
+                if themes.asset_path(directory, body.asset_type, body.name).exists():
+                    raise themes.ThemeError(f"同じ名前の研究対象が既にあります: {body.name}")
                 if not (body.request or "").strip():
                     raise themes.ThemeError("何をさせたいかを書いてください。")
                 task_id = themes.add_task(
@@ -435,11 +440,23 @@ def build_router(
 
     @router.put("/api/instances/{name}/skill-lab/themes/{theme_id}/cases/{case_id}")
     def write_case(
-        name: str, theme_id: str, case_id: str, body: CaseBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)
+        name: str,
+        theme_id: str,
+        case_id: str,
+        body: CaseBody,
+        request: Request,
+        create: bool = Query(default=False),
+        user: str = Depends(require_login),
+        _c=Depends(require_csrf),
     ):
-        """フォームで作ったケースを yaml にして保存する（id・target はここで決める）。"""
+        """フォームで作ったケースを yaml にして保存する（id・target はここで決める）。
+
+        create=true（新しく作るとき）は、同じ名前のケースがあれば上書きせずに断る。
+        """
         directory = _theme(name, theme_id)
         _guard_editable(directory)
+        if create and (directory / themes.CASES_DIRNAME / f"{case_id}.yaml").exists():
+            raise HTTPException(status_code=409, detail=f"同じ名前の試験問題（{case_id}）が既にあります。別の名前にしてください。")
         data = {"id": case_id, "target": "skill_lab", **{k: v for k, v in body.data.items() if k not in ("id", "target")}}
         data = {k: v for k, v in data.items() if v not in (None, "", [], {})}
         content = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
@@ -460,7 +477,10 @@ def build_router(
             raise HTTPException(status_code=400, detail="ファイルの内容を読めません。") from exc
         if len(content) > _MAX_UPLOAD_BYTES:
             raise HTTPException(status_code=400, detail=f"ファイルが大きすぎます（上限 {_MAX_UPLOAD_BYTES // 1024 // 1024}MB）。")
-        rel = f"{themes.CASES_DIRNAME}/{themes.FIXTURES_DIRNAME}/{body.folder.strip()}/{Path(body.filename).name}"
+        filename = Path(body.filename.replace("\\", "/")).name.strip()
+        if not filename or not body.folder.strip():
+            raise HTTPException(status_code=400, detail="フォルダ名とファイル名を指定してください。")
+        rel = f"{themes.CASES_DIRNAME}/{themes.FIXTURES_DIRNAME}/{body.folder.strip()}/{filename}"
         try:
             themes.write_bytes(directory, rel, content, actor=user)
         except themes.ThemeError as exc:
@@ -480,6 +500,15 @@ def build_router(
             raise HTTPException(status_code=409, detail="ループ・トライアウトの実行中は下書きを頼めません。")
         if body.type == "trial" and body.params.get("case_id") not in {c["id"] for c in themes.list_cases(directory)}:
             raise HTTPException(status_code=400, detail="試すケースを選んでください。")
+        if body.type == "draft_asset":
+            try:
+                target = themes.asset_path(directory, str(body.params.get("asset_type") or ""), str(body.params.get("name") or ""))
+            except themes.ThemeError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            if target.exists():
+                raise HTTPException(status_code=400, detail=f"同じ名前の研究対象が既にあります: {body.params.get('name')}")
+            if not str(body.params.get("request") or "").strip():
+                raise HTTPException(status_code=400, detail="何をさせたいかを書いてください。")
         try:
             task_id = themes.add_task(directory, body.type, body.params, actor=user)
         except themes.ThemeError as exc:

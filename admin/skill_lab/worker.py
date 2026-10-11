@@ -190,7 +190,7 @@ class Worker:
                     cfg,
                     directory,
                     max_file_chars=cfg.skill_lab_fixer_max_file_chars,
-                    count=int(params.get("count") or 3),
+                    count=min(max(int(params.get("count") or 3), 1), 10),
                     request=params.get("request", ""),
                 )
                 result = {"message": f"ケースを {len(created)} 件下書きしました。", "created": created}

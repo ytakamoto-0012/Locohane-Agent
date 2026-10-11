@@ -80,8 +80,34 @@ def validate_patch(data: object) -> dict[tuple[str, str], list]:
             if not isinstance(items, list):
                 raise ConfigPatchError(f"[{section}].{key} の値はリストにしてください")
             if items:
+                _validate_items(section, key, items)
                 result[(section, key)] = items
     return result
+
+
+def _validate_items(section: str, key: str, items: list) -> None:
+    """項目の形を、config.ini の値を読むときと同じ解析処理で確かめる。
+
+    形の違う項目を足すと、評価では設定の読み込みで全ケースがエラーになり、
+    昇格では config_overrides.json の保存が検証で止まるため、書いた時点で止める。
+    """
+    from src import config as config_mod
+
+    def _plain(x) -> bool:
+        return isinstance(x, (str, int, float, bool)) or x is None or (isinstance(x, list) and all(_plain(i) for i in x))
+
+    for item in items:
+        if not _plain(item):
+            raise ConfigPatchError(f"[{section}].{key} の項目に使えない値があります（文字列・数値・リストだけ）: {item!r}")
+    parser = {
+        ("subagent", "agent_type_run_script_allowlist"): config_mod._parse_agent_type_run_script_allowlist,
+        ("plan", "plan_approval_exempt_scripts"): config_mod._parse_plan_approval_exempt_scripts,
+        ("main_agent_tool_guard", "allow_entries"): config_mod._parse_main_agent_tool_guard_allow_entries,
+    }[(section, key)]
+    try:
+        parser(format_list_literal(items))
+    except ValueError as e:
+        raise ConfigPatchError(f"[{section}].{key}: {e}") from e
 
 
 def format_list_literal(items: list) -> str:
