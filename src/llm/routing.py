@@ -14,7 +14,7 @@ import logging
 import random
 import time
 import weakref
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 from urllib.parse import urlsplit
 
 import httpx
@@ -93,6 +93,46 @@ def reset_preferred_sub_model(token: contextvars.Token) -> None:
 def get_preferred_sub_model() -> str | None:
     """set_preferred_sub_model() で設定された現在のモデル名を返す（未設定なら None）。"""
     return _PREFERRED_SUB_MODEL.get()
+
+
+# LLM へのリクエストが空き待ち（[llm].max_concurrent_requests のセマフォ、または
+# 接続先の空きスロット待ち）に入った／抜けたことを知らせる先。src/subagent.py の
+# run_subagent が自分のタスク内で設定し、進捗表示を「LLMの空き待ち」と
+# 「思考中」等で切り替えるのに使う。contextvar なので他のジョブ・メイン
+# エージェントの LLM 呼び出しには伝わらない。None なら通知しない。
+_LLM_WAIT_LISTENER: contextvars.ContextVar[Callable[[bool], None] | None] = contextvars.ContextVar(
+    "_llm_wait_listener", default=None
+)
+
+
+def set_llm_wait_listener(listener: Callable[[bool], None] | None) -> contextvars.Token:
+    """これ以降このタスクの LLM 呼び出しの空き待ちを listener(待機中か) で知らせる。
+
+    Returns:
+        reset_llm_wait_listener() に渡すトークン。
+    """
+    return _LLM_WAIT_LISTENER.set(listener)
+
+
+def reset_llm_wait_listener(token: contextvars.Token) -> None:
+    """set_llm_wait_listener() の設定を元に戻す。"""
+    _LLM_WAIT_LISTENER.reset(token)
+
+
+def notify_llm_wait(waiting: bool) -> None:
+    """空き待ちに入った（True）／抜けた（False）ことを listener へ知らせる。
+
+    待っていなかった場合にも False を送ってよい（listener 側で状態が変わった
+    ときだけ反映する前提）。表示のための通知なので、listener の例外で LLM
+    呼び出しを失敗させない。
+    """
+    listener = _LLM_WAIT_LISTENER.get()
+    if listener is None:
+        return
+    try:
+        listener(waiting)
+    except Exception:  # noqa: BLE001 - 進捗表示の失敗で生成を止めない
+        logger.debug("LLM空き待ちの通知に失敗しました", exc_info=True)
 
 
 def set_current_session(session_id: str | None, *, tab_id: str | None = None) -> None:
@@ -624,6 +664,7 @@ async def _select_endpoint_with_slots_probe(
             busy_poll_interval_seconds,
             attempt,
         )
+        notify_llm_wait(True)
         await asyncio.sleep(busy_poll_interval_seconds)
 
 
@@ -837,6 +878,8 @@ async def _select_endpoint(
             wait_when_busy=wait_when_busy,
             model_candidates=model_candidates,
         )
+        # 空きスロット待ちをしていた場合はここで抜けたことを知らせる（待っていなければ何も変わらない）。
+        notify_llm_wait(False)
 
     _LAST_SELECTED_INDEX[state_key] = index
     logger.info(

@@ -65,8 +65,11 @@ from .llm import (
     enable_thinking_control,
     mark_last_endpoint_failed,
     pick_loop_nudge_message,
+    reset_llm_wait_listener,
+    set_llm_wait_listener,
     tool_loop_nudge_text,
 )
+from .tool_labels import tool_label
 
 logger = logging.getLogger(__name__)
 
@@ -80,6 +83,8 @@ _EMPTY_RESPONSE_NUDGE_TEXT = (
 # そのまま出るため、後からログを読む人が原因を取り違えないよう区別する。
 RESCUE_REASON_CANCELLED = "停止ボタン等による強制終了"
 RESCUE_REASON_TOKEN_GUARD = "トークン使用量が上限に到達したことによる打ち切り"
+# run_subagent の on_activity へ、LLM の空き待ち中に渡す表示名。
+_LLM_WAIT_ACTIVITY = "LLMの空き待ち"
 
 # 会話履歴圧縮・トークン閾値注意メッセージ注入の直後1手に限り、tool_calls無し
 # の最終応答を無検査で受理しない（2026-08-23 issue: 圧縮直後にモデルが
@@ -593,10 +598,13 @@ async def run_subagent(
             打ち切るため、このコールバック自体の例外はここで捕捉して
             握りつぶし、打ち切り処理を継続する。
         on_activity: 今している動作が変わるたびに、その表示名（"思考中"・
-            "ツール: Read、Grep"・"会話履歴の圧縮中"）を渡して呼ぶ同期コールバック
-            （省略可）。表示名は UI のStepバッジ（frontend/src/components/StepItem.tsx）
-            と揃えてある。dispatch_agent が進捗表示へ「今何をしているか」を
-            出すために使う。戻り値は無視する。例外は送出しない前提（呼び出し元の責任）。
+            "ツール: スクリプト実行、Grep"・"会話履歴の圧縮中"・"LLMの空き待ち"）を
+            渡して呼ぶ同期コールバック（省略可）。ツールの表示名は UI のStepバッジと
+            同じ対応表（src/tool_labels.py）から引く。"LLMの空き待ち" は
+            [llm].max_concurrent_requests の枠や接続先の空きスロットを待っている間
+            （src/llm/routing.py の notify_llm_wait）で、抜けたら元の表示に戻す。
+            dispatch_agent が進捗表示へ「今何をしているか」を出すために使う。
+            戻り値は無視する。例外は送出しない前提（呼び出し元の責任）。
 
     Returns:
         サブエージェントの最終回答テキスト。
@@ -606,7 +614,6 @@ async def run_subagent(
     from .tools.session_tools import apply_session_tool_overrides  # noqa: PLC0415 (src.tools が本モジュールを import するため循環を避ける)
 
     tools = apply_session_tool_overrides(tools)
-    model = enable_thinking_control(await build_model(config, role="sub"), config, "sub").bind_tools(tools)
     tools_by_name = {t.name: t for t in tools}
     messages: list = [SystemMessage(content=system_prompt), HumanMessage(content=task)]
 
@@ -635,6 +642,32 @@ async def run_subagent(
     # 注意メッセージを入れた回数。thinking_loop_guard_max_retries を超えたら打ち切る。
     tool_loop_retries = 0
 
+    # on_activity へ最後に渡した表示と、LLMの空き待ち中か。空き待ちから抜けたら
+    # 待つ前の表示（"思考中"・"会話履歴の圧縮中" 等）へ戻す。
+    activity = ""
+    llm_waiting = False
+
+    def _set_activity(name: str) -> None:
+        nonlocal activity, llm_waiting
+        activity, llm_waiting = name, False
+        if on_activity is not None:
+            on_activity(name)
+
+    def _on_llm_wait(waiting: bool) -> None:
+        nonlocal llm_waiting
+        if on_activity is None or waiting == llm_waiting:
+            return
+        llm_waiting = waiting
+        on_activity(_LLM_WAIT_ACTIVITY if waiting else activity)
+
+    # contextvar なので、このサブエージェントの中の LLM 呼び出し（再構築・圧縮の
+    # 要約・ツール内部の呼び出しを含む）だけが対象になる。
+    wait_listener_token = set_llm_wait_listener(_on_llm_wait if on_activity is not None else None)
+    try:
+        model = enable_thinking_control(await build_model(config, role="sub"), config, "sub").bind_tools(tools)
+    except BaseException:
+        reset_llm_wait_listener(wait_listener_token)
+        raise
     try:
         for iteration in range(1, max_iterations + 1):
             check_final_answer_strictly = just_compacted_or_nudged
@@ -671,8 +704,7 @@ async def run_subagent(
                 )
                 tool_loop_retries += 1
             llm_input = _build_llm_input(messages, config)
-            if on_activity is not None:
-                on_activity("思考中")
+            _set_activity("思考中")
             try:
                 response, model, empty_retries_exhausted = await _invoke_with_timeout_retry(
                     model, llm_input, config, tools, llm_timeout_max_retries
@@ -768,9 +800,8 @@ async def run_subagent(
                     messages,
                 )
 
-            if on_activity is not None:
-                # 並列の同名呼び出しは1つにまとめる（dict.fromkeys で順序を保つ）。
-                on_activity("ツール: " + "、".join(dict.fromkeys(call["name"] for call in tool_calls)))
+            # 並列の同名呼び出しは1つにまとめる（dict.fromkeys で順序を保つ）。
+            _set_activity("ツール: " + "、".join(dict.fromkeys(tool_label(call["name"]) for call in tool_calls)))
             results = await asyncio.gather(*(_run_one_tool_call(call, tools_by_name) for call in tool_calls))
             for tool_message, followup in results:
                 messages.append(tool_message)
@@ -783,8 +814,6 @@ async def run_subagent(
                 len(messages),
                 compaction_config,
             ):
-                if on_activity is not None:
-                    on_activity("会話履歴の圧縮中")
                 blocked = is_compaction_blocked_by_missing_note(messages, compaction_config, note_skip_count)
                 # 圧縮用モデルはツール未bindの素のインスタンスを使う（本編の model は
                 # bind_tools 済みで、要約専用の呼び出しにツール定義を含める必要が
@@ -802,6 +831,7 @@ async def run_subagent(
                     # write_thread_note の実行を強制する。サブエージェントは
                     # 「委譲元へ返すのは要約、具体的な事実は thread note へ」と
                     # いう前提で動くため、ここでの退避はメイン側以上に重要。
+                    _set_activity("ツール: " + tool_label("write_thread_note"))
                     summary_model = await build_model(config, role="sub")
                     # messages[0]（SystemMessage）は要約元テキストに含めない
                     # （maybe_compact へ messages[1:] を渡すのと同じ理由。下記参照）。
@@ -832,6 +862,8 @@ async def run_subagent(
                     # 予算切れ等の場合はリセットしない。ここでリセットしてしまうと、
                     # 猶予を使い切って強制圧縮に踏み切った直後に要約が失敗したとき、
                     # 安全弁がまた最初から猶予を積み直すことになり骨抜きになる）。
+                    # 見送る場合（blocked のまま）は圧縮しないため、ここで初めて表示する。
+                    _set_activity("会話履歴の圧縮中")
                     if summary_model is None:
                         summary_model = await build_model(config, role="sub")
                     # messages[0] は run_subagent 開始時に積んだ SystemMessage。graph.py の
@@ -916,6 +948,8 @@ async def run_subagent(
             except Exception:  # noqa: BLE001 - 退避処理の失敗でCancelledErrorの伝播を妨げない
                 logger.exception("subagent: on_cancelled コールバックの実行に失敗しました")
         raise
+    finally:
+        reset_llm_wait_listener(wait_listener_token)
 
 
 def dump_messages_for_cancelled_rescue(messages: list, reason: str = RESCUE_REASON_CANCELLED) -> str:

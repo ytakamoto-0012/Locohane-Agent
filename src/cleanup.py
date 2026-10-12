@@ -1,6 +1,6 @@
 """ディレクトリ配下の期限切れファイルを定期的に削除する汎用ユーティリティ。
 
-アップロードファイル（src/uploads.py）とパスメモリーのレジストリファイル
+添付・埋め込み画像（data/elements/<thread_id>/）やパスメモリーのレジストリファイル
 （data/path_memory/<thread_id>.json、app.py が起動時・定期的に呼ぶ）など、
 「日数ベースの保持期間を過ぎたファイルを自動削除する」という同じパターンを
 複数箇所で使うため、ここに共通実装を置く。
@@ -90,10 +90,10 @@ def cleanup_old_dirs(directory: Path, retention_days: int, pattern: str = "*") -
 def cleanup_old_files_in_subdirs(directory: Path, retention_days: int, pattern: str = "*") -> int:
     """directory 直下の各サブディレクトリの中身に対し、ファイル単位で cleanup_old_files を適用する。
 
-    config.upload_dir/<username>/ のように、ユーザー名などキーごとの
+    config.elements_dir/<thread_id>/ のように、スレッドIDなどキーごとの
     サブフォルダに実ファイルがフラットに溜まる構成向け。サブフォルダ
-    自体の更新日時（＝直近のアップロード日時）で一括判定してしまうと、
-    使い続けているユーザーの古いファイルがいつまでも消えないため、
+    自体の更新日時（＝直近の追加日時）で一括判定してしまうと、
+    使い続けているスレッドの古いファイルがいつまでも消えないため、
     ファイルごとの更新日時で個別に削除する。削除の結果サブフォルダが
     空になった場合は、そのサブフォルダも削除する。
 

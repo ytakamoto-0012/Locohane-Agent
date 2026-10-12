@@ -31,6 +31,7 @@ from .routing import (
     _CURRENT_SESSION_ID,
     _select_endpoint,
     get_preferred_sub_model,
+    notify_llm_wait,
     release_slot_reservation,
     reserve_slot,
 )
@@ -258,7 +259,9 @@ class ChatLlamaCpp(ChatOpenAI):
             return
         if sem.locked():
             logger.debug("空きスロットが無いため待機します（llm concurrent guard）")
+            notify_llm_wait(True)
         async with sem:
+            notify_llm_wait(False)
             self._release_slot_reservation()
             async for chunk in self._astream_guarded(*args, **kwargs):
                 yield chunk
@@ -392,7 +395,9 @@ class ChatLlamaCpp(ChatOpenAI):
             return await super()._agenerate(*args, **kwargs)
         if sem.locked():
             logger.debug("空きスロットが無いため待機します（llm concurrent guard）")
+            notify_llm_wait(True)
         async with sem:
+            notify_llm_wait(False)
             self._release_slot_reservation()
             return await super()._agenerate(*args, **kwargs)
 

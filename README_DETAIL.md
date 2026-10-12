@@ -441,8 +441,8 @@ Locohane/
 │   ├── cleanup.py           # 不要ファイルの自動削除
 │   ├── files.py             # ファイルアップロード処理
 │   ├── images.py            # 画像処理・Data URL変換
+│   ├── tool_labels.py       # ツールの表示名（UIのStepバッジとサブエージェントの進捗表示で共有）
 │   ├── log_rotation.py      # app.log の日時ローテーション
-│   └── uploads.py           # アップロードファイル管理
 ├── agents/
 │   ├── README/AGENTS_README.md # エージェント種別定義（frontmatter）の書き方ガイド（*.mdスキャン時の警告を避けるためREADME/配下に退避）
 │   ├── explore.md           # 読み取り専用の汎用調査・オフィス文書/PDF調査エージェント種別
@@ -479,13 +479,12 @@ Locohane/
 │   └── test_*.py            # 各モジュールのテスト
 └── data/                    # 実行時生成（.gitignore 済み）
     ├── checkpoints.sqlite   # LangGraph の会話状態
-    ├── uploads/             # Chainlit にアップロードされたファイル
     ├── logs/                # アプリ動作ログ（日時ローテーション）
     ├── logs_chat/           # 会話ログ（ユーザー発言＋AI応答）
     ├── memory/              # 永続メモリー（type別サブフォルダ＋MEMORY.md）
     ├── path_memory/         # パスメモリーレジストリ（.json）
     ├── plans/               # create_plan が detail_markdown を渡した際の詳細計画Markdown
-    └── temp/                # 一時ファイル
+    └── temp/                # 既定の作業ディレクトリ（スレッド専用フォルダ _tmp_*/。アップロードしたファイルもここ）
 ```
 
 各モジュール冒頭に「そのファイルが仕様のどの段階を実装するか」をコメントで記載している。
@@ -534,31 +533,33 @@ Locohane/
 
 ## データの保存場所と手動削除の手順
 
-すべて `data/` 配下（`config.ini` の `[paths]`/`[uploads]`/`[elements]`/`[log]`/`[default_workdir]` 等の `dir` 系キーで変更可）。`data/` は `.gitignore` 済み。保存先ルートをまとめて変更したい場合は、各キーを個別に書き換える代わりに `[paths] common_data_dir`（既定 `./data/${instance}`）だけを変更すればよい（対応するキーの値は `${common_data_dir}` を参照する形で書かれている）。`${instance}` は起動中のインスタンス名（`app.bat` で直接起動した場合は `default`）に置換されるため、既定ではインスタンスごとに `data/<インスタンス名>/` へ分かれる。下表の `data/` は、既定設定では `data/<インスタンス名>/`（例: `data/default/`）を指す。
+すべて `data/` 配下（`config.ini` の `[paths]`/`[elements]`/`[log]`/`[default_workdir]` 等の `dir` 系キーで変更可）。`data/` は `.gitignore` 済み。保存先ルートをまとめて変更したい場合は、各キーを個別に書き換える代わりに `[paths] common_data_dir`（既定 `./data/${instance}`）だけを変更すればよい（対応するキーの値は `${common_data_dir}` を参照する形で書かれている）。`${instance}` は起動中のインスタンス名（`app.bat` で直接起動した場合は `default`）に置換されるため、既定ではインスタンスごとに `data/<インスタンス名>/` へ分かれる。下表の `data/` は、既定設定では `data/<インスタンス名>/`（例: `data/default/`）を指す。
 
-**旧バージョン（データを `data/` 直下に保存していた版）からの移行:** 既定の保存先が `./data` から `./data/${instance}` に変わったため、そのまま起動すると過去のスレッド・永続メモリー等が見えなくなる（消えてはいない）。アプリ停止中に、`data/` 直下のファイル・フォルダ（`checkpoints.sqlite`・`chat_threads.sqlite`・`memory/`・`logs/`・`uploads/`・`elements/`・`plans/`・`path_memory/`・`logs_chat/`・`temp/`・`app.lock` 等）を `data/default/` へ移動すれば引き継げる。移動せず旧来の場所を使い続けたい場合は、管理ツールの設定画面で default インスタンスの `[paths] common_data_dir` を `./data` にする。
+**旧バージョン（データを `data/` 直下に保存していた版）からの移行:** 既定の保存先が `./data` から `./data/${instance}` に変わったため、そのまま起動すると過去のスレッド・永続メモリー等が見えなくなる（消えてはいない）。アプリ停止中に、`data/` 直下のファイル・フォルダ（`checkpoints.sqlite`・`chat_threads.sqlite`・`memory/`・`logs/`・`elements/`・`plans/`・`path_memory/`・`logs_chat/`・`temp/`・`app.lock` 等）を `data/default/` へ移動すれば引き継げる。移動せず旧来の場所を使い続けたい場合は、管理ツールの設定画面で default インスタンスの `[paths] common_data_dir` を `./data` にする。
 
 | パス | 中身 | 削除してよいタイミング | 削除方法 |
 |------|------|------------------------|----------|
 | `data/checkpoints.sqlite` | LangGraph の会話状態（全スレッドの履歴） | 過去の会話履歴が不要になったとき | ファイルを削除（アプリ停止中に） |
 | `data/chat_threads.sqlite` | 会話スレッド一覧（画面左サイドバー）・再開用のメタデータ（スレッド名・所有者・Chainlitの Step 履歴）。`checkpoints.sqlite` とは別ファイル（`[thread_store]`参照） | 一覧・再開機能が不要になったとき | ファイルを削除（アプリ停止中に。`checkpoints.sqlite` 自体は消えないため会話状態は失われない） |
-| `data/uploads/` | Chainlit にアップロードされたファイル | アップロード資料が不要になったとき | フォルダ内を削除 |
 | `data/logs/app.log` | アプリの動作ログ | いつでも | ファイルを削除 |
 | `data/memory/` | 永続メモリー（`user`/`feedback`/`project`/`reference` サブフォルダ＋`MEMORY.md`索引） | 蓄積した記憶が不要になったとき | フォルダ内を削除（`MEMORY.md`は次回保存時に再生成される） |
 | `data/plans/` | `create_plan` が `detail_markdown` 引数を渡した場合の詳細計画Markdown（`[paths] plans_dir`） | 古い計画が不要になったとき | フォルダ内を削除 |
 | `data/skill_drafts/<ユーザー名>/` | skill-creator が作ったユーザー別ドラフトスキル（`<スキル名>/`）と、その評価結果（`_workspace/`）。`[skill_creator] draft_dir`。不採用のドラフトも記録として残る（一覧には出ない） | 不要なドラフトがあるとき | ドラフトのフォルダを削除（作成者は skill-creator の `delete_draft.py` でも消せる）。自動削除はされない |
 | `data/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
 | `data/skill_lab/themes/<テーマID>/` | スキル研究室の研究テーマ（仕様・開発中の資産・ケース・入力ファイル・評価と AI 修正の記録 `runs/`）。対象インスタンスごとに分かれる | テーマが終わり、記録が不要になったとき | テーマのフォルダを削除（実行中でないこと） |
-| `data/temp/_tmp_<作成時刻>_<thread_id>/` | `execute_python_code`/`run_script` の中間生成物・`write_scratch_note`/`write_thread_note` の書き出し先。自セッション専用（`[default_workdir]` 参照）。フォルダ名先頭の作成時刻（ミリ秒まで）はファイラー上で作成順に並べるためのもの | セッション終了後、不要になったとき | フォルダ内を削除（`[default_workdir] retention_days`/`cleanup_interval_hours` により自動削除もされる） |
+| `data/temp/_tmp_<作成時刻>_<thread_id>/` | `execute_python_code`/`run_script` の中間生成物・`write_scratch_note`/`write_thread_note` の書き出し先。チャットでアップロードしたファイル（`uploads/<送信日時>/`。作業フォルダを指定していてもここ）。自セッション専用（`[default_workdir]` 参照）。フォルダ名先頭の作成時刻（ミリ秒まで）はファイラー上で作成順に並べるためのもの | セッション終了後、不要になったとき | フォルダ内を削除（`[default_workdir] retention_days`/`cleanup_interval_hours` により自動削除もされる） |
 | `data/elements/<thread_id>/` | 添付ファイル（`provide_download`/`analyze_image`の`show_in_chat=True`等）・回答本文への画像埋め込みの永続化先。スレッド再開・プロセス再起動後も表示できるようここへ実体をコピー保存する（`[elements]`参照、`src/thread_store.py`） | 添付ファイルが不要になったとき | フォルダ内を削除 |
 | `.files/` | Chainlit自身のセッションファイル配信ディレクトリ（送信直後のライブ表示にのみ使う一時配信。プロジェクト直下、`data/`配下ではない） | いつでも | フォルダ内を削除 |
 | `data/app.lock` | 同一データディレクトリへの多重起動を防ぐプロセス排他ロック（`src/instance_lock.py`）。空ファイルにOSのファイルロックをかけるだけで中身は使わない | アプリ停止中、削除しても実害はない | ファイルを削除（アプリ起動中は削除不可） |
 | `data/runtime_status.json` | 接続中セッション・生成中スレッドのスナップショット（設定ダッシュボードのモニター表示用、`src/runtime_status.py`）。本体が数秒ごとに更新し、正常終了時に削除する | 異常終了で残った場合 | ファイルを削除（次回起動時に作り直される） |
 | `instances/<name>/` | 設定ダッシュボード（管理ツール）が管理するインスタンス別ディレクトリ（`config_overrides.json`・`.env`・`settings/`・`backups/`・`app_stdout.log`・スキル研究室で昇格したそのインスタンス専用のスキル・サブエージェント `locohane/`。データ本体は`data/<name>/`） | インスタンス自体が不要になったとき | 管理ツールの削除機能を使う（稼働中・`default`は不可。ログ・スレッド・default_workdir 等の永続データは、削除ダイアログで選択したものだけ一緒に削除される。詳細は「設定ダッシュボード」節） |
 
-`data/uploads/` は `config.ini` の `[uploads] retention_days`（既定7日）を過ぎたファイルを
-`cleanup_interval_hours`（既定1時間）おきに自動削除する。`retention_days` を0以下にすると
-自動削除は無効化される。`data/elements/` も `[elements] retention_days`（既定7日）・
+`data/temp/_tmp_*/` は `config.ini` の `[default_workdir] retention_days`（既定7日）を過ぎたフォルダを
+アップロードしたファイルごと `cleanup_interval_hours`（既定1時間）おきに自動削除する。`retention_days` を0以下にすると
+自動削除は無効化される。アップロードした画像は会話へ直接埋め込まず保存先のパス（`@N`）だけを LLM へ渡すため、
+この日数を過ぎてから古いスレッドを再開すると、そのスレッドでアップロードしたファイルはもう開けない（再度アップロードする）。
+旧版の `data/uploads/`（`[uploads]` は廃止）は使われなくなったため、不要ならフォルダごと削除してよい。
+`data/elements/` も `[elements] retention_days`（既定7日）・
 `cleanup_interval_hours`（既定1時間）で同様に自動削除される。`.files/` も `[chainlit_files]
 retention_days`（既定7日）・`cleanup_interval_hours`（既定1時間）で同様に自動削除される
 （Chainlit自身のパス管理下にあるため `dir` キーは無い。ディレクトリ単位＝セッションIDごとに
@@ -570,7 +571,7 @@ retention_days`（既定7日）・`cleanup_interval_hours`（既定1時間）で
 Remove-Item -Recurse -Force .\data\*
 ```
 
-「孤児ファイル」を作らない設計: 保存は `app.py` の `_save_uploads()`（`data/uploads/` へ）、
+「孤児ファイル」を作らない設計: 保存は `app.py` の `_save_uploads()`（`data/temp/_tmp_*/uploads/` へ）、
 会話履歴は `AsyncSqliteSaver`（`data/checkpoints.sqlite`）に限定される。
 どこに何が書かれるかはコード上で一意に追える。
 
@@ -1083,7 +1084,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[llm]` | `max_concurrent_requests` | 推論サーバーへの同時リクエスト数上限。1以上でSemaphore(N)ガード（既定1＝完全直列化）、0以下で無制限。全セッション合算で数え、生成1回の間だけ枠を占有する。`[graph]`/`[subagent]` の `max_parallel` がこの値より大きくても、超えた分はLLM呼び出しの直前で待つだけで、エラーにはならない（待ち時間はタイムアウトに数えない） | `LLM_MAX_CONCURRENT_REQUESTS` |
 | `[llm]` | `round_robin_slots_probe_timeout_seconds` | `round_robin`/`priority_failover`戦略がprovider="llama_cpp"の接続先を選ぶ前に送るGET /slots問い合わせ自体のタイムアウト秒数（既定3、確認できなければ空きありとみなすfail-safe） | `LLM_ROUND_ROBIN_SLOTS_PROBE_TIMEOUT_SECONDS` |
 | `[llm]` | `round_robin_busy_poll_interval_seconds` | `round_robin`/`priority_failover`戦略で候補の全接続先に空きスロットが無かった場合、再確認までに待機する秒数（既定2） | `LLM_ROUND_ROBIN_BUSY_POLL_INTERVAL_SECONDS` |
-| `[paths]` | `common_data_dir` | 各種データ保存先パスの共通ベースディレクトリ（既定 `./data/${instance}`）。本セクションの`checkpoint_db`/`memory_dir`/`plans_dir`、および`[uploads]`/`[log]`/`[default_workdir]`/`[path_memory]`/`[chat_log]`の`dir`系キーの値に`${common_data_dir}`と書くとここで指定した値に置換される（configparser標準の補間ではなくconfig.py側の独自置換）。`common_data_dir`自身とこれらのキーでは`${instance}`がインスタンス名（環境変数`LOCOHANE_INSTANCE`、未設定なら`default`）に置換される | `COMMON_DATA_DIR` |
+| `[paths]` | `common_data_dir` | 各種データ保存先パスの共通ベースディレクトリ（既定 `./data/${instance}`）。本セクションの`checkpoint_db`/`memory_dir`/`plans_dir`、および`[log]`/`[default_workdir]`/`[path_memory]`/`[chat_log]`の`dir`系キーの値に`${common_data_dir}`と書くとここで指定した値に置換される（configparser標準の補間ではなくconfig.py側の独自置換）。`common_data_dir`自身とこれらのキーでは`${instance}`がインスタンス名（環境変数`LOCOHANE_INSTANCE`、未設定なら`default`）に置換される | `COMMON_DATA_DIR` |
 | `[paths]` | `skills_dir` | スキルフォルダ | `SKILLS_DIR` |
 | `[paths]` | `agents_dir` | エージェント種別定義フォルダ（`dispatch_agent` の `agent_type`） | `AGENTS_DIR` |
 | `[paths]` | `project_locohane_dir` | プロジェクト固有の拡張ディレクトリ（ClaudeCode の `.claude/` 相当）。配下の `skills/`（`skills_dir` にマージ走査、同名は優先）・`agents/`（`agents_dir` にマージ走査、同名は優先）・`LOCOHANE.md`（プロジェクト固有指示、存在しなくてもエラーにならない）を自動検知する。`nudge_messages` と同じリスト形式で複数ディレクトリ指定可。要素を `{"dir": ..., "python": ...}` の辞書で書くと、そのディレクトリの `skills/` 配下の `.py` スクリプトだけを専用のPython環境で起動する（`[scripts].python` より優先） | `PROJECT_LOCOHANE_DIR` |
@@ -1094,9 +1095,6 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[paths]` | `memory_dir` | 永続メモリーの保存先ルート | `MEMORY_DIR` |
 | `[paths]` | `plans_dir` | `create_plan` が `detail_markdown` を渡した際の詳細計画Markdownの保存先 | `PLANS_DIR` |
 | `[paths]` | `help_path` | `help` ツールが返すヘルプ本文Markdownのパス | `HELP_PATH` |
-| `[uploads]` | `dir` | アップロード保存先 | `UPLOAD_DIR` |
-| `[uploads]` | `retention_days` | アップロードファイルの保持日数（0以下で自動削除無効） | `UPLOAD_RETENTION_DAYS` |
-| `[uploads]` | `cleanup_interval_hours` | 自動削除チェックの実行間隔（時間） | `UPLOAD_CLEANUP_INTERVAL_HOURS` |
 | `[chainlit_files]` | `retention_days` | Chainlit自身のセッションファイルディレクトリ（`.files/<セッションID>/`）の保持日数（0以下で自動削除無効）。ディレクトリ単位で削除 | `CHAINLIT_FILES_RETENTION_DAYS` |
 | `[chainlit_files]` | `cleanup_interval_hours` | 自動削除チェックの実行間隔（時間） | `CHAINLIT_FILES_CLEANUP_INTERVAL_HOURS` |
 | `[elements]` | `dir` | 添付ファイル・回答本文への画像埋め込みの永続化先（スレッド再開・プロセス再起動後も表示するため） | `ELEMENTS_DIR` |
@@ -1480,7 +1478,7 @@ config.ini 既定の `[paths] common_data_dir = ./data/${instance}` により
 永続データを削除ダイアログで選択できる。候補はそのインスタンスの実効設定
 （config.ini＋上書き）で解決した `common_data_dir`（データディレクトリ全体）・
 `checkpoint_db`・`[thread_store] db`・`memory_dir`・`plans_dir`・`[log] dir`・
-`[chat_log] dir`・`[uploads] dir`・`[elements] dir`・`[path_memory] dir`・
+`[chat_log] dir`・`[elements] dir`・`[path_memory] dir`・
 `[default_workdir] dir` で、パスごとにチェックボックスで選ぶ（SQLite は
 `-wal`/`-shm` も一緒に消す）。`data/<そのインスタンス名>/` 配下は初期状態で
 選択済み、プロジェクト外のパスは未選択で表示される。次のパスは誤削除防止の

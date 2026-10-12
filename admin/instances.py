@@ -434,7 +434,6 @@ DATA_PATH_FIELDS: tuple[tuple[str, str], ...] = (
     ("plans_dir", "[paths] plans_dir（実行計画）"),
     ("log_dir", "[log] dir（アプリログ）"),
     ("chat_log_dir", "[chat_log] dir（会話ログ）"),
-    ("upload_dir", "[uploads] dir（アップロードファイル）"),
     ("elements_dir", "[elements] dir（添付・埋め込み画像）"),
     ("path_memory_dir", "[path_memory] dir（パスメモリー）"),
     ("default_workdir", "[default_workdir] dir（既定の作業ディレクトリ）"),

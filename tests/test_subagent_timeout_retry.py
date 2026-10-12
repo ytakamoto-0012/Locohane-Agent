@@ -155,6 +155,74 @@ async def test_on_activity_reports_thinking_before_llm_call(monkeypatch) -> None
     assert activities == ["思考中"]
 
 
+class _ScriptedModel:
+    """ainvoke() のたびに responses を先頭から返す（before_each があれば先に呼ぶ）。"""
+
+    def __init__(self, responses: list, before_each=None) -> None:
+        self._responses = responses
+        self._before_each = before_each
+
+    def bind_tools(self, tools, tool_choice=None):
+        return self
+
+    async def ainvoke(self, messages):
+        if self._before_each is not None:
+            self._before_each()
+        return self._responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_on_activity_uses_step_badge_labels_for_tools(monkeypatch) -> None:
+    """ツールの表示名は UI のStepバッジと同じ対応表（src/tool_labels.py）から引き、並列の同名呼び出しは1つにまとめる。"""
+    tool_calls = [
+        {"name": "run_script", "args": {}, "id": "1", "type": "tool_call"},
+        {"name": "run_script", "args": {}, "id": "2", "type": "tool_call"},
+        {"name": "Grep", "args": {}, "id": "3", "type": "tool_call"},
+    ]
+    model = _ScriptedModel([AIMessage(content="", tool_calls=tool_calls), _FINAL])
+
+    async def _fake_build_model(config, role):
+        return model
+
+    monkeypatch.setattr(subagent, "build_model", _fake_build_model)
+
+    activities = []
+    await subagent.run_subagent(
+        task="t", tools=[], system_prompt="sp", config=_FakeConfig(), max_iterations=5, on_activity=activities.append
+    )
+
+    assert activities == ["思考中", "ツール: スクリプト実行、Grep", "思考中"]
+
+
+@pytest.mark.asyncio
+async def test_on_activity_reports_llm_wait_and_restores(monkeypatch) -> None:
+    """LLMの空き待ちの間は "LLMの空き待ち"、抜けたら元の表示に戻す。run_subagent を抜けたら通知先は外れる。"""
+    from src.llm import routing
+
+    def _wait_then_acquire():
+        routing.notify_llm_wait(True)
+        routing.notify_llm_wait(True)
+        routing.notify_llm_wait(False)
+
+    model = _ScriptedModel([_FINAL], before_each=_wait_then_acquire)
+
+    async def _fake_build_model(config, role):
+        # 接続先の選択は待たなかった（False だけ届く）場合、表示は変えない。
+        routing.notify_llm_wait(False)
+        return model
+
+    monkeypatch.setattr(subagent, "build_model", _fake_build_model)
+
+    activities = []
+    await subagent.run_subagent(
+        task="t", tools=[], system_prompt="sp", config=_FakeConfig(), max_iterations=5, on_activity=activities.append
+    )
+
+    assert activities == ["思考中", "LLMの空き待ち", "思考中"]
+    routing.notify_llm_wait(True)
+    assert activities == ["思考中", "LLMの空き待ち", "思考中"]
+
+
 @pytest.mark.asyncio
 async def test_default_zero_retries_truncates_immediately_on_timeout(monkeypatch) -> None:
     """llm_timeout_max_retries 既定値0（明示的に指定しない呼び出し元向けの

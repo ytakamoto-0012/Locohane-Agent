@@ -12,7 +12,8 @@
   contextvar 経由で内部ツール呼び出しのイベントも流すため、ツール実行の
   Step 表示・生成ファイルの自動添付（下記）は内部呼び出しにも実際には効く。
   _resolve_parent_id/_is_subagent_call 参照）。
-- アップロードファイルは config.upload_dir に保存し、パスをメッセージへ明示する
+- アップロードファイルはスレッド専用の作業フォルダ（default_workdir 配下の
+  _tmp_<thread_id>/uploads/<送信日時>/）に保存し、パスを `@N` 付きでメッセージへ明示する
   （画像も直接は渡さず、見るかどうかは LLM が analyze_image 等で判断する）。
 - ツール結果に生成ファイルの output_path（src/files.py 参照）が含まれる場合、
   画像なら cl.Image でインラインプレビュー、それ以外は cl.File でダウンロード
@@ -153,6 +154,7 @@ from src.skills import (
 )
 from src.subagent import is_truncated_result
 from src.thread_store import ChatThreadDataLayer
+from src.tool_labels import tool_label
 from src import thread_store
 from src.tools import (
     WorkDirAccessStatus,
@@ -169,38 +171,14 @@ from src.tools import (
 )
 from src.tools.dispatch_agent_batch import BATCH_GROUP_RUN_NAME, interrupted_note_topic
 from src.tools._plan_render import _render_plan_payload
-from src.tools._workdir import _build_workdir_status_info
-from src.uploads import cleanup_old_uploads, run_cleanup_loop
+from src.tools._path_memory_helpers import _register_path_memory
+from src.tools._workdir import _build_workdir_status_info, _resolve_exec_workdir
 
 # dispatch_agent（サブエージェント）由来のメッセージに付与する author 名。
 # frontend/src/utils/messageTree.ts の SUBAGENT_MESSAGE_AUTHOR、
 # src/tools.py の _push_dispatch_agent_progress と一致させる
 # （UI側でメインエージェントの回答と区別して表示するための識別子）。
 SUBAGENT_MESSAGE_AUTHOR = "サブエージェント"
-
-# ツール名 → UI 表示ラベル（ステップ名として表示）。
-_TOOL_LABELS = {
-    "read_skill": "スキル読み込み",
-    "read_skill_file": "ファイル読み込み",
-    "run_script": "スクリプト実行",
-    "analyze_image": "画像解析",
-    "dispatch_agent": "サブエージェント実行",
-    "dispatch_agent_batch": "サブエージェント一括実行",
-    "AskUserQuestion": "ユーザーへの質問（自由記述）",
-    "ask_user_choice": "ユーザーへの質問（選択式）",
-    "create_plan": "実行計画作成",
-    "approve_plan": "計画承認確認",
-    "update_task_progress": "進捗更新",
-    "get_plan_status": "計画状態確認",
-    "lock_plan_mode": "Plan Modeへ復帰",
-    "create_memory": "メモリー保存",
-    "update_memory": "メモリー更新",
-    "delete_memory": "メモリー削除",
-    "read_memory": "メモリー読み込み",
-    "search_memory": "メモリー検索",
-    "list_memories": "メモリー一覧",
-    "help": "ヘルプ表示",
-}
 
 # 内部でサブエージェント（run_subagent）を起動するツール名。これらの tool run_id
 # 配下のLLMイベントはサブエージェント由来として扱う（_is_subagent_call 参照）。
@@ -210,7 +188,7 @@ _SUBAGENT_DISPATCH_TOOLS = frozenset({"dispatch_agent", "dispatch_agent_batch"})
 def _tool_step_label(event: dict) -> str:
     """on_tool_start イベントから Step の表示名を決める。
 
-    dispatch_agent は _TOOL_LABELS だけだと常に「サブエージェント実行」
+    dispatch_agent は表示名の対応表（src/tool_labels.py）だけだと常に「サブエージェント実行」
     表示になり、狭い幅では「ツール: サブエージェ...」と見切れてどの種別
     （explore/verifier等）に委譲したのか分からない。agent_type 引数が
     取れる場合は "SUB: <agent_type>" 形式にする（frontend/src/components/
@@ -223,7 +201,7 @@ def _tool_step_label(event: dict) -> str:
         agent_type = tool_input.get("agent_type") if isinstance(tool_input, dict) else None
         if agent_type:
             return f"SUB: {agent_type}（一括）" if name == "dispatch_agent_batch" else f"SUB: {agent_type}"
-    return _TOOL_LABELS.get(name, name)
+    return tool_label(name)
 
 # アプリ全体で共有する状態（起動時に一度だけ構築）。
 # グラフ（LLMモデル・httpxクライアントを含む）はここには含まない。
@@ -1675,9 +1653,10 @@ async def _setup() -> None:
        サブエージェント設定・メモリールート等を注入する。
     4. AsyncSqliteSaver を構築し、checkpoint_db への接続をアプリ
        寿命で保持する。
-    5. アップロードフォルダの期限切れファイルを1回削除し、以降は
+    5. default_workdir（アップロードファイルを置くスレッド専用フォルダ
+       `_tmp_*` を含む）等の期限切れファイルを1回削除し、以降は
        cleanup_interval_hours 間隔で削除を続けるバックグラウンドタスクを起動する
-       （upload_retention_days が0以下なら無効化）。
+       （各 retention_days が0以下なら無効化）。
 
     Args:
         なし。
@@ -1957,17 +1936,6 @@ async def _setup() -> None:
     _system_prompt = system_prompt
 
     logging.getLogger(__name__).info("共有リソース初期化完了。スキル数=%d", len(skills))
-
-    # アップロードフォルダの期限切れファイルを起動時に1回削除し、以降は定期的に削除を続ける。
-    cleanup_old_uploads(_config.upload_dir, _config.upload_retention_days)
-    if _config.upload_retention_days > 0:
-        asyncio.create_task(
-            run_cleanup_loop(
-                _config.upload_dir,
-                _config.upload_retention_days,
-                _config.upload_cleanup_interval_hours,
-            )
-        )
 
     # analyze_image(show_in_chat=True)・回答本文への画像埋め込み（_embed_local_images_as_session_urls）が
     # 使う Chainlit 自身のセッションファイルディレクトリ（.files/<セッションID>/）も
@@ -2731,36 +2699,64 @@ async def on_pick_work_dir(action: cl.Action) -> None:
     await _apply_work_dir(raw)
 
 
-def _save_uploads(message: cl.Message, username: str) -> list[str]:
-    """アップロードファイルを upload_dir/<username>/ に保存し、保存先パスの一覧を返す。
+def _save_uploads(message: cl.Message) -> list[str]:
+    """アップロードファイルをこのスレッド専用の作業フォルダへ保存し、保存先パスの一覧を返す。
 
     message.elements に含まれる各添付要素について、element.path
-    （Chainlit が保持する一時保存先）から config.upload_dir 直下の
-    ログインユーザー名サブフォルダへコピーする。upload_dir 直下に
-    全ユーザー分のファイルが混在するのを避けるため。
-    path を持たない要素（テキストのみの要素など）はスキップする。
+    （Chainlit が保持する一時保存先）から、default_workdir 配下のスレッド
+    専用フォルダ（_resolve_exec_workdir()、`_tmp_<thread_id>`）の
+    `uploads/<送信日時>/` へコピーする。
+
+    以前は [uploads].dir/<ユーザー名>/ の1フォルダへ上書きで保存していたが、
+    画像を data URL で会話へ埋め込まずパスだけを LLM へ渡すようにしてからは、
+    LLM が後で開くまでに同名のファイル（別スレッド・後のターンでの再アップ
+    ロード）で上書きされると別の画像を見てしまう（analyze_image の重複ガードは
+    パスで判定するため、新しい画像を「確認済み」として拒否もする）。また
+    dispatch_agent_batch でフォルダごと委譲すると過去のアップロードまで対象に
+    入っていた。送信ごとのフォルダにすることで、その送信のファイルだけを
+    指すフォルダが得られ、他スレッドからは _foreign_tmp_dir_error で読めず、
+    削除も default_workdir の保持日数（_tmp_* の丸ごと削除）に一本化される。
+    作業フォルダをツールバーで指定していても保存先は変えない（利用者の
+    フォルダへアップロードの複製を撒かないため）。
+
+    path を持たない要素（テキストのみの要素など）はスキップする。同じ送信内で
+    ファイル名が重複した場合は「名前 (2).拡張子」のように番号を付けて残す。
 
     Args:
         message: on_message で受け取った Chainlit のメッセージオブジェクト。
             elements にアップロードファイルの情報が含まれる。
-        username: 保存先サブフォルダ名にするユーザー名（resolve_log_username()
-            で正規化済みのもの。未ログイン時は ANONYMOUS_USERNAME）。
 
     Returns:
         保存先の絶対パス文字列のリスト（保存した順）。
         アップロードが無ければ空リスト。
     """
+    elements = [e for e in message.elements or [] if getattr(e, "path", None)]
+    if not elements:
+        return []
+    exec_dir = _resolve_exec_workdir()
+    stamp = time.strftime("%Y%m%d_%H%M%S") + f"_{uuid.uuid4().hex[:6]}"
+    dest_dir = exec_dir / "uploads" / stamp
+    dest_dir.mkdir(parents=True, exist_ok=True)
     saved: list[str] = []
-    dest_dir = _config.upload_dir / username
-    for element in message.elements or []:
-        src = getattr(element, "path", None)
-        if not src:
-            continue
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        dest = dest_dir / (element.name or Path(src).name)
+    for element in elements:
+        src = element.path
+        # ブラウザ以外から送られた名前にパス区切りが含まれていても送信フォルダの外へ出さない。
+        name = Path(element.name or "").name or Path(src).name
+        dest = dest_dir / name
+        n = 2
+        while dest.exists():
+            dest = dest_dir / f"{Path(name).stem} ({n}){Path(name).suffix}"
+            n += 1
         shutil.copyfile(src, dest)
         saved.append(str(dest))
         logging.getLogger(__name__).info("アップロード保存: %s", dest)
+    # _tmp_* の自動削除はフォルダ自身の更新日時で判定する（cleanup_old_dirs）が、
+    # 入れ子の uploads/<送信日時>/ を作っても _tmp_* 自身の更新日時は変わらない
+    # ことがあるため、アップロードしたばかりのスレッドが消されないよう更新する。
+    try:
+        os.utime(exec_dir)
+    except OSError:
+        logging.getLogger(__name__).warning("スレッド作業フォルダの更新日時の更新に失敗: %s", exec_dir, exc_info=True)
     return saved
 
 
@@ -2813,6 +2809,12 @@ def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice
     画像を data URL として直接積まないのは、大量の画像をアップロードすると
     メインエージェントのコンテキストを画像だけで大きく圧迫するため。
 
+    追記するパスは path_memory へ登録して `@N` を添える（システムプロンプトの
+    「ツールのパス引数には `@N` を渡し、フルパスを書き起こさない」に従えるように
+    するため。長い日本語のパスやUNCパスの書き写し誤りを避ける）。2件以上なら
+    送信フォルダ（_save_uploads() の `uploads/<送信日時>/`）も載せ、
+    dispatch_agent_batch の path にそのまま渡せるようにする。
+
     Args:
         user_text: ユーザーが入力したメッセージ本文。
         saved_paths: _save_uploads() が返した保存先パスの一覧。
@@ -2835,8 +2837,14 @@ def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice
     if work_dir_notice:
         text += f"\n\n{work_dir_notice}"
     if other_paths:
-        paths = "\n".join(f"- {p}" for p in other_paths)
-        text += f"\n\n[アップロードされたファイルの保存先]\n{paths}"
+        tokens = {path: token for token, path in _register_path_memory(other_paths, description="アップロード").items()}
+        lines = [f"- {tokens[p]}: {p}" if p in tokens else f"- {p}" for p in other_paths]
+        folders = list(dict.fromkeys(str(Path(p).parent) for p in other_paths))
+        if len(other_paths) >= 2 and len(folders) == 1:
+            folder_token = next(iter(_register_path_memory(folders, description="アップロード（送信フォルダ）")), None)
+            lines.append(f"（フォルダ: {folder_token}: {folders[0]}）" if folder_token else f"（フォルダ: {folders[0]}）")
+        paths = "\n".join(lines)
+        text += f"\n\n[アップロードされたファイルの保存先（ツールには @N を渡す）]\n{paths}"
 
     # ユーザー自身の発話の目印（[llm].reasoning_preserve 有効時、thinking を
     # 載せ直す範囲の境界になる。src/llm/dialect.py の mark_user_turn 参照）。
@@ -3823,7 +3831,7 @@ async def _on_message_impl(message: cl.Message) -> None:
     # analyze_image・run_script 等に渡せるように）。
     upload_user_obj = cl.user_session.get("user")
     upload_username = resolve_log_username(upload_user_obj.identifier if upload_user_obj else None)
-    saved = _save_uploads(message, upload_username)
+    saved = _save_uploads(message)
     # log_level="info"（既定）は「概要のみ」の方針（config.py Config.log_level
     # docstring参照: ツール呼び出しの全引数・全結果・LLM応答本文はdebug限定）。
     # ユーザーの生入力にはパスワード・APIキー等が含まれうるため、本文を伴う

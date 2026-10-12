@@ -8,6 +8,7 @@
 """
 
 import dataclasses
+from pathlib import Path
 from types import SimpleNamespace
 
 import app
@@ -41,7 +42,7 @@ def test_build_human_message_inlines_pasted_text_instead_of_path(tmp_path) -> No
     assert "# 深夜三時の洗濯機\n本文" in msg.content
     assert "[貼り付けテキスト1" in msg.content
     # 通常のファイルは従来通りパスのみを列挙し、貼り付けテキストはそこに含めない。
-    upload_section = msg.content.split("[アップロードされたファイルの保存先]")[1]
+    upload_section = msg.content.split("[アップロードされたファイルの保存先")[1]
     assert str(other) in upload_section
     assert str(pasted) not in upload_section
 
@@ -83,5 +84,49 @@ def test_build_human_message_passes_image_as_path_not_data_url(tmp_path) -> None
 
     assert isinstance(msg.content, str)
     assert "data:image" not in msg.content
-    upload_section = msg.content.split("[アップロードされたファイルの保存先]")[1]
+    upload_section = msg.content.split("[アップロードされたファイルの保存先")[1]
     assert str(image) in upload_section
+
+
+def test_build_human_message_adds_path_memory_tokens_and_folder(tmp_path, monkeypatch) -> None:
+    # ツールのパス引数へ書き写さず渡せるよう `@N` を添え、2件以上なら
+    # dispatch_agent_batch の path に渡せる送信フォルダも載せる。
+    registered = {}
+
+    def _fake_register(paths, description=None):
+        result = {}
+        for p in paths:
+            registered.setdefault(p, f"@{len(registered) + 1}")
+            result[registered[p]] = p
+        return result
+
+    monkeypatch.setattr(app, "_register_path_memory", _fake_register)
+    a, b = tmp_path / "a.png", tmp_path / "b.png"
+
+    msg = _build_human_message("見て", [str(a), str(b)])
+
+    assert f"- @1: {a}" in msg.content
+    assert f"- @2: {b}" in msg.content
+    assert f"（フォルダ: @3: {tmp_path}）" in msg.content
+
+
+def test_save_uploads_uses_per_message_folder_in_thread_workdir(tmp_path, monkeypatch) -> None:
+    # 同名ファイルで以前のアップロード（LLM が後で開くパス）を上書きしないよう、
+    # スレッド専用フォルダの uploads/<送信日時>/ へ送信ごとに分けて保存する。
+    monkeypatch.setattr(app, "_resolve_exec_workdir", lambda: tmp_path)
+    src1, src2 = tmp_path / "s1", tmp_path / "s2"
+    src1.write_bytes(b"1")
+    src2.write_bytes(b"2")
+
+    def _message(*elements):
+        return SimpleNamespace(elements=[SimpleNamespace(path=str(p), name=n) for p, n in elements])
+
+    first = app._save_uploads(_message((src1, "photo.jpg"), (src2, "photo.jpg")))
+    second = app._save_uploads(_message((src2, "../../photo.jpg")))
+
+    assert [Path(p).name for p in first] == ["photo.jpg", "photo (2).jpg"]
+    assert Path(first[0]).parent.parent == tmp_path / "uploads"
+    assert Path(second[0]).parent != Path(first[0]).parent
+    assert Path(second[0]).parent.parent == tmp_path / "uploads"
+    assert Path(first[0]).read_bytes() == b"1"
+    assert app._save_uploads(_message()) == []

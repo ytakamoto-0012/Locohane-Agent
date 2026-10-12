@@ -47,8 +47,10 @@ from .routing import (
     get_current_session,
     get_preferred_sub_model,
     mark_last_endpoint_failed,
+    reset_llm_wait_listener,
     reset_preferred_sub_model,
     set_current_session,
+    set_llm_wait_listener,
     set_preferred_sub_model,
 )
 
@@ -71,7 +73,9 @@ __all__ = [
     "mark_user_turn",
     "pick_loop_nudge_message",
     "recent_cancel_scope_breakage",
+    "reset_llm_wait_listener",
     "reset_preferred_sub_model",
     "set_current_session",
+    "set_llm_wait_listener",
     "set_preferred_sub_model",
 ]

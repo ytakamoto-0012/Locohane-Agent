@@ -3,7 +3,7 @@
 役割:
 - config.ini を読み込み、LLM 接続情報と全保存先パスを 1 つの frozen dataclass に集約する。
 - 環境変数が設定されていればそれで上書きする（config.ini の値より優先）。
-- data 配下（checkpoints / uploads / logs / memory）のディレクトリを起動時に作成する。
+- data 配下（checkpoints / logs / memory）のディレクトリを起動時に作成する。
 
 このファイル自体は Agent Skills 仕様には対応しない（純粋なアプリ設定）。
 「何がどこに溜まるか」をコードから追えるようにするための土台。
@@ -327,7 +327,6 @@ class Config:
             ありません）」が差し込まれる（render_project_instructions_block()
             参照）。
         checkpoint_db: LangGraph の会話状態を永続化する SQLite ファイルの絶対パス。
-        upload_dir: ユーザーがアップロードしたファイルの保存先絶対パス。
         log_dir: アプリケーションログの出力先絶対パス。
         log_level: ログの詳細度（"info"/"debug"/"none"のいずれか、大文字小文字は
             区別しない）。"info" は現行仕様（各ツール呼び出しの概要のみ）、
@@ -402,10 +401,6 @@ class Config:
             （src/memory.py 参照）。
         help_path: help ツールが読み込んで返すヘルプ本文（ユーザー向け、
             Markdown）ファイルの絶対パス。
-        upload_retention_days: アップロードファイルの保持日数。この日数を
-            過ぎた（更新日時が古い）ファイルは自動削除する。0以下で無効化。
-        upload_cleanup_interval_hours: アップロードファイル自動削除の
-            チェック間隔（時間）。起動時にも1回チェックする。
         chainlit_files_retention_days: Chainlit自身のセッションファイル
             ディレクトリ（`.files/<セッションID>/`。analyze_image の
             show_in_chat=True・回答本文への画像埋め込みのライブ表示中のみが
@@ -925,7 +920,6 @@ class Config:
     # インスタンス削除時に、データ削除対象の候補として使う（admin/instances.py）。
     common_data_dir: Path
     checkpoint_db: Path
-    upload_dir: Path
     log_dir: Path
     log_level: str
     log_clear_on_startup: bool
@@ -952,10 +946,6 @@ class Config:
     skill_lab_poll_interval_seconds: float
     skill_lab_fixer_max_file_chars: int
     skill_lab_transcript_excerpt_chars: int
-
-    # --- アップロードファイルの自動削除 ---
-    upload_retention_days: int
-    upload_cleanup_interval_hours: float
 
     # --- Chainlitセッションファイルディレクトリ（.files/）の自動削除 ---
     chainlit_files_retention_days: int
@@ -2315,8 +2305,7 @@ def load_config(
       LLM_TOP_P / LLM_TOP_K / LLM_REPEAT_PENALTY / LLM_FREQUENCY_PENALTY / LLM_PRESENCE_PENALTY / LLM_MAX_TOKENS
       LLM_DRY_MULTIPLIER / LLM_DRY_BASE / LLM_DRY_ALLOWED_LENGTH / LLM_DRY_PENALTY_LAST_N / LLM_DRY_SEQUENCE_BREAKERS
       LLM_ENABLE_THINKING / LLM_TRACK_TOKEN_USAGE
-      COMMON_DATA_DIR / SKILLS_DIR / AGENTS_DIR / PROJECT_LOCOHANE_DIR / SYSTEM_PROMPT_PATH / CHECKPOINT_DB / UPLOAD_DIR / LOG_DIR / LOG_LEVEL / LOG_CLEAR_ON_STARTUP / DEFAULT_WORKDIR / MEMORY_DIR / PLANS_DIR / HELP_PATH
-      UPLOAD_RETENTION_DAYS / UPLOAD_CLEANUP_INTERVAL_HOURS
+      COMMON_DATA_DIR / SKILLS_DIR / AGENTS_DIR / PROJECT_LOCOHANE_DIR / SYSTEM_PROMPT_PATH / CHECKPOINT_DB / LOG_DIR / LOG_LEVEL / LOG_CLEAR_ON_STARTUP / DEFAULT_WORKDIR / MEMORY_DIR / PLANS_DIR / HELP_PATH
       PATH_MEMORY_DIR / PATH_MEMORY_RETENTION_DAYS / PATH_MEMORY_CLEANUP_INTERVAL_HOURS / PATH_MEMORY_MAX_ENTRIES
       PATH_MEMORY_SEARCH_MIN_SCORE / PATH_MEMORY_SEARCH_FILENAME_WEIGHT
       SCRIPT_TIMEOUT / SCRIPT_PYTHON / SCRIPT_REQUIRE_APPROVAL
@@ -2348,10 +2337,10 @@ def load_config(
       上書きされる。config.ini/環境変数はその既定値という位置づけ）
 
     パス系の値はすべて _resolve() でプロジェクトルート基準の絶対パスへ
-    解決し、checkpoint_db の親ディレクトリ・upload_dir・log_dir は
+    解決し、checkpoint_db の親ディレクトリ・log_dir は
     存在しなければここで作成する（アプリ起動時に呼ぶことを想定）。
 
-    checkpoint_db/upload_dir/log_dir/default_workdir/memory_dir/plans_dir/
+    checkpoint_db/log_dir/default_workdir/memory_dir/plans_dir/
     path_memory_dir/chat_log_dir の値に "${common_data_dir}" という文字列が
     含まれる場合は、[paths].common_data_dir（環境変数 COMMON_DATA_DIR で
     上書き可能。既定 "./data/${instance}"）の解決済み絶対パスへ置換してから
@@ -2395,7 +2384,6 @@ def load_config(
 
     llm = parser["llm"] if parser.has_section("llm") else {}
     paths = parser["paths"] if parser.has_section("paths") else {}
-    uploads = parser["uploads"] if parser.has_section("uploads") else {}
     chainlit_files = parser["chainlit_files"] if parser.has_section("chainlit_files") else {}
     elements_section = parser["elements"] if parser.has_section("elements") else {}
     images_section = parser["images"] if parser.has_section("images") else {}
@@ -2645,9 +2633,6 @@ def load_config(
             PROJECT_ROOT,
             _sub_common_data_dir(os.getenv("CHECKPOINT_DB", paths.get("checkpoint_db", "${common_data_dir}/checkpoints.sqlite")), common_data_dir, resolved_instance_name),
         ),
-        upload_dir=_resolve(
-            PROJECT_ROOT, _sub_common_data_dir(os.getenv("UPLOAD_DIR", uploads.get("dir", "${common_data_dir}/uploads")), common_data_dir, resolved_instance_name)
-        ),
         log_dir=_resolve(
             PROJECT_ROOT, _sub_common_data_dir(os.getenv("LOG_DIR", log_section.get("dir", "${common_data_dir}/logs")), common_data_dir, resolved_instance_name)
         ),
@@ -2703,8 +2688,6 @@ def load_config(
             os.getenv("SKILL_LAB_TRANSCRIPT_EXCERPT_CHARS", skill_lab_section.get("transcript_excerpt_chars", 6000)),
             "[skill_lab].transcript_excerpt_chars",
         ),
-        upload_retention_days=int(os.getenv("UPLOAD_RETENTION_DAYS", uploads.get("retention_days", 7))),
-        upload_cleanup_interval_hours=float(os.getenv("UPLOAD_CLEANUP_INTERVAL_HOURS", uploads.get("cleanup_interval_hours", 1))),
         chainlit_files_retention_days=int(os.getenv("CHAINLIT_FILES_RETENTION_DAYS", chainlit_files.get("retention_days", 7))),
         chainlit_files_cleanup_interval_hours=float(
             os.getenv("CHAINLIT_FILES_CLEANUP_INTERVAL_HOURS", chainlit_files.get("cleanup_interval_hours", 1))
@@ -3256,7 +3239,6 @@ def load_config(
     # data 配下のディレクトリを確実に用意する（checkpoint_db は親ディレクトリを作る）。
     cfg.checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
     cfg.thread_store_db.parent.mkdir(parents=True, exist_ok=True)
-    cfg.upload_dir.mkdir(parents=True, exist_ok=True)
     cfg.elements_dir.mkdir(parents=True, exist_ok=True)
     cfg.log_dir.mkdir(parents=True, exist_ok=True)
     cfg.path_memory_dir.mkdir(parents=True, exist_ok=True)
