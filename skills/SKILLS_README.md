@@ -185,7 +185,7 @@ Chainlit UI上に `cl.File`（または画像なら `cl.Image`）付きメッセ
   `config.ini` の `[images].inline_preview_max_long_side_pixels`/
   `inline_preview_jpeg_quality`。逆に小さすぎる画像は
   `inline_preview_min_long_side_pixels` まで拡大される）。Vision向けの
-  `analyze_image`/アップロード画像縮小設定（`max_long_side_pixels`/
+  `analyze_image` の画像縮小設定（`max_long_side_pixels`/
   `jpeg_quality`）とは別物で、意図的に小さい（表示帯域・ディスク使用量を
   抑える目的。細部を確認させたい／高解像度で見せたい場合は方式2ではなく
   方式1（`analyze_image` を `show_in_chat=True` で呼び、独立メッセージとして

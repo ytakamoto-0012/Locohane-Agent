@@ -71,3 +71,17 @@ def test_check_input_length_unlimited_when_zero(monkeypatch) -> None:
     _with_max_input_chars(monkeypatch, 0)
 
     assert _check_input_length(SimpleNamespace(content="x" * 1_000_000, elements=[])) is None
+
+
+def test_build_human_message_passes_image_as_path_not_data_url(tmp_path) -> None:
+    # 大量の画像でメインエージェントのコンテキストを圧迫しないよう、画像も
+    # data URL を積まずに他のファイルと同じく保存先パスだけを本文へ書く。
+    image = tmp_path / "photo.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+    msg = _build_human_message("この写真は何？", [str(image)])
+
+    assert isinstance(msg.content, str)
+    assert "data:image" not in msg.content
+    upload_section = msg.content.split("[アップロードされたファイルの保存先]")[1]
+    assert str(image) in upload_section

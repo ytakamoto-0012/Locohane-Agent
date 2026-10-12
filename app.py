@@ -12,8 +12,8 @@
   contextvar 経由で内部ツール呼び出しのイベントも流すため、ツール実行の
   Step 表示・生成ファイルの自動添付（下記）は内部呼び出しにも実際には効く。
   _resolve_parent_id/_is_subagent_call 参照）。
-- アップロードファイルは config.upload_dir に保存する。画像は data URL 化して
-  LLMへ視覚情報として渡し、それ以外はパスをメッセージへ明示。
+- アップロードファイルは config.upload_dir に保存し、パスをメッセージへ明示する
+  （画像も直接は渡さず、見るかどうかは LLM が analyze_image 等で判断する）。
 - ツール結果に生成ファイルの output_path（src/files.py 参照）が含まれる場合、
   画像なら cl.Image でインラインプレビュー、それ以外は cl.File でダウンロード
   可能な添付を自動送信する（pdf-tools/pptx-create 等のファイル生成スキル、
@@ -113,7 +113,7 @@ from src.context_compaction import (
 )
 from src.files import extract_generated_files
 from src.graph import EMPTY_RESPONSE_NUDGE, build_graph, is_empty_final_message
-from src.images import IMAGE_REFS_KEY, image_ref, is_image_file, load_image_bytes, to_data_url
+from src.images import is_image_file, load_image_bytes
 from src import instance_lock
 from src import runtime_status
 from src import skill_drafts
@@ -168,7 +168,6 @@ from src.tools import (
     toggle_plan_mode_from_ui,
 )
 from src.tools.dispatch_agent_batch import BATCH_GROUP_RUN_NAME, interrupted_note_topic
-from src.tools._path_memory_helpers import _register_path_memory
 from src.tools._plan_render import _render_plan_payload
 from src.tools._workdir import _build_workdir_status_info
 from src.uploads import cleanup_old_uploads, run_cleanup_loop
@@ -2805,13 +2804,14 @@ def _check_input_length(message: cl.Message) -> str | None:
 def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice: str | None = None) -> HumanMessage:
     """アップロードファイルを踏まえて HumanMessage を組み立てる。
 
-    画像ファイルは data URL 化して content のマルチモーダル要素として積み、
-    Vision対応モデルへ実際の視覚情報として渡す。貼り付けテキスト添付
-    （_is_pasted_text_file。入力欄へ長文を貼り付けた際にフロントエンドが
-    添付化したもの）は、ユーザーが本文として入力したものと同じ扱いにするため
-    内容をテキストへ展開する（低パラメータモデルにファイル読み込みの
-    ツール呼び出しを強いないため）。それ以外のファイルは従来通り
-    パスをテキストへ追記するのみ（run_script 等のツールにパスとして渡させるため）。
+    貼り付けテキスト添付（_is_pasted_text_file。入力欄へ長文を貼り付けた際に
+    フロントエンドが添付化したもの）は、ユーザーが本文として入力したものと
+    同じ扱いにするため内容をテキストへ展開する（低パラメータモデルにファイル
+    読み込みのツール呼び出しを強いないため）。それ以外のファイルは画像も含めて
+    パスをテキストへ追記するのみ（内容を見るかどうかは LLM に任せ、画像なら
+    analyze_image、それ以外は run_script 等のツールにパスとして渡させる）。
+    画像を data URL として直接積まないのは、大量の画像をアップロードすると
+    メインエージェントのコンテキストを画像だけで大きく圧迫するため。
 
     Args:
         user_text: ユーザーが入力したメッセージ本文。
@@ -2823,12 +2823,10 @@ def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice
             HumanMessage.content のみに追記されるため、UIには表示されない。
 
     Returns:
-        画像添付が無ければ文字列 content の HumanMessage、あれば
-        text + image_url のマルチモーダル content を持つ HumanMessage。
+        文字列 content の HumanMessage。
     """
-    image_paths = [p for p in saved_paths if is_image_file(p)]
     pasted_paths = [p for p in saved_paths if _is_pasted_text_file(p)]
-    other_paths = [p for p in saved_paths if not is_image_file(p) and not _is_pasted_text_file(p)]
+    other_paths = [p for p in saved_paths if not _is_pasted_text_file(p)]
 
     text = user_text
     for i, p in enumerate(pasted_paths, start=1):
@@ -2842,23 +2840,7 @@ def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice
 
     # ユーザー自身の発話の目印（[llm].reasoning_preserve 有効時、thinking を
     # 載せ直す範囲の境界になる。src/llm/dialect.py の mark_user_turn 参照）。
-    if not image_paths:
-        return mark_user_turn(HumanMessage(content=text))
-
-    content: list[dict] = [{"type": "text", "text": text}]
-    for p in image_paths:
-        # analyze_image と同じく config.ini [images] の設定に従って縮小する
-        # （高解像度の写真をそのまま積むとコンテキストを大きく圧迫するため）。
-        url = to_data_url(
-            p,
-            max_long_side=_config.image_max_long_side_pixels,
-            jpeg_quality=_config.image_jpeg_quality,
-        )
-        content.append({"type": "image_url", "image_url": {"url": url}})
-    # 要約等で画像をテキスト化する際の参照（src/images.py の IMAGE_REFS_KEY）。
-    tokens = {path: token for token, path in _register_path_memory(image_paths, description="アップロード画像").items()}
-    refs = [image_ref(p, tokens.get(p)) for p in image_paths]
-    return mark_user_turn(HumanMessage(content=content, additional_kwargs={IMAGE_REFS_KEY: refs}))
+    return mark_user_turn(HumanMessage(content=text))
 
 
 _TABLE_LINE_RE = re.compile(r"^[ \t]{0,3}\|")
@@ -3786,9 +3768,9 @@ async def _on_message_impl(message: cl.Message) -> None:
       run_script/view_image）を cl.Step として可視化し、入出力を表示する。
 
     アップロードファイルがあれば _save_uploads() で保存し、_build_human_message()
-    で HumanMessage を組み立ててグラフへ渡す。画像は data URL 化してLLMへ
-    視覚情報として渡し、それ以外は保存先パスを本文に追記する（LLM が
-    run_script 等にパスを渡せるようにするため）。本文中に生のUNCパスが
+    で HumanMessage を組み立ててグラフへ渡す。画像も含めて保存先パスを
+    本文に追記する（LLM が analyze_image・run_script 等にパスを渡せるように
+    するため）。本文中に生のUNCパスが
     含まれる場合は register_raw_unc_paths_in_text() で path_memory へ
     事前登録し `@N` へ置換してからグラフへ渡す（ISSUE-002対策）。
 
@@ -3837,8 +3819,8 @@ async def _on_message_impl(message: cl.Message) -> None:
         "recursion_limit": _config.graph_recursion_limit,
     }
 
-    # アップロードがあれば保存する。画像は data URL 化してLLMに見せ、それ以外は
-    # 保存先パスを本文に明示する（LLM が run_script に渡せるように）。
+    # アップロードがあれば保存し、保存先パスを本文に明示する（LLM が
+    # analyze_image・run_script 等に渡せるように）。
     upload_user_obj = cl.user_session.get("user")
     upload_username = resolve_log_username(upload_user_obj.identifier if upload_user_obj else None)
     saved = _save_uploads(message, upload_username)
