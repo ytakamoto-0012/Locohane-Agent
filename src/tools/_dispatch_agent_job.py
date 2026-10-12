@@ -112,6 +112,10 @@ class _DispatchAgentJob:
     # run_subagent の on_iteration コールバックが更新する、現在の反復回数
     # （進捗push・check_dispatch_agent_job の running 分岐の表示に使う）。
     current_iteration: int = 0
+    # run_subagent の on_activity コールバックが更新する、今している動作の表示名
+    # （"思考中"・"ツール: Read" 等。UIのStepバッジと同じ表記）。進捗表示で
+    # 「何をしているか」をひと目で分かるようにするために使う。未開始は空文字列。
+    current_activity: str = ""
     # check_dispatch_agent_job が直前に「実行中」ステータスを返した時刻
     # （time.monotonic()）。_BackgroundJob.last_polled_at と同じ理由づけ
     # （連続呼び出しの最短間隔をサーバー側で強制するため）。
@@ -156,6 +160,11 @@ _DISPATCH_AGENT_JOBS: dict[str, _DispatchAgentJob] = {}
 _SUBAGENT_MESSAGE_AUTHOR = "サブエージェント"
 
 
+def _format_activity(job: "_DispatchAgentJob") -> str:
+    """進捗表示の末尾に付ける、今している動作（UIのStepバッジ名）。未開始なら空文字列。"""
+    return f"【{job.current_activity}】" if job.current_activity else ""
+
+
 def _format_dispatch_agent_progress(job: "_DispatchAgentJob", job_id: str) -> str:
     """dispatch_agent ジョブの実行中の状況を表す文字列を組み立てる。
 
@@ -167,7 +176,10 @@ def _format_dispatch_agent_progress(job: "_DispatchAgentJob", job_id: str) -> st
         waited = int(time.monotonic() - job.started_at)
         return f"順番待ちです（他のサブエージェントの完了待ち・待機 {waited} 秒・job_id={job_id}）。"
     elapsed = int(time.monotonic() - job.run_started_at)
-    parts = [f"実行中です（経過 {elapsed} 秒・反復 {job.current_iteration}/{job.max_iterations} 回・job_id={job_id}）。"]
+    parts = [
+        f"実行中です（経過 {elapsed} 秒・反復 {job.current_iteration}/{job.max_iterations} 回・job_id={job_id}）。"
+        f"{_format_activity(job)}"
+    ]
     note_path = _scratch_notes_path_for_run(job.run_id)
     if note_path.is_file():
         note_tail = note_path.read_text(encoding="utf-8", errors="replace")[-_JOB_OUTPUT_TAIL_CHARS:].rstrip()
@@ -282,6 +294,9 @@ async def _run_dispatch_agent_job(
     def _on_iteration(iteration: int, max_iterations: int) -> None:
         job.current_iteration = iteration
 
+    def _on_activity(activity: str) -> None:
+        job.current_activity = activity
+
     on_cancelled = _make_rescue_on_cancelled(job)
 
     skip_reason: str | None = None
@@ -302,6 +317,7 @@ async def _run_dispatch_agent_job(
             on_iteration=_on_iteration,
             llm_timeout_max_retries=_state._DISPATCH_AGENT_BACKGROUND_LLM_TIMEOUT_MAX_RETRIES,
             on_cancelled=on_cancelled,
+            on_activity=_on_activity,
         )
 
     try:

@@ -18,7 +18,7 @@ from .. import skill_drafts
 from . import _dispatch_agent_job
 from . import _state
 from ._dispatch_agent_job import _SUBAGENT_MESSAGE_AUTHOR, _DispatchAgentJob, _finalize_dispatch_agent_job_result
-from ._dispatch_agent_job import _purge_stale_dispatch_agent_jobs, _run_dispatch_agent_job
+from ._dispatch_agent_job import _format_activity, _purge_stale_dispatch_agent_jobs, _run_dispatch_agent_job
 from ._path_memory_helpers import _resolve_path_memory_tokens_in_text
 from ._safe_path import _resolve_file_tools_path
 from ._workdir import _foreign_tmp_dir_names, _resolve_workdir
@@ -223,7 +223,9 @@ def _format_batch_progress(jobs: list[tuple[str, _DispatchAgentJob]], started_at
         f"実行中 {len(running)}・順番待ち {waiting}）。"
     ]
     for index, job_id, job in running:
-        lines.append(f"- グループ{index}: 反復 {job.current_iteration}/{job.max_iterations} 回（job_id={job_id}）")
+        lines.append(
+            f"- グループ{index}: 反復 {job.current_iteration}/{job.max_iterations} 回（job_id={job_id}）{_format_activity(job)}"
+        )
     return "\n".join(lines)
 
 

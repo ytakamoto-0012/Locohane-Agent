@@ -336,6 +336,23 @@ def test_single_job_progress_shows_waiting_until_semaphore_acquired(monkeypatch)
     assert tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j").startswith("実行中です（経過 0 秒")
 
 
+def test_progress_shows_current_activity(monkeypatch) -> None:
+    """単体・一括とも、進捗に今している動作（Stepバッジ名）を出す。"""
+    monkeypatch.setattr(tools._dispatch_agent_job, "_scratch_notes_path_for_run", lambda run_id: __import__("pathlib").Path("__nonexistent__"))
+    job = tools._dispatch_agent_job._DispatchAgentJob(
+        thread_id="t", run_id="r", agent_type="worker", task_preview="", started_at=0.0,
+        status="running", result=None, error_message=None, max_iterations=10,
+        run_started_at=__import__("time").monotonic(),
+    )
+
+    assert "【" not in tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j")
+    job.current_activity = "ツール: Read"
+    assert "【ツール: Read】" in tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j")
+
+    job.runner_task = type("_T", (), {"done": lambda self: False})()
+    assert "【ツール: Read】" in _BATCH_MODULE._format_batch_progress([("j", job)], 0.0)
+
+
 @pytest.mark.asyncio
 async def test_batch_subfolder_pattern_collects_nested_files(monkeypatch, tmp_path) -> None:
     """年度フォルダ/ocr_md のような入れ子構成でも pattern に階層を含めれば対象にできる

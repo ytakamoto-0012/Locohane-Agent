@@ -533,6 +533,7 @@ async def run_subagent(
     on_iteration: Callable[[int, int], None] | None = None,
     llm_timeout_max_retries: int = 0,
     on_cancelled: Callable[[list, str], None] | None = None,
+    on_activity: Callable[[str], None] | None = None,
 ) -> str:
     """独立した ReAct ループでタスクを処理し、最終回答のテキストのみを返す。
 
@@ -591,6 +592,11 @@ async def run_subagent(
             hard_threshold到達時はCancelledErrorを使わず通常のreturnで
             打ち切るため、このコールバック自体の例外はここで捕捉して
             握りつぶし、打ち切り処理を継続する。
+        on_activity: 今している動作が変わるたびに、その表示名（"思考中"・
+            "ツール: Read、Grep"・"会話履歴の圧縮中"）を渡して呼ぶ同期コールバック
+            （省略可）。表示名は UI のStepバッジ（frontend/src/components/StepItem.tsx）
+            と揃えてある。dispatch_agent が進捗表示へ「今何をしているか」を
+            出すために使う。戻り値は無視する。例外は送出しない前提（呼び出し元の責任）。
 
     Returns:
         サブエージェントの最終回答テキスト。
@@ -665,6 +671,8 @@ async def run_subagent(
                 )
                 tool_loop_retries += 1
             llm_input = _build_llm_input(messages, config)
+            if on_activity is not None:
+                on_activity("思考中")
             try:
                 response, model, empty_retries_exhausted = await _invoke_with_timeout_retry(
                     model, llm_input, config, tools, llm_timeout_max_retries
@@ -760,6 +768,9 @@ async def run_subagent(
                     messages,
                 )
 
+            if on_activity is not None:
+                # 並列の同名呼び出しは1つにまとめる（dict.fromkeys で順序を保つ）。
+                on_activity("ツール: " + "、".join(dict.fromkeys(call["name"] for call in tool_calls)))
             results = await asyncio.gather(*(_run_one_tool_call(call, tools_by_name) for call in tool_calls))
             for tool_message, followup in results:
                 messages.append(tool_message)
@@ -772,6 +783,8 @@ async def run_subagent(
                 len(messages),
                 compaction_config,
             ):
+                if on_activity is not None:
+                    on_activity("会話履歴の圧縮中")
                 blocked = is_compaction_blocked_by_missing_note(messages, compaction_config, note_skip_count)
                 # 圧縮用モデルはツール未bindの素のインスタンスを使う（本編の model は
                 # bind_tools 済みで、要約専用の呼び出しにツール定義を含める必要が

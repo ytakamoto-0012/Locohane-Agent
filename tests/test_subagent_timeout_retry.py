@@ -137,6 +137,25 @@ async def test_on_iteration_called_with_iteration_and_max_iterations(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_on_activity_reports_thinking_before_llm_call(monkeypatch) -> None:
+    """on_activity には UI のStepバッジと同じ表示名（"思考中"）が渡る。"""
+    fake_build_model, _ = _make_fake_build_model(fail_times=0, final_message=_FINAL)
+    monkeypatch.setattr(subagent, "build_model", fake_build_model)
+
+    activities = []
+    await subagent.run_subagent(
+        task="t",
+        tools=[],
+        system_prompt="sp",
+        config=_FakeConfig(),
+        max_iterations=5,
+        on_activity=activities.append,
+    )
+
+    assert activities == ["思考中"]
+
+
+@pytest.mark.asyncio
 async def test_default_zero_retries_truncates_immediately_on_timeout(monkeypatch) -> None:
     """llm_timeout_max_retries 既定値0（明示的に指定しない呼び出し元向けの
     安全側デフォルト）では、初回のタイムアウトで即座に打ち切りメッセージを
