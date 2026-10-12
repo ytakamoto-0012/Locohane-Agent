@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import asyncio
 import chainlit as cl
 import logging
@@ -116,6 +116,10 @@ class _DispatchAgentJob:
     # （"思考中"・"ツール: Read" 等。UIのStepバッジと同じ表記）。進捗表示で
     # 「何をしているか」をひと目で分かるようにするために使う。未開始は空文字列。
     current_activity: str = ""
+    # current_activity が変わるたびに set する。進捗push（_push_dispatch_agent_progress・
+    # dispatch_agent_batch の _push_batch_progress）が、push 間隔を待たずに表示を
+    # 書き換えるために待つ（_wait_next_progress_push 参照）。
+    activity_changed: asyncio.Event = field(default_factory=asyncio.Event)
     # check_dispatch_agent_job が直前に「実行中」ステータスを返した時刻
     # （time.monotonic()）。_BackgroundJob.last_polled_at と同じ理由づけ
     # （連続呼び出しの最短間隔をサーバー側で強制するため）。
@@ -158,6 +162,39 @@ _DISPATCH_AGENT_JOBS: dict[str, _DispatchAgentJob] = {}
 # SUBAGENT_MESSAGE_AUTHOR と一致させる（UI側でメインエージェントの回答と
 # 区別して表示するための cl.Message author 識別子）。
 _SUBAGENT_MESSAGE_AUTHOR = "サブエージェント"
+
+
+# 動作（current_activity）が変わったときに進捗push を前倒しする際の最短間隔（秒）。
+# ツール呼び出しは一瞬で終わることが多く、変わるたびに書き換えると表示が
+# ちらつき、ブラウザとの通信も増えるため、前回の push からこれだけは空ける。
+_ACTIVITY_PUSH_MIN_INTERVAL_SECONDS = 1.0
+
+
+async def _wait_next_progress_push(jobs: "list[_DispatchAgentJob]", interval: float, *, early_on_activity: bool) -> None:
+    """次の進捗push まで待つ。
+
+    push 間隔（[subagent].background_progress_push_interval_seconds）ごとにしか
+    書き換えないと、表示する動作はその瞬間の値になり、時間の大半を占める LLM の
+    生成中に当たって「思考中」のまま変わらないように見える（ツールは一瞬で終わる
+    ことが多い）。early_on_activity=True なら、いずれかのジョブの動作が変わった
+    時点で（ただし最短 _ACTIVITY_PUSH_MIN_INTERVAL_SECONDS 空けて）待つのを
+    やめる。経過秒数は従来どおり interval ごとに進む。
+
+    最初のメッセージを送るまでは early_on_activity=False で呼ぶこと（すぐ終わる
+    ジョブに進捗メッセージを出さないという従来の振る舞いを変えないため）。
+    呼び出し元は、内容を組み立てる前に各ジョブの activity_changed を clear する。
+    """
+    if not early_on_activity:
+        await asyncio.sleep(interval)
+        return
+    minimum = min(_ACTIVITY_PUSH_MIN_INTERVAL_SECONDS, interval)
+    await asyncio.sleep(minimum)
+    waiters = [asyncio.ensure_future(job.activity_changed.wait()) for job in jobs]
+    try:
+        await asyncio.wait(waiters, timeout=max(interval - minimum, 0), return_when=asyncio.FIRST_COMPLETED)
+    finally:
+        for waiter in waiters:
+            waiter.cancel()
 
 
 def _format_activity(job: "_DispatchAgentJob") -> str:
@@ -228,9 +265,12 @@ async def _push_dispatch_agent_progress(job: "_DispatchAgentJob", job_id: str) -
     """
     message: "cl.Message | None" = None
     while job.status == "running":
-        await asyncio.sleep(_state._DISPATCH_AGENT_BACKGROUND_PROGRESS_PUSH_INTERVAL_SECONDS)
+        await _wait_next_progress_push(
+            [job], _state._DISPATCH_AGENT_BACKGROUND_PROGRESS_PUSH_INTERVAL_SECONDS, early_on_activity=message is not None
+        )
         if job.status != "running":
             break
+        job.activity_changed.clear()
         content = _format_dispatch_agent_progress(job, job_id)
         if message is None:
             message = cl.Message(
@@ -295,7 +335,9 @@ async def _run_dispatch_agent_job(
         job.current_iteration = iteration
 
     def _on_activity(activity: str) -> None:
-        job.current_activity = activity
+        if activity != job.current_activity:
+            job.current_activity = activity
+            job.activity_changed.set()
 
     on_cancelled = _make_rescue_on_cancelled(job)
 

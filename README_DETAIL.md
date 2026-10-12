@@ -1141,7 +1141,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[subagent]` | `background_min_poll_interval_seconds` | `check_dispatch_agent_job` を連続で呼べる最短間隔秒数。0以下で無効化 | `SUBAGENT_BACKGROUND_MIN_POLL_INTERVAL_SECONDS` |
 | `[subagent]` | `background_min_poll_message` | 上記間隔未満で呼ばれた際にLLMへ返すメッセージのテンプレート（`{wait_remaining}`/`{job_id}`/`{min_interval}` を埋め込み可）。空欄なら既定文言 | `SUBAGENT_BACKGROUND_MIN_POLL_MESSAGE` |
 | `[subagent]` | `background_inline_wait_max_seconds` | `dispatch_agent` がジョブ完了をLLMを介さずコード側で待つ上限秒数。超過時のみ `job_id` を返してLLMへ制御を戻す | `SUBAGENT_BACKGROUND_INLINE_WAIT_MAX_SECONDS` |
-| `[subagent]` | `background_progress_push_interval_seconds` | 待機中、人間向けに経過秒数・反復回数・進捗メモをチャットへ直接送る間隔（秒） | `SUBAGENT_BACKGROUND_PROGRESS_PUSH_INTERVAL_SECONDS` |
+| `[subagent]` | `background_progress_push_interval_seconds` | 待機中、人間向けに経過秒数・反復回数・進捗メモをチャットへ直接送る間隔（秒）。最初の表示以後は、今している動作（【思考中】等）が変わったら間隔を待たずに書き換える（最短1秒空ける） | `SUBAGENT_BACKGROUND_PROGRESS_PUSH_INTERVAL_SECONDS` |
 | `[subagent]` | `background_llm_timeout_max_retries` | 実行中のLLM呼び出しがタイムアウトした場合、モデルを再構築して同じ反復を再試行する最大回数 | `SUBAGENT_BACKGROUND_LLM_TIMEOUT_MAX_RETRIES` |
 | `[subagent]` | `agent_type_run_script_allowlist` | `dispatch_agent`の`agent_type`ごとに`run_script`で呼べるスキル/スクリプトを絞り込むホワイトリスト（`[[agent_type, 対象], ...]`形式、対象は`"スキル名"`または`["スキル名","スクリプトファイル名"]`、空欄なら既定19件。登録がある`agent_type`は`{{skills}}`の一覧も登録スキルのみに絞られる（絞り込みたくない場合は`{{skills}}`の代わりに`{{all_skills}}`を使う）） | `SUBAGENT_AGENT_TYPE_RUN_SCRIPT_ALLOWLIST` |
 | `[user_response_timeouts]` | `approval_seconds` | `approve_plan`／`run_script`・`execute_python_code`の個別実行確認でユーザー応答を待つ秒数。`0`で無期限待ち | `APPROVAL_TIMEOUT_SECONDS` |

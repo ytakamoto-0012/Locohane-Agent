@@ -19,6 +19,7 @@ from . import _dispatch_agent_job
 from . import _state
 from ._dispatch_agent_job import _SUBAGENT_MESSAGE_AUTHOR, _DispatchAgentJob, _finalize_dispatch_agent_job_result
 from ._dispatch_agent_job import _format_activity, _purge_stale_dispatch_agent_jobs, _run_dispatch_agent_job
+from ._dispatch_agent_job import _wait_next_progress_push
 from ._path_memory_helpers import _resolve_path_memory_tokens_in_text
 from ._safe_path import _resolve_file_tools_path
 from ._workdir import _foreign_tmp_dir_names, _resolve_workdir
@@ -238,9 +239,15 @@ async def _push_batch_progress(jobs: list[tuple[str, _DispatchAgentJob]], starte
     message: "cl.Message | None" = None
     try:
         while any(_is_active(job) for _, job in jobs):
-            await asyncio.sleep(_state._DISPATCH_AGENT_BACKGROUND_PROGRESS_PUSH_INTERVAL_SECONDS)
+            await _wait_next_progress_push(
+                [job for _, job in jobs],
+                _state._DISPATCH_AGENT_BACKGROUND_PROGRESS_PUSH_INTERVAL_SECONDS,
+                early_on_activity=message is not None,
+            )
             if not any(_is_active(job) for _, job in jobs):
                 break
+            for _, job in jobs:
+                job.activity_changed.clear()
             content = _format_batch_progress(jobs, started_at)
             if message is None:
                 message = cl.Message(content=content, author=_SUBAGENT_MESSAGE_AUTHOR, metadata={"ephemeral_progress": True})

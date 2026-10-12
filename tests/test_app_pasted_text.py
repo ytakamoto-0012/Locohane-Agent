@@ -130,3 +130,21 @@ def test_save_uploads_uses_per_message_folder_in_thread_workdir(tmp_path, monkey
     assert Path(second[0]).parent.parent == tmp_path / "uploads"
     assert Path(first[0]).read_bytes() == b"1"
     assert app._save_uploads(_message()) == []
+
+
+def test_save_uploads_sanitizes_unsafe_names(tmp_path, monkeypatch) -> None:
+    # `..`・Windows で使えない文字・予約デバイス名でも送信フォルダの中へ保存できる
+    # （以前は `..` で送信フォルダの親を指して copyfile が落ちていた）。
+    monkeypatch.setattr(app, "_resolve_exec_workdir", lambda: tmp_path)
+    src = tmp_path / "s"
+    src.write_bytes(b"x")
+    elements = [SimpleNamespace(path=str(src), name=n) for n in ("..", "a?b*.png", "CON.txt")]
+
+    saved = app._save_uploads(SimpleNamespace(elements=elements))
+
+    assert len(saved) == 3
+    for p in saved:
+        assert Path(p).parent.parent == tmp_path / "uploads"
+        assert Path(p).read_bytes() == b"x"
+    assert Path(saved[1]).name == "a_b_.png"
+    assert Path(saved[2]).name == "_CON.txt"

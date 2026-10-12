@@ -153,7 +153,7 @@ from src.skills import (
     scan_skills,
 )
 from src.subagent import is_truncated_result
-from src.thread_store import ChatThreadDataLayer
+from src.thread_store import ChatThreadDataLayer, _sanitize_filename_component
 from src.tool_labels import tool_label
 from src import thread_store
 from src.tools import (
@@ -2721,6 +2721,7 @@ def _save_uploads(message: cl.Message) -> list[str]:
 
     path を持たない要素（テキストのみの要素など）はスキップする。同じ送信内で
     ファイル名が重複した場合は「名前 (2).拡張子」のように番号を付けて残す。
+    ファイル名は src/thread_store.py の添付の永続化と同じ規則で無害化する。
 
     Args:
         message: on_message で受け取った Chainlit のメッセージオブジェクト。
@@ -2740,8 +2741,9 @@ def _save_uploads(message: cl.Message) -> list[str]:
     saved: list[str] = []
     for element in elements:
         src = element.path
-        # ブラウザ以外から送られた名前にパス区切りが含まれていても送信フォルダの外へ出さない。
-        name = Path(element.name or "").name or Path(src).name
+        # ブラウザ以外から送られた名前のパス区切り・`..` で送信フォルダの外へ出さず、
+        # Windows で使えない文字・予約デバイス名で copyfile が失敗しないようにする。
+        name = _sanitize_filename_component(element.name or Path(src).name)
         dest = dest_dir / name
         n = 2
         while dest.exists():

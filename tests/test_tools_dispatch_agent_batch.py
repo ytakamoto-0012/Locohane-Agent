@@ -353,6 +353,40 @@ def test_progress_shows_current_activity(monkeypatch) -> None:
     assert "【ツール: Read】" in _BATCH_MODULE._format_batch_progress([("j", job)], 0.0)
 
 
+def _activity_job():
+    return tools._dispatch_agent_job._DispatchAgentJob(
+        thread_id="t", run_id="r", agent_type="worker", task_preview="", started_at=0.0,
+        status="running", result=None, error_message=None, max_iterations=10,
+    )
+
+
+@pytest.mark.asyncio
+async def test_progress_push_wakes_early_when_activity_changes(monkeypatch) -> None:
+    """2回目以降の進捗pushは、動作が変わったら push 間隔を待たずに（最短間隔は空けて）書き換える。"""
+    job_module = tools._dispatch_agent_job
+    monkeypatch.setattr(job_module, "_ACTIVITY_PUSH_MIN_INTERVAL_SECONDS", 0.01)
+    idle, changed = _activity_job(), _activity_job()
+    changed.activity_changed.set()
+
+    await asyncio.wait_for(job_module._wait_next_progress_push([idle, changed], 30, early_on_activity=True), timeout=5)
+
+    # 動作が変わらなければ push 間隔まで待つ。
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(job_module._wait_next_progress_push([idle], 30, early_on_activity=True), timeout=0.2)
+
+
+@pytest.mark.asyncio
+async def test_first_progress_push_ignores_activity_changes(monkeypatch) -> None:
+    """最初のメッセージを送るまでは、動作が変わっても push 間隔を待つ（すぐ終わるジョブに進捗を出さない）。"""
+    job_module = tools._dispatch_agent_job
+    monkeypatch.setattr(job_module, "_ACTIVITY_PUSH_MIN_INTERVAL_SECONDS", 0.01)
+    job = _activity_job()
+    job.activity_changed.set()
+
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(job_module._wait_next_progress_push([job], 30, early_on_activity=False), timeout=0.2)
+
+
 @pytest.mark.asyncio
 async def test_batch_subfolder_pattern_collects_nested_files(monkeypatch, tmp_path) -> None:
     """年度フォルダ/ocr_md のような入れ子構成でも pattern に階層を含めれば対象にできる
