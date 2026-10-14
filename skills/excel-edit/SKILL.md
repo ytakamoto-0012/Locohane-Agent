@@ -1,288 +1,179 @@
 ---
 name: excel-edit
-description: xlsx/xlsmファイルの新規作成・既存編集を行うスキル。セル値・書式（フォント/背景色/罫線/列幅/行高/結合）の設定、行列の挿入削除、グラフ追加・調整（既定でデータラベル表示・テーマ配色対応）、画像の追加・位置調整、条件付き書式、データ検証、構造化テーブルに対応。Excel本体は不要（openpyxlで直接書き込む）。数式文字列は書き込めるが計算はしない（計算結果の確認・エラーセル検出はexcel-recalcスキルを使う）。ユーザーが表データを新規作成/編集したいとき、書式付きのレポートやグラフ・画像入りのExcelを出力したいとき、既存のxlsx/xlsmにデータや装飾を追記・修正したいときに使う。読み込み専用ならexcel-read、VBAマクロの読み書きはexcel-vba-read/excel-vba-edit、見た目の画像確認はexcel-renderを使う。
+description: xlsx/xlsmファイルの新規作成・既存編集を行うスキル。openpyxlのPythonコードを書いて実行する方式で、セル値・書式（フォント/背景色/罫線/列幅/行高/結合）の設定、行列の挿入削除、グラフ追加・調整、画像の追加・位置調整、条件付き書式、データ検証、構造化テーブルなどopenpyxlでできることは何でも行える（テーマ配色の表仕上げ・グラフ配色・結合セルを保つ行挿入などのヘルパー付き）。Excel本体は不要。数式文字列は書き込めるが計算はしない（計算結果の確認・エラーセル検出はexcel-recalcスキルを使う）。ユーザーが表データを新規作成/編集したいとき、書式付きのレポートやグラフ・画像入りのExcelを出力したいとき、既存のxlsx/xlsmにデータや装飾を追記・修正したいときに使う。読み込み専用ならexcel-read、VBAマクロの読み書きはexcel-vba-read/excel-vba-edit、見た目の画像確認はexcel-renderを使う。
 license: MIT
 metadata:
   author: ytakamoto
-  version: "1.0"
+  version: "2.0-openpyxl-experiment"
 ---
 
 # excel-edit
 
-xlsx/xlsm の新規作成・既存編集を行うスキル。`edit_excel.py` を実行する。
+xlsx/xlsm の新規作成・既存編集を行うスキル。**openpyxl のPythonコード**を `edit_excel.py` に渡して実行する。
 
 ## 呼び出し
 
 ```bash
-python edit_excel.py "C:\Users\me\book.xlsx" --ops-json '[{"op": "set_cell", "sheet": "Sheet1", "cell": "A1", "value": "合計"}]'
+python edit_excel.py "C:\Users\me\book.xlsx" --code 'ws = wb["Sheet1"]
+ws["A1"] = "合計"'
 ```
-- 新規作成: 末尾に`--new`を追加（既存ファイルがあれば`--overwrite`も必須、無いとエラー）。
+
+- コードには読み込み済みの openpyxl Workbook が**変数 `wb`** として渡される。`wb` を書き換えるだけでよい。
+- **`wb.save()` を書かない・`load_workbook()`/`Workbook()` で `wb` を作り直さない**（どちらもエラー）。読み込み・保存・上書き前のバックアップはスクリプトが行う。
+- 新規作成: 末尾に`--new`を追加（既存ファイルがあれば`--overwrite`も必須、無いとエラー）。`--new`の`wb`は**シートが0枚**（`Sheet1`は無い）なので、必ず`wb.create_sheet("名前")`から始める。
 - `--new`なし: 対象パスを読み込んで編集（不在ならエラー）。触れなかった既存セル・書式・シートはそのまま保持。
 - `--output`省略で対象パスへ上書き保存。別ファイル保存時のみ`--output <絶対パス>`を追加。
-- `.xlsm`はマクロを保持したまま編集可（`--new`なし時のみ。既存ファイルを`keep_vba=True`で読み込むため）。マクロ自体の読み書きはexcel-vba-read/excel-vba-editスキル。
-- **`--new`かつ`.xlsm`は「マクロ有効ブック」にならない**（openpyxlの`Workbook()`はvbaProjectを持たないため、拡張子が`.xlsm`でも中身はxlsx相当になり、Excelで開けない/マクロを追加できないファイルができる）。表データ・書式とVBAマクロの両方を持つ新規`.xlsm`を作りたい場合は、**先にexcel-vba-editスキルの`--new`で空のマクロ有効ブックを作成し、その後このスキルを`--new`なしで使って同じパスにシート・データを追記する**（逆順不可）。
-- **既存の`.xlsm`を生のopenpyxlコードで直接編集しない**（`keep_vba=True`を忘れるとVBAマクロが消える）。タブ色は`set_tab_color`、表示シートは`set_active_sheet`、グラフ調整は`update_chart`を使う。該当opが無ければユーザーに相談する。
+- `.xlsm`はマクロを保持したまま編集可（`--new`なし時のみ。スクリプトが`keep_vba=True`で読み込むため）。マクロ自体の読み書きはexcel-vba-read/excel-vba-editスキル。
+- **`--new`かつ`.xlsm`は「マクロ有効ブック」にならない**（拡張子が`.xlsm`でも中身はxlsx相当になり、Excelで開けない/マクロを追加できないファイルができる）。表データ・書式とVBAマクロの両方を持つ新規`.xlsm`は、**先にexcel-vba-editスキルの`--new`で空のマクロ有効ブックを作り、その後このスキルを`--new`なしで使って同じパスにシート・データを追記する**（逆順不可）。
 
-## 入出力の型とopsの渡し方
+## 入出力の型とコードの渡し方
 
-成功=終了コード0＋JSON1行を標準出力。失敗=終了コード非0＋エラーメッセージを標準エラー。エラー文はそのままユーザーへ伝える。未導入ライブラリは`ImportError`終了コード1（原因: `openpyxl`）→該当する`pip install <パッケージ名>`をユーザーに促す。
+成功=終了コード0＋JSON1行を標準出力（`{"path":...,"backup_path":...,"sheets":[...]}`。コード内で`print`した内容は`code_output`に入る）。失敗=終了コード非0＋エラーメッセージを標準エラー（**コードの何行目で何の例外が出たか**が載る。シート名の誤りならブックのシート一覧も載る）。失敗時は**ファイルを一切保存しない**ので、エラー箇所だけ直して同じコードを再実行すればよい。未導入ライブラリは`ImportError`終了コード1（原因: `openpyxl`）→`pip install openpyxl`をユーザーに促す。
 
-opsは通常`--ops-json '<ops配列を1行JSON化した文字列>'`で渡す。次のいずれかに該当する場合は、最初から（構文エラーを待たず）opsをJSON配列としてファイルへ書き出し、`--ops-file <絶対パス>`で渡す：①ops要素数が5個超、②1つの文字列値に日本語10文字超を含む（長いJSON文字列をコマンドライン引数へ直接埋め込むとクォート・エスケープでミスしやすいため）。`--ops-json`で構文エラー（引用符の閉じ忘れ等）が1回でも出たら、直そうとせず即座に`--ops-file`方式へ切り替える。
+コードは通常`--code '<コード>'`で渡す（改行を含んでよい）。コードが80行を超える場合、または`--code`でクォートの崩れによる構文エラーが1回でも出たら、コードを`.py`ファイルへ書き出して`--code-file <絶対パス>`で渡す。
 
 ```bash
-python -c "import json; json.dump([{'op': 'set_cell', 'sheet': 'Sheet1', 'cell': 'A1', 'value': '合計'}], open('ops.json', 'w', encoding='utf-8'), ensure_ascii=False)"
-python edit_excel.py "C:\Users\me\book.xlsx" --ops-file "C:\Users\me\ops.json"
+python edit_excel.py "C:\Users\me\book.xlsx" --code-file "C:\Users\me\edit.py"
 ```
 
-## opsの一覧
+## コード内でimportなしに使える名前
 
-| op | 必須 | 任意 | 説明 |
-|---|---|---|---|
-| `add_sheet` | `name` | `index` | シート追加。同名シートが既存ならエラー（自動リネームに頼らず明示エラーにするため。既存シートへ追記したいなら`set_range`等にそのシート名を指定）。`index`はopenpyxlの`Workbook.create_sheet`にそのまま渡す**0始まり**の挿入位置（`index:0`で先頭、省略時は末尾に追加）。`insert_rows`の`index`（1始まり）とは基準が異なるので混同しないこと |
-| `delete_sheet` | `name` | - | シート削除 |
-| `rename_sheet` | `name`,`new_name` | - | シート名変更 |
-| `set_tab_color` | `sheet`,`color` | - | シート見出しタブの色を変更（`color`はRRGGBBの16進文字列） |
-| `set_active_sheet` | `sheet` | - | ブックを開いたときに最初に表示されるシートを指定 |
-| `set_cell` | `sheet`,`cell` | `value`,`style`,`inherit_style`,`inherit_style_from` | 単一セルへ値・書式設定。`style`省略時、対象セルが元々無書式の新規セル（例: `delete_rows`後に再生成された行）だと書式は付かない。周囲と見た目を揃えたい場合は`inherit_style:true`を指定すると、隣接セル（既定で左隣。`inherit_style_from`で`"left"`/`"right"`/`"above"`/`"below"`を選べる）の書式をコピーする |
-| `set_range` | `sheet`,`start_cell`,`rows` | `style`,`header_style`,`row_styles`,`format_table` | 起点セルから複数行を一括書込。`header_style`は1行目のみ適用。列幅は自動調整（全角=2文字換算、既存幅より縮まない）。**`header_style`を渡すと自動的に`format_table`相当（見出し配色・罫線・縞模様・見出し行固定・列幅調整）が既定で適用される**（`format_table:false`で無効化可。逆に`header_style`省略でも`format_table:true`で強制適用可） |
-| `set_style` | `sheet`,`range` | `style` | 値は変えず既存セルへ書式のみ適用 |
-| `format_table` | `sheet`,`range` | `theme`(下記参照),`header_fill`(既定`1F4E78`または`theme`のprimary),`header_font_color`(既定`FFFFFF`または`theme`のtext_on_primary),`band_fill`(既定`F2F2F2`),`banded`(既定true),`border`(既定`thin`),`freeze_header`(既定true),`autofit`(既定true) | 書き込み済みの表を後から仕上げる。`range`の1行目を見出しとみなす。本体行のフォント色・太字は変更しない（`role`色分けを壊さないため） |
-| `insert_rows` | `sheet`,`index` | `count`(既定1) | 行挿入（1始まり位置。絶対行番号を自分で計算する必要がある。月・区分等でグルーピングされた表への挿入は`insert_row_group`を使う） |
-| `insert_row_group` | `sheet`,`rows` | `anchor`(`{"column","equals"}`),`position`(`"before"`/`"after"`、既定`"before"`),`start_column`,`style`,`header_style`,`row_styles`,`format_table` | **グルーピングされた列（月・区分など、同じ値が連続し結合セル化される列）を持つ表へ、既存グループの前後に新しい行グループを挿入する。**`anchor`で指定した列の値が最初に一致する行範囲を、このop実行時点（＝同一opsバッチ内の直前のops適用後）のシート状態から解決してから挿入・書き込みを1opで行うため、絶対行番号の計算が一切不要。`anchor`省略時はシート末尾に追記。`position:"before"`は対象グループの先頭に、`"after"`は末尾の直後に挿入する。書き込み内容（`rows`/`style`等）は`set_range`と同じスキーマ |
-| `delete_rows` | `sheet`,`index` | `count`(既定1) | 行削除 |
-| `insert_cols` | `sheet`,`index` | `count`(既定1) | 列挿入（1始まり） |
-| `delete_cols` | `sheet`,`index` | `count`(既定1) | 列削除 |
-| `set_column_width` | `sheet`,`column`,`width` | - | 列幅を手動指定。単位はExcelの文字幅（既定約8.43）。1〜60にクランプされる。`column`は列文字（`"A"`等）と1始まり列番号（`1`等）のどちらでも指定可 |
-| `set_row_height` | `sheet`,`row`,`height` | - | 行の高さを手動指定（`row`は1始まり行番号、`height`はポイント単位。1〜409にクランプされる） |
-| `merge_cells` | `sheet`,`range` | - | セル結合（例`"A1:C1"`） |
-| `unmerge_cells` | `sheet`,`range` | - | 結合解除。未結合範囲指定はエラー |
-| `add_table` | `sheet`,`name`,`range` | `style`(既定`TableStyleMedium9`),`banded`(既定true) | 構造化テーブル作成（フィルター・構造化参照付き。`format_table`の見た目装飾とは別物）。`range`1行目の既存値がヘッダー名になる。`name`はブック内一意な識別子 |
-| `update_table` | `sheet`,`name` | `range`,`style`,`banded` | 既存テーブルの範囲拡張・スタイル変更 |
-| `remove_table` | `sheet`,`name` | - | テーブル定義のみ削除（値・書式は残る） |
-| `freeze_panes` | `sheet`,`cell` | - | ウィンドウ枠固定（`"A2"`で1行目固定） |
-| `add_chart` | `sheet`,`type`,`data_range`,`anchor` | `title`,`categories_range`,`titles_from_data`(既定true),`theme`(下記参照),`show_data_labels`(既定true),`grouping`(`type:bar`限定。下記参照) | グラフ追加。`type`は`bar`/`line`/`pie`/`scatter`。既定でデータラベル（値。`pie`は%）を表示し、`theme`指定時は系列色を付ける（`pie`は対象外、Excel既定の配色のまま） |
-| `update_chart` | `sheet`,`chart_index` | `anchor`,`width_cm`,`height_cm`,`data_range`,`categories_range`,`titles_from_data`,`title`,`theme`,`grouping`（1つ以上必須） | 既存グラフの位置・サイズ・データ範囲・タイトル・配色・積み上げ設定を変更（下記「画像・グラフの追加と調整」参照） |
-| `delete_chart` | `sheet`+(`chart_index`または`title`) | - | グラフ削除。`title`指定時、一致が0件/複数件ならエラー（`update_chart`と同じ`chart_index`基準で数える） |
-| `add_image` | `sheet`,`image_path`,`left_cm`,`top_cm` | `width_cm`/`height_cm`（省略時は原寸、片方のみ指定でアスペクト比維持） | 新規画像をシートへ追加（下記参照） |
-| `set_image_position` | `sheet`,`image_index` | `left_cm`/`top_cm`/`width_cm`/`height_cm`（1つ以上必須） | 既存画像の位置・サイズを変更（下記参照） |
-| `add_conditional_format` | `sheet`,`range`,`rule_type` | `params`（`rule_type`によっては実質必須。省略時は空扱いになり、必要な引数が欠けていればエラーになる） | 条件付き書式（下記表参照） |
-| `add_data_validation` | `sheet`,`range`,`type` | `formula1`,`formula2`,`prompt`,`prompt_title`,`error_message`,`error_title`,`allow_blank`(既定true) | データ検証（下記参照） |
+- `wb`（編集対象のWorkbook）、`openpyxl`
+- `Font`, `PatternFill`, `Border`, `Side`, `Alignment`, `get_column_letter`, `column_index_from_string`
+- `BarChart`, `LineChart`, `PieChart`, `ScatterChart`, `Reference`
+- `Table`, `TableStyleInfo`, `DataValidation`, `CellIsRule`, `ColorScaleRule`, `DataBarRule`, `FormulaRule`, `IconSetRule`
+- 下記ヘルパー関数と定数`THEMES`/`ROLE_COLORS`/`CHART_PALETTE`
 
-補足: `sheet`はシート名または0始まりインデックス。`rows`/`value`は文字列・数値・真偽値・`null`。`=`で始まる文字列は数式として扱われる（このスクリプトは評価しない。計算値確認はexcel-recalcスキルの`recalc_excel.py`）。
+それ以外のopenpyxlの機能は普通に`from openpyxl... import ...`して使ってよい。
 
-## style共通スキーマ（`set_cell`/`set_range`/`set_style`/`header_style`で共通）
+## ヘルパー関数（openpyxlだけだと崩れやすい処理）
 
-```json
-{"bold": true, "italic": false, "font_color": "0000FF", "font_size": 11,
+| 関数 | 説明 |
+|---|---|
+| `write_table(ws, "A1", rows, theme=None, header=True, row_styles=None, style=None, banded=True, freeze_header=True)` | `rows`（見出し行を含む2次元リスト）を書き込み、`header=True`なら見出し配色・罫線・縞模様・見出し行固定・列幅調整まで仕上げる。戻り値は書いた範囲（例`"A1:C4"`） |
+| `format_table(ws, "A1:C10", theme=None, header_fill=None, header_font_color=None, banded=True, border="thin", freeze_header=True, autofit=True)` | 書き込み済みの表（1行目=見出し）を後から仕上げる。本体行の文字色・太字は変えない |
+| `apply_style(ws, "A1:C3", style)` | 範囲へstyle辞書（下記）を適用 |
+| `autofit_columns(ws, "A1:C10")` | 値から列幅を調整（全角=2文字換算、既存幅より縮めない。範囲省略でシート全体） |
+| `insert_rows(ws, idx, n)` / `delete_rows(ws, idx, n)` / `insert_cols(ws, idx, n)` / `delete_cols(ws, idx, n)` | 行列の挿入・削除（1始まり）。**`ws.insert_rows`等を直接使わずこちらを使う**（openpyxl本体は既存の結合セルを追従させず表が壊れるため） |
+| `find_group(ws, "A", "7月")` | A列の値が`"7月"`の連続区間の`(開始行, 終了行)`を返す（結合セル・空欄は直前の値の区間に含む）。値は型も含め厳密一致（数値セルなら`7`で探す） |
+| `list_groups(ws, "A")` | A列の連続区間を`[{"value","start_row","end_row","row_count"}, ...]`で返す |
+| `style_chart(chart)` | グラフへ色覚多様性に配慮した系列色とデータラベル（値。円グラフは%）を付ける。`add_data`の後に呼ぶ |
+| `place_image(ws, path, left_cm, top_cm, width_cm=None, height_cm=None)` | シート左上原点からのcm座標へ画像を追加（幅・高さ片方のみ指定でアスペクト比維持、両方省略で原寸） |
+| `move_image(ws, image_index, left_cm=..., top_cm=..., width_cm=..., height_cm=...)` | 既存画像（シート内0始まり、追加順）の位置・サイズのうち指定したものだけ変更 |
+
+## style辞書（`write_table`/`apply_style`で共通）
+
+```python
+{"bold": True, "italic": False, "font_color": "0000FF", "font_size": 11,
  "fill_color": "FFFF00", "number_format": "#,##0.00",
- "align": "center", "valign": "center", "wrap_text": false,
+ "align": "center", "valign": "center", "wrap_text": False,
  "border": "thin", "role": "input"}
 ```
-全キー省略可。`font_color`/`fill_color`はRRGGBB16進数。`align`は`left`/`center`/`right`、`valign`は`top`/`center`/`bottom`。`border`は文字列（`thin`/`medium`/`thick`、4辺一括）または`{"top":"thin","bottom":"thin"}`（辺別、キーは`top`/`bottom`/`left`/`right`）。
+全キー省略可。色はRRGGBB16進数。`border`は`"thin"`/`"medium"`/`"thick"`（4辺一括）または`{"top":"thin","bottom":"thin"}`。openpyxlの`Font`等を直接セルへ代入してもよい。
 
-`role`によるセル色分け（Anthropic公式スキル準拠、推奨）— `font_color`を書く代わりに`role`を指定すると自動で規約色になる:
-
-| role | 色 | 意味 |
-|---|---|---|
-| `input` | 青`0000FF` | ハードコードした入力値 |
-| `formula` | 黒`000000` | 同一シート内で完結する数式 |
-| `link` | 緑`008000` | 他シートを参照する数式 |
-
-表を作る際はこの規約で`role`を使い分けると「どこが手入力/どこが計算か」が一目で分かる。
+`role`によるセル色分け（推奨）— `font_color`の代わりに`role`を指定すると規約色になる: `input`=青`0000FF`（ハードコードした入力値）、`formula`=黒`000000`（同一シート内の数式）、`link`=緑`008000`（他シートを参照する数式）。
 
 ## テーマ配色（theme）
 
-`header_style`（`set_range`経由）・`format_table`の`theme`キーに以下から選ぶと、
-見出し配色を一括で指定できる（`pptx-create`スキルと同じ配色・同じ名前なので、
-xlsxとpptxを同じ資料セットとして作るときに見た目を揃えやすい）。個別に`header_fill`等を
-指定すればそちらが優先される。
-
-`add_chart`/`update_chart`の`theme`は「グラフに色を付けるかどうか」のスイッチとして
-同じテーマ名を受け付けるが、**実際の系列色はテーマの`primary`/`secondary`/`accent`
-ではなく、色覚多様性(CVD)に配慮した固定8色パレットを使う**（3色循環だと4系列目
-以降で色が重複するため）。そのためテーマ名を`navy`から`forest`に変えても
-グラフの系列色は変わらない（見出し配色等、テーマ依存の他要素とはここだけ挙動が違う）。
-
-| theme | 主な色調 |
-|---|---|
-| `charcoal`（既定相当） | チャコールグレー・落ち着いた中立トーン |
-| `navy` | 濃紺・信頼感のあるビジネス調 |
-| `forest` | 深緑・成長や環境をイメージ |
-| `coral` | 紺+コーラル、明るく力強い |
-| `terracotta` | テラコッタ・温かみのある土色系 |
-| `ocean` | 深い青系のグラデーション調 |
-| `teal` | ティール・清潔感のあるトーン |
-| `berry` | ベリー色・落ち着いた華やかさ |
-
-```json
-[{"op": "set_range", "sheet": "Sheet1", "start_cell": "A1",
-  "rows": [["月","売上"], ["4月",120], ["5月",135]], "header_style": {"theme": "navy"}},
- {"op": "add_chart", "sheet": "Sheet1", "type": "bar", "data_range": "B1:B3",
-  "categories_range": "A2:A3", "anchor": "D1", "title": "月次実績", "theme": "navy"}]
-```
+`write_table`/`format_table`の`theme`に以下から選ぶと見出し配色を一括指定できる（`pptx-create`スキルと同じ名前・配色）: `charcoal`（既定相当）/`navy`/`forest`/`coral`/`terracotta`/`ocean`/`teal`/`berry`。色の値は`THEMES["navy"]["primary"]`等で参照できる。グラフの系列色はテーマによらず`style_chart`の固定8色パレット（`CHART_PALETTE`）を使う。
 
 ## 美しい表を作る基本レシピ（必須ルール）
 
-**表形式データ（レポート・一覧・予定表等）は`set_range`に`header_style`を付けるだけでよい**（中身は空`{}`でも「1行目が見出し」の合図として機能する）。見出し配色・罫線・縞模様・見出し行固定・列幅調整が自動適用される。`fill_color`/`font_color`/`border`を1セルずつ自前で組み立てるのは避ける（呼び出しが増え見た目もバラつく）。配色を明示指定されたときのみ`format_table`のオプション（`header_fill`等）で上書きする。
+**表形式データ（レポート・一覧・予定表等）は`write_table`で書く**。見出し配色・罫線・縞模様・見出し行固定・列幅調整が自動で付く。`fill_color`/`font_color`/`border`を1セルずつ自前で組み立てるのは避ける（コードが長くなり見た目もバラつく）。見出しなしの生データだけ`header=False`。**見出し行とデータ行は同じ`rows`にまとめる**（別々に書かない）。
 
-```json
-[{"op": "set_range", "sheet": "Sheet1", "start_cell": "A1",
-  "rows": [["月","行事","担当"], ["4月","入学式","田中"], ["5月","遠足","佐藤"]],
-  "header_style": {}}]
+```python
+ws = wb.create_sheet("年間予定")
+write_table(ws, "A1", [["月","行事","担当"], ["4月","入学式","田中"], ["5月","遠足","佐藤"]], theme="navy")
 ```
-
-自動仕上げ不要（見出しなし生データ等）のときだけ`"format_table": false`を付ける。
-
-**見出し行とデータ行は同じ`set_range`呼び出しの`rows`にまとめる**（見出しとデータを別呼び出しに分割しない。分割時に先頭行を誤って見出し装飾しないガードはあるが、呼び出し回数が増えるだけで利点がない）。複数の表を作る場合は表ごとに個別の`set_range`を呼べば干渉しない。
 
 ## 行ごとに異なる背景色を付けたいとき（必須ルール）
 
-**書き込み後に行番号を目で数えて`set_style`で塗り直すのは避ける**（見出し行を含めるかの数え間違いで1行ズレる事故が起きやすい）。`set_range`の`rows`と**同じ要素数**の`row_styles`（各要素は1行分のstyle辞書、色なしは`null`）を渡す。`rows`を組み立てる時点で対応するstyleを同じ配列に並べるためズレようがない。
+**書き込み後に行番号を数えて塗り直さない**（見出し行を含めるかの数え間違いで1行ズレる）。`rows`と**同じ要素数**の`row_styles`（各要素は1行分のstyle辞書、色なしは`None`）を`rows`と同時に組み立てて渡す。1要素目は見出し行に対応。
 
-```json
-{"op": "set_range", "sheet": "月間予定表", "start_cell": "A2",
- "rows": [["月","行事名"], ["1月","役員選考"], ["1月","新年会"], ["2月","ひな祭り"]],
- "header_style": {"bold": true, "fill_color": "D9E2F3"},
- "row_styles": [null, {"fill_color": "DAEEF3"}, {"fill_color": "DAEEF3"}, {"fill_color": "F8CBAD"}]}
+```python
+data = [("1月","役員選考"), ("1月","新年会"), ("2月","ひな祭り")]
+colors = {"1月": "DAEEF3", "2月": "F8CBAD"}
+rows = [["月","行事名"]] + [list(r) for r in data]
+row_styles = [None] + [{"fill_color": colors[r[0]]} for r in data]
+write_table(ws, "A2", rows, row_styles=row_styles)
 ```
-`row_styles`の1要素目は見出し行に対応（`header_style`と両方渡すと`row_styles`優先）。要素数不一致はエラー。
 
 ## 同じ値が続く列はセルを結合する（月・区分・期間などのグルーピング列）
 
-同じ値が2行以上連続する列（例:「月」列）は、値を繰り返し書いたままにせず結合する。
-1. `set_range`で表を書き込む（この時点では重複値をそのまま書いてよい）。
-2. 連続範囲だけ`merge_cells`で結合する（結合すると左上以外の値は自動的に消えるため事前の空欄化は不要）。
-3. 結合セルに`set_style`で`{"valign":"center"}`を当てると縦中央揃えになる。
+同じ値が2行以上連続する列（例:「月」列）は結合する。表を書いた後に`list_groups`で区間を求めて`merge_cells`すれば、行番号を手計算しなくてよい。
 
-```json
-[{"op": "set_range", "sheet": "週間予定表", "start_cell": "A2",
-  "rows": [["1月","第1週"], ["1月","第2週"], ["2月","第1週"]], "header_style": {}},
- {"op": "merge_cells", "sheet": "週間予定表", "range": "A2:A3"},
- {"op": "set_style", "sheet": "週間予定表", "range": "A2:A3", "style": {"valign": "center"}}]
-```
-1回の`merge_cells`は連続矩形のみ結合可。値グループが複数（上記の「1月」「2月」）ならグループごとに`merge_cells`＋`set_style`を1回ずつ呼ぶ。
-
-**既に書き込み済みの表**（`insert_rows`で追記した後など）に後から仕上げをかけたいだけなら独立opの`format_table`を使う: `[{"op": "format_table", "sheet": "Sheet1", "range": "A1:C3"}]`。`role`規約で入力セルに色を当てていても`format_table`は本体行のフォント色を変更しないため壊れない（呼び出し順序は値→`format_table`でもその逆でもよい）。
-
-## グルーピングされた列を持つ表へ、既存グループの前後に新しい行グループを挿入したいとき（必須ルール）
-
-**`insert_rows`で絶対行番号を計算してから`set_range`で書き込む、という組み合わせは避ける**（対象が「7月」等どの行から始まるかを自分で数え、複数グループを挿入する際は先に行ったinsertで後続の行番号がズレることまで手計算する必要があり、ズレを1行間違えると別の月のデータを上書きしてしまう事故が起きる）。代わりに`insert_row_group`を使い、`anchor`で「どの値の前/後に挿入するか」を指定する（挿入位置はopが自動的に解決するため行番号を書く必要が無い）。
-
-```json
-[{"op": "insert_row_group", "sheet": "月間予定表",
-  "anchor": {"column": "A", "equals": "7月"}, "position": "before",
-  "rows": [["6月","ふれあい祭り出店","06/14"], ["6月","夏休み前最後の行事","06/28"]],
-  "row_styles": [null, null]}]
-```
-同じopsバッチ内で`insert_row_group`を複数回連続実行しても、各opは常に直前のopsまで適用済みの最新のシート状態からアンカーを解決するため、行ズレによる上書き事故は起きない（「6月に2つの行事を追加」のように複数グループを7月の前へ挿入したい場合は、この形で`insert_row_group`を必要な回数だけ並べればよい）。
-
-現在のグループ構成を確認したいとき（`insert_row_group`の`anchor`に使う値の確認、挿入結果の検証など）は、`excel-read`スキルの`--query-json '[{"op": "group_by", "column": "A"}]'`を使う（生の`rows`を目で数えて行範囲を手計算しない）。
-
-**`anchor.equals`は型も含めて厳密一致で照合される。** アンカー列が数値セル（例: `2024`や`7`）の場合、`group_by`が返す`value`はセルの元の型（int/float）のままなので、`"equals": "7"`のように文字列化すると一致せず「anchorに一致する値が見つかりません」エラーになる。`group_by`の出力の`value`をそのままコピーして渡すこと（数値なら`"equals": 7`のように数値のまま指定する）。
-
-## 画像・グラフの追加と調整（`add_image`/`set_image_position`/`update_chart`）
-
-```json
-[{"op": "add_image", "sheet": "Sheet1", "image_path": "C:\\img\\logo.png",
-  "left_cm": 1.0, "top_cm": 1.0, "width_cm": 5.0, "height_cm": 3.0},
- {"op": "set_image_position", "sheet": "Sheet1", "image_index": 0, "left_cm": 12.0, "width_cm": 6.0},
- {"op": "update_chart", "sheet": "Sheet1", "chart_index": 0,
-  "anchor": "F1", "width_cm": 18, "height_cm": 9, "title": "更新後タイトル", "theme": "navy"}]
+```python
+write_table(ws, "A1", [["月","週"], ["1月","第1週"], ["1月","第2週"], ["2月","第1週"]])
+for g in list_groups(ws, "A"):
+    if g["start_row"] > 1 and g["row_count"] > 1:
+        ws.merge_cells(start_row=g["start_row"], start_column=1, end_row=g["end_row"], end_column=1)
+        ws.cell(row=g["start_row"], column=1).alignment = Alignment(vertical="center")
 ```
 
-- `add_image`: `left_cm`/`top_cm`は必須（シート左上原点からのcm座標）。
-  `width_cm`/`height_cm`は両方省略で画像の原寸、片方のみ指定でアスペクト比を
-  保ったまま他方を自動計算。
-- `set_image_position`: `image_index`はそのシート内での画像の0始まり通し番号
-  （追加順。`excel-read`の`--query-json '[{"op": "list_images"}]'`で現在の
-  `image_index`と位置・サイズを確認できる）。`left_cm`/`top_cm`/`width_cm`/
-  `height_cm`のうち指定したものだけを変更し、省略したものは元の値のまま。
-  **テンプレートに元から入っていた画像**（セルに追従する配置）を初めて動かす
-  ときは、内部的に絶対座標へ置き換わり、`left_cm`/`top_cm`を指定しなかった
-  軸は0cm起点になる。位置がずれて見える場合は`left_cm`/`top_cm`を両方
-  明示することを推奨。
-- `update_chart`: `chart_index`はそのシート内でのグラフの0始まり通し番号
-  （追加順）。`anchor`/`width_cm`/`height_cm`/`data_range`(+`categories_range`/
-  `titles_from_data`)/`title`/`theme`のいずれか1つ以上が必須。`data_range`を
-  指定すると既存の系列は全てクリアしてから作り直される。**テンプレートに
-  元から入っていたグラフ**はopenpyxlがサイズをファイルから正しく復元しない
-  既知の制約があるため、サイズ変更したい場合は`width_cm`/`height_cm`を
-  明示指定することを推奨する。
-- **画像のトリミング（切り抜き）は非対応。** openpyxlには画像トリミングの
-  安定したAPIが無く、無理に実装するとファイルが壊れるリスクがあるため
-  意図的に対応していない。ユーザーからトリミングを頼まれた場合は、
-  「excel-editでは画像のトリミングに対応していません」と伝え、代わりに
-  トリミング済みの画像ファイルを別途用意してもらうよう案内する。
-- **積み上げ棒グラフは`grouping`で指定する**（`type:bar`のみ）。値は
-  `clustered`（既定・系列を横に並べる）/`stacked`（積み上げ）/
-  `percentStacked`（100%積み上げ）。`stacked`/`percentStacked`指定時は
-  系列が正しく重なって見えるよう内部で自動的に`overlap:100`相当も設定
-  する（別途指定不要）。`type:bar`以外（`line`/`pie`/`scatter`）へ指定
-  するとエラーになる。`update_chart`でも`grouping`だけを渡して既存の
-  棒グラフを後から積み上げに変更できる。
-  ```json
-  {"op": "add_chart", "sheet": "Sheet1", "type": "bar",
-   "data_range": "B1:D5", "anchor": "F1", "grouping": "stacked"}
-  ```
-- **`data_range`/`categories_range`は単一シート内の矩形範囲しか指定できない。**
-  「1月〜12月シートそれぞれのB11セル」のように複数シートに散らばった値を
-  1つのグラフの系列にまとめたい場合、`add_chart`に直接そのような範囲は渡せない
-  （openpyxl・Excelとも1系列は連続範囲が前提のため）。生のopenpyxlコードで
-  `Series`/`Reference`を手組みしようとすると、
-  内部APIの誤用でハマりやすい（非推奨）。代わりに、まず`add_sheet`で集計用の
-  1シートを作り、`set_range`の各セルに他シートを参照する数式文字列
-  （例:`"='1月'!B11"`）を書き込んで12ヶ月分を1シートに集約してから、その集計
-  シートを`data_range`にして`add_chart`する。
-  ```json
-  [{"op": "add_sheet", "name": "月別集計"},
-   {"op": "set_range", "sheet": "月別集計", "start_cell": "A1",
-    "rows": [["月","支出合計","収入合計"],
-             ["1月","='1月'!B11","='1月'!B16"],
-             ["2月","='2月'!B11","='2月'!B16"]], "header_style": {}},
-   {"op": "add_chart", "sheet": "月別集計", "type": "bar",
-    "data_range": "B1:C3", "categories_range": "A2:A3", "anchor": "E1"}]
-  ```
+## グルーピングされた表の、既存グループの前後へ行を挿入したいとき（必須ルール）
 
-## 条件付き書式（`add_conditional_format`）
+**挿入位置の行番号を目で数えて決めない**。`find_group`で挿入位置を求め、`insert_rows`（ヘルパー版）で空け、そこへ書く。複数グループを挿入するときは、**挿入のたびに`find_group`を呼び直す**（前の挿入で後ろの行番号がずれるため）。
 
-`rule_type`/`params`は`openpyxl.formatting.rule`のコンストラクタ引数にそのまま渡る。
-
-| rule_type | params例 |
-|---|---|
-| `color_scale` | `{"start_type":"min","start_color":"FFFFFF","end_type":"max","end_color":"FF0000"}` |
-| `cell_is` | `{"operator":"greaterThan","formula":["100"],"fill":null}`（`fill`はPatternFillが必要なため実質省略。色付けは事前に`set_style`で当てておく運用でもよい） |
-| `formula` | `{"formula":["$A1=\"NG\""]}` |
-| `data_bar` | `{"start_type":"min","end_type":"max","color":"638EC6"}` |
-| `icon_set` | `{"icon_style":"3TrafficLights1","type":"percent"}` |
-
-不正な`params`は「`ops[N]の適用に失敗しました`」＋Pythonの例外詳細が返るのでそれを手がかりに修正する。
-
-## データ検証（`add_data_validation`）
-
-プルダウン例:
-```json
-{"op": "add_data_validation", "sheet": "Sheet1", "range": "C2:C100", "type": "list",
- "formula1": "\"OK,NG,保留\"", "prompt": "OK/NG/保留のいずれかを選択", "error_message": "リストにない値です"}
+```python
+ws = wb["月間予定表"]
+start, end = find_group(ws, "A", "7月")      # 7月の前に挿入（後ろなら idx = end + 1）
+new_rows = [["6月","ふれあい祭り出店","06/14"], ["6月","夏休み前最後の行事","06/28"]]
+insert_rows(ws, start, len(new_rows))
+for i, row in enumerate(new_rows):
+    for j, v in enumerate(row):
+        cell = ws.cell(row=start + i, column=1 + j, value=v)
+        cell._style = ws.cell(row=start + len(new_rows), column=1 + j)._style  # 下の行の書式に揃える
 ```
-`type`は`list`/`whole`/`decimal`/`date`/`textLength`/`custom`（openpyxl `DataValidation.type`と同じ）。
-
-## 手順とエッジケース
-
-1. 依頼内容からopsを組み立てる（データ投入=`set_range`、既存表への追記=`insert_rows`+`set_range`、見た目仕上げ=`format_table`、個別セル調整=`set_style`、グラフ=`add_chart`、を組合せる）。
-2. 上記コマンドを実行する。
-3. `--new`使用時に対象が既存で上書き可否不明なら、`--overwrite`なしで一度実行しエラーからユーザーに確認する。
-4. 成功時`{"path":...,"sheets":[...],"applied_ops":N}`が返るので保存先パスを伝える。
-
-エッジケース: 拡張子がxlsx/xlsm以外／opsがJSON配列でない／opに`op`キーがない／存在しないシートやop種別を指定／未対応の`theme`名を指定／`--new`なしでファイル不在／`--new`かつ`--overwrite`なしで既存ファイル、はいずれもエラー＋終了コード1（何番目のどのopが失敗したかメッセージに含まれる。それを手がかりに修正して再実行）。
 
 ## 既存の表の一部列だけを直したいとき（必須ルール）
 
-**複数列ある既存の表（例:A〜G列）のうち一部の列（例:A〜B列）だけを直したい場合、`delete_rows`で行削除してから`set_range`に直したい列分の`rows`だけを渡す、という操作はしない。** `set_range`/`insert_row_group`が新規生成するのは`rows`に含めた列だけで、渡さなかった列（この例ではC〜G列）は既存データが行削除で失われた上、新規セルとして無書式・空値のまま復元されない（値だけでなく罫線・背景色などの書式も消える）。この呼び出しをすると`[標準エラー]`に警告が出るので、出た場合は表の再構築ではなく次のいずれかへ切り替える。
+**複数列ある既存の表のうち一部の列だけを直すために、行を削除してその列分だけ書き直す、ということはしない**（書かなかった列の値・罫線・背景色が消える）。直したいセルだけ`ws["B5"] = 新しい値`のように個別に代入する（値だけ代入すれば既存の書式は残る）。
 
-- 直したいセルだけを`set_cell`（値のみ、または`set_style`で書式のみ）で個別に操作する。
-- 表全体を作り直す必要がある場合は、`rows`に既存の全列分のデータ（値も書式も）を含めて渡す。
+## グラフ
 
-`set_cell`で値だけを書き戻す際、対象セルが上記のように新規生成された無書式セルだと書式が付かない。周囲のセルと見た目を揃えたい場合は`inherit_style:true`（上記opsの一覧を参照）を使う。
+```python
+ws = wb["売上"]
+ch = BarChart()
+ch.title = "月次実績"
+ch.add_data(Reference(ws, min_col=2, min_row=1, max_col=3, max_row=13), titles_from_data=True)  # 見出し行込み
+ch.set_categories(Reference(ws, min_col=1, min_row=2, max_row=13))
+style_chart(ch)
+ch.width, ch.height = 18, 9   # cm
+ws.add_chart(ch, "E2")
+```
+
+- 積み上げ棒グラフ: `ch.grouping = "stacked"`（100%は`"percentStacked"`）と**`ch.overlap = 100`をセットで**指定する（overlapが無いと積み上がって見えない）。
+- 既存グラフは`ws._charts`（シート内0始まり、追加順）で取り出して`title`/`width`/`height`/`anchor`を変更、削除は`del ws._charts[i]`。**テンプレートに元から入っていたグラフ**はopenpyxlがサイズを正しく復元しないため、触る場合は`width`/`height`を明示する。
+- **1系列は単一シート内の連続範囲しか指定できない。** 複数シートに散らばった値（「1月〜12月シートそれぞれのB11」等）をグラフにするときは、集計用シートを作って各セルに`"='1月'!B11"`のような参照数式を書き、その集計シートを範囲にする（`Series`を手組みしない）。
+
+## 画像
+
+`place_image`/`move_image`を使う（openpyxlの`Image`を直接`add_image(img, "A1")`してもよいが、cm単位の位置・サイズ指定はヘルパーの方が確実）。既存画像の位置・番号は`excel-read`の`--query-json '[{"op": "list_images"}]'`で確認できる。**テンプレートに元から入っていた画像**を初めて動かすと絶対座標配置に置き換わり、指定しなかった軸は0cm起点になるので、`left_cm`/`top_cm`は両方明示する。**画像のトリミング（切り抜き）は非対応**（openpyxlに安定したAPIが無くファイル破損のリスクがある）。頼まれたら「excel-editでは画像のトリミングに対応していません」と伝え、トリミング済み画像を別途用意してもらう。
+
+## 条件付き書式・データ検証
+
+```python
+ws.conditional_formatting.add("C2:C100", ColorScaleRule(start_type="min", start_color="FFFFFF", end_type="max", end_color="FF0000"))
+ws.conditional_formatting.add("D2:D100", CellIsRule(operator="greaterThan", formula=["100"], fill=PatternFill("solid", fgColor="FFC7CE")))
+dv = DataValidation(type="list", formula1='"OK,NG,保留"', allow_blank=True)
+dv.prompt, dv.showInputMessage = "OK/NG/保留のいずれかを選択", True
+ws.add_data_validation(dv)
+dv.add("E2:E100")
+```
+
+## その他のよく使う操作
+
+- シート: `wb.create_sheet("名前", index)`（0始まり。同名を作ると`名前1`に自動改名されるので、既存なら`wb["名前"]`を使う）、`wb.remove(wb["名前"])`、`ws.title = "新名"`（31文字まで）、`ws.sheet_properties.tabColor = "FF0000"`、開いたときの表示シートは`wb.active = wb.sheetnames.index("名前")`。
+- 列幅・行高: `ws.column_dimensions["A"].width = 20`、`ws.row_dimensions[1].height = 30`。ウィンドウ枠固定: `ws.freeze_panes = "A2"`。
+- 構造化テーブル: `t = Table(displayName="売上表", ref="A1:C10"); t.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True); ws.add_table(t)`（`displayName`はブック内一意、空白不可）。
+- 数式は`"=SUM(B2:B10)"`のように文字列で代入する（このスクリプトは計算しない。計算値確認はexcel-recalcスキル）。
+
+## 手順とエッジケース
+
+1. 対象ブックの構造（シート名・表の位置）が分からなければ、先にexcel-readスキルで確認する。
+2. コードを書いて上記コマンドを実行する。
+3. `--new`使用時に対象が既存で上書き可否不明なら、`--overwrite`なしで一度実行しエラーからユーザーに確認する。
+4. 成功時の`path`をユーザーに伝える。失敗時はエラーに出た行だけ直して再実行する（ファイルは保存されていないので、前回の途中結果を気にしなくてよい）。
 
 ## デザイン確認（必須ルール）
 
@@ -291,4 +182,5 @@ xlsxとpptxを同じ資料セットとして作るときに見た目を揃えや
 ## 禁止事項
 
 - `--new`かつ`--overwrite`なしで既存ファイルへ強制上書きする（エラーになった場合はユーザーに上書き可否を確認してから再実行する）。
+- コード内での`wb.save()`、`load_workbook()`/`Workbook()`による`wb`の作り直し、対象ブック以外のファイルの書き換え。
 - `.xls`への編集・生成（拡張子の対応外操作）。

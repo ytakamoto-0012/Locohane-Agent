@@ -48,8 +48,8 @@ _QUERY_HANDLERS = {"group_by": ..., "list_images": ..., "list_charts": ..., "pri
 気づいた事例がある。**「対応opエラー」を受け取ったら次のopをまた推測せず、
 即座に`read_skill`でSKILL.mdのquery節を再読すること。** セル範囲の値そのものを
 知りたいだけなら、`--query-json`ではなく通常モードの`--offset`/`--limit`で
-代替できる（[[edit-excel-invocation-contract]]の`insert_row_group`の
-アンカー確認用途で使う`group_by`、グラフ確認用途の`list_charts`、印刷範囲確認用途の
+代替できる（excel-editでグループの前後へ行を挿入する前の
+グループ構成確認に使う`group_by`、グラフ確認用途の`list_charts`、印刷範囲確認用途の
 `print_area`以外は、基本的に通常モードで足りる）。
 
 ## render_excel.pyの引数は`excel_path`と`--print-as-is`だけ

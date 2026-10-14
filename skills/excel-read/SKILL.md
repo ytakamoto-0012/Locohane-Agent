@@ -118,7 +118,7 @@ python read_excel.py "C:\Users\me\book.xlsx" --sheet 月間予定表 --query-jso
 - **見出し行も除外されない。** 見出しセル（例`A1`の"月"）に値があれば、それ自体が`start_row:1,end_row:1`の独立した1件として`items`の先頭に混ざる。上記の出力例で`start_row`が`2`から始まっているのは見出しセルがたまたま空だったケースであり、一般には先頭itemが見出しかどうかを`start_row`で判定して除外する必要がある。
 - `queries`は配列なので、`[{"op":"group_by","column":"A"}, {"op":"group_by","column":"C"}]`のように複数クエリを1回の呼び出しにまとめられる（列を変えて範囲確認したいときに個別呼び出しを繰り返さなくてよい）。
 - `--sheet`必須（省略時・`.xls`拡張子ではエラー）。未対応のop名もエラー＋終了コード1（対応opの一覧をメッセージに含む）。
-- excel-editスキルで`insert_row_group`を使う際の`anchor`（どの値の前/後に挿入するか）の確認にもそのまま使える。
+- excel-editスキルでグループの前後へ行を挿入する前に、どんな値のグループがあるかを確認するのにも使える（excel-editのコード内では`find_group`/`list_groups`ヘルパーで同じ情報を直接得られる。ただし`list_groups`は同じ値が連続する行も1区間にまとめる点が`group_by`と異なる）。
 
 ### `list_images`（画像一覧）
 
@@ -134,9 +134,9 @@ python read_excel.py "C:\Users\me\book.xlsx" --sheet Sheet1 --query-json '[{"op"
 ]
 ```
 `image_index`はそのシート内での画像の0始まり通し番号（追加順）で、excel-editの
-`set_image_position`の`image_index`と完全に一致する。`anchor_type`が`"absolute"`
+`move_image`の`image_index`と完全に一致する。`anchor_type`が`"absolute"`
 以外（テンプレートに元から入っていた、セルに追従する配置の画像）の場合は
-`left_cm`等が`null`になる（`set_image_position`で一度動かすと絶対座標に
+`left_cm`等が`null`になる（excel-editの`move_image`で一度動かすと絶対座標に
 置き換わり、以降は座標が取得できるようになる）。
 
 ### `list_charts`（グラフ一覧）
@@ -153,8 +153,8 @@ python read_excel.py "C:\Users\me\book.xlsx" --sheet Sheet1 --query-json '[{"op"
    "items": [{"chart_index": 0, "type": "line", "title": "月別収支推移", "anchor": "F1"}]}
 ]
 ```
-`chart_index`はそのシート内でのグラフの0始まり通し番号で、excel-editの
-`update_chart`/`delete_chart`の`chart_index`と完全に一致する。`type`は
+`chart_index`はそのシート内でのグラフの0始まり通し番号で、excel-editのコード内の
+`ws._charts[chart_index]`の添字と完全に一致する。`type`は
 `line`/`bar`/`pie`/`scatter`のいずれか（対応外の種類はopenpyxlのクラス名を
 そのまま返す）。`title`は未設定なら`null`。グラフが実在するか・タイトルが
 意図通りかを確認したいだけなら、excel-renderで画像化するよりこちらが速い。

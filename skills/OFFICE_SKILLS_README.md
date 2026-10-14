@@ -134,7 +134,7 @@ write側が操作する値をread側のどこかが可視化できていなけ�
 
 ## 4. アドレッシング設計（拡張時に踏襲すべきパターン）
 
-`excel-edit`（`insert_row_group`のアンカー解決）、`docx-edit`（`DocEditContext`）、
+`excel-edit`（ヘルパー`find_group`による挿入位置の解決）、`docx-edit`（`DocEditContext`）、
 `pptx-edit`（`EditContext`）は、いずれも共通の設計原則に従う:
 
 > **既存コンテンツを指す番号・indexは、常に「そのスクリプト呼び出しを開始した

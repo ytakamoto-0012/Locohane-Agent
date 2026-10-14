@@ -53,6 +53,10 @@ def _subprocess_env() -> dict[str, str]:
         env["AGENT_PATH_MEMORY_DIR"] = str(_state._PATH_MEMORY_DIR)
     env["AGENT_PATH_MEMORY_MAX_ENTRIES"] = str(_state._PATH_MEMORY_MAX_ENTRIES)
     env["AGENT_SRC_DIR"] = str(_state._SRC_DIR)
+    # LLMが書いたコードを受け取って実行するスキルスクリプト（excel-edit の
+    # edit_excel.py --code）が、execute_python_code と同じ
+    # [scripts] code_execution_enabled の設定に従えるようにする。
+    env["AGENT_CODE_EXECUTION_ENABLED"] = "1" if _state._CODE_EXEC_ENABLED else "0"
     if _state._DEFAULT_WORKDIR is not None:
         env["AGENT_DEFAULT_WORKDIR"] = str(_state._DEFAULT_WORKDIR)
     cfg = _state._LLM_CONFIG

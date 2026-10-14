@@ -1,6 +1,6 @@
 ---
 name: excel-knowledge
-description: xlsx/xlsmファイルをexcel-edit/excel-read/excel-render/excel-recalcスキルで作成・編集・確認する際のコーディング作法・定石・よくある落とし穴について、実際の作業ログから蓄積したローカルの知識ベース（references/配下のノート）を参照するスキル。ユーザーが「表を作りたい」「既存のxlsx/xlsmを修正したい」といった依頼そのものではなく、excel-edit等のスキルを呼び出す際に「引数エラーが出た」「同じエラーを繰り返している」「opの組み立て方が分からない」「excel-editのopで表現できない要求にどう対処すべきか」「グラフの種類が対応していないと言われた」「ファイルが壊れて開けなくなった」など、ツール呼び出し自体で詰まった/迷走しかけたときに使う。excel-edit/excel-read/excel-render/excel-recalcで実際にxlsx/xlsmを読み書きする前後の下調べ・トラブルシューティング段階で使うことが多い。VBAマクロの読み書き・エラーはexcel-vba-knowledge（excel-vba-read/excel-vba-edit用）の担当でこのスキルの対象外。ユーザーの依頼でExcel操作用のPythonスクリプト（openpyxl等を使った単体スクリプト）を新規に書き起こすタスクもこのスキルの対象外。
+description: xlsx/xlsmファイルをexcel-edit/excel-read/excel-render/excel-recalcスキルで作成・編集・確認する際のコーディング作法・定石・よくある落とし穴について、実際の作業ログから蓄積したローカルの知識ベース（references/配下のノート）を参照するスキル。ユーザーが「表を作りたい」「既存のxlsx/xlsmを修正したい」といった依頼そのものではなく、excel-edit等のスキルを呼び出す際に「引数エラーが出た」「同じエラーを繰り返している」「excel-editに渡すopenpyxlコードのAPIの書き方で詰まった」「積み上げ・複合グラフの書き方が分からない」「openpyxlで実現できない要求にどう対処すべきか」「ファイルが壊れて開けなくなった」など、ツール呼び出し自体で詰まった/迷走しかけたときに使う。excel-edit/excel-read/excel-render/excel-recalcで実際にxlsx/xlsmを読み書きする前後の下調べ・トラブルシューティング段階で使うことが多い。VBAマクロの読み書き・エラーはexcel-vba-knowledge（excel-vba-read/excel-vba-edit用）の担当でこのスキルの対象外。ユーザーの依頼でExcel操作用のPythonスクリプト（openpyxl等を使った単体スクリプト）を新規に書き起こすタスクもこのスキルの対象外。
 license: MIT
 metadata:
   author: ytakamoto
@@ -32,7 +32,7 @@ xlsx/xlsm を扱う `excel-edit`/`excel-read`/`excel-render`/`excel-recalc` ス�
    読み直す・`web-search`スキルでの調査を検討する。
 6. 実際にxlsx/xlsmを読む・書き換える作業は`excel-edit`/`excel-read`/
    `excel-render`/`excel-recalc`スキルの担当。このスキルは「呼び出す前に
-   引数・opの正しい形を確認する」「エラーが出たときに原因の当たりを付ける」
+   引数・openpyxlのAPIの正しい形を確認する」「エラーが出たときに原因の当たりを付ける」
    ための下調べに使う。
 
 ## 索引
@@ -40,9 +40,9 @@ xlsx/xlsm を扱う `excel-edit`/`excel-read`/`excel-render`/`excel-recalc` ス�
 | トピック | ファイル | 内容 |
 |---|---|---|
 | excel-read/excel-renderの引数・query | `excel-knowledge/references/read-render-args-and-queries.md` | `read_excel.py`/`render_excel.py`の引数はSKILL.md記載のもので全て、`--query-json`の対応opは`group_by`/`list_images`/`list_charts`/`print_area`のみ、存在しない引数・op名を当てずっぽうで発明しない |
-| edit_excel.pyの呼び出し契約 | `excel-knowledge/references/edit-excel-invocation-contract.md` | `--ops-json`/`--ops-file`はどんな用途でも必須（コピー・復元ツールとして使えない）、`--new`は0シートの空ブックから始まる（Sheet1は存在しない）、`--query`と`--query-json`の混同 |
-| excel-editのopで表現できない要求 | `excel-knowledge/references/beyond-excel-edit-capabilities.md` | 積み上げグラフ等、`add_chart`が対応しない種類指定に当たったときの対処。生openpyxlへ無断でバイパスしてxlsmを破損させた実例、`keep_vba`、推奨する対処の順序 |
-| フォント名変更でraw openpyxlに頼るとき | `excel-knowledge/references/raw-openpyxl-xlsm-fallback.md` | excel-editにフォント名指定が無い、Fontはcopy()してから.nameだけ変更する（新規Font代入だとbold/size/colorが消える）、render_excel失敗=破損とは限らない、同じ仮説を実行せず繰り返す迷走への対処 |
+| edit_excel.pyの呼び出し契約 | `excel-knowledge/references/edit-excel-invocation-contract.md` | `--code`/`--code-file`はどんな用途でも必須（コピー・復元ツールとして使えない）、`--new`は0シートの空ブックから始まる（Sheet1は存在しない）、`wb.save()`・`wb`の作り直しは禁止、`--query`と`--query-json`の混同 |
+| openpyxlでハマりやすいAPI | `excel-knowledge/references/beyond-excel-edit-capabilities.md` | 積み上げ棒グラフ（`grouping`+`overlap`）・`Series(values=)`・複合グラフ（`bar += line`）等の実際に出た記憶違い。`execute_python_code`の生openpyxlで迂回してxlsmを破損させた実例、openpyxl自体が対応しない要求の扱い |
+| フォント名変更など既存書式の一部変更 | `excel-knowledge/references/raw-openpyxl-xlsm-fallback.md` | Fontはcopy()してから.nameだけ変更する（新規Font代入だとbold/size/colorが消える）、render_excel失敗=破損とは限らない、同じ仮説を実行せず繰り返す迷走への対処 |
 | エラーメッセージを読んでからの再試行 | `excel-knowledge/references/error-message-first-retry.md` | エラーメッセージの型ごとの読み方、再試行前に変更点とエラー原因が対応しているか確認する、2回連続で同種エラーが出たらread_skillでSKILL.mdを読み直す |
 | ツール権限の境界 | `excel-knowledge/references/tool-permission-boundaries.md` | readonly系サブエージェント等、権限外の書き込み系スクリプト実行をコードでシミュレートしようとしない |
 

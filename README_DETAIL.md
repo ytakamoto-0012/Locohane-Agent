@@ -77,8 +77,12 @@
   実行をブロックする。任意コード実行が可能な `execute_python_code` でも
   git/npm/pip の起動とプロジェクト外への書き込みをガードで遮断し、最低限の
   破壊的操作を防いでいる。
-- **文書生成スキルの「ops JSON DSL」設計**（`skills/pptx-create`・`skills/excel-edit`・
-  `skills/docx-create` の `scripts/_*.py`）: 上記「bash/npm相当のツールを持たせない
+- **文書生成スキルの「ops JSON DSL」設計**（`skills/pptx-create`・
+  `skills/docx-create` の `scripts/_*.py`。`skills/excel-edit` は ops 方式との比較検証のため、
+  ブランチ `experiment/excel-edit-openpyxl` では openpyxl のコードを LLM に書かせる方式に
+  切り替えている。読み込み・`.xlsm` の `keep_vba`・保存前バックアップ・保存はスクリプト側が担い、
+  LLM は渡された `wb` を編集するコードだけを書く。崩れやすい処理〔テーマ配色の表仕上げ・
+  結合セルを保つ行挿入・グラフ配色等〕のみ `scripts/xlsx_helpers.py` のヘルパーで補う）: 上記「bash/npm相当のツールを持たせない
   設計」を xlsx/pptx/docx 生成にも一貫して適用したもの。`python-pptx`/`openpyxl`/
   `python-docx` の生コードを LLM に書かせるのではなく、有限個の `op`（`set_range`/
   `add_chart`/`format_table` 等）と JSON スキーマへ閉じ込めることで、低パラメータ
@@ -285,7 +289,8 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 未承認の場合はエラーを返す（Plan Mode）。承認自体は `cl.AskActionMessage` による
 ✅承認/🚫拒否ボタンで行い、タイムアウト時は安全側（拒否）に倒す。`execute_python_code`
 （`execute_python_code_background` 含む）は `config.ini` の `[scripts] code_execution_enabled`
-でツール自体を無効化できる。
+でツール自体を無効化できる。LLMが書いたopenpyxlコードを実行する `excel-edit`（`edit_excel.py --code`）も
+この設定に従い、無効化時はエラーを返す（`run_script` が環境変数 `AGENT_CODE_EXECUTION_ENABLED` で伝える）。
 
 上記の39ツール・スキルすべてがメインエージェントから直接呼べるわけではない。
 `config.ini` の `[main_agent_tool_guard]`（既定 `mode = all`）が、メインエージェント
@@ -791,7 +796,7 @@ app.bat
 | `docx-edit` | `skills/` | スクリプト実行を伴う | 既存docxの編集（検索置換、画像挿入・サイズ変更、Track Changes/変更履歴の付与・確定・却下を含む。画像トリミングは非対応）。 |
 | `docx-render` | `skills/` | スクリプト実行を伴う | Word文書ページの画像化（レイアウト・表・画像配置・強調表現の視覚把握）。 |
 | `excel-read` | `skills/` | スクリプト実行を伴う | xlsx/xls/xlsmの読込専用（シート一覧・セルデータ・画像有無）。 |
-| `excel-edit` | `skills/` | スクリプト実行を伴う | xlsx/xlsmの新規作成・編集（セル/書式/行列/グラフ・画像追加と位置調整・条件付き書式・データ検証を含む。画像トリミングは非対応）。 |
+| `excel-edit` | `skills/` | スクリプト実行を伴う | xlsx/xlsmの新規作成・編集。LLMが書いたopenpyxlコードを`edit_excel.py --code`で実行する（セル/書式/行列/グラフ・画像追加と位置調整・条件付き書式・データ検証等。テーマ配色の表仕上げ等のヘルパー付き。画像トリミングは非対応。`[scripts] code_execution_enabled=false`では使えない）。 |
 | `excel-recalc` | `skills/` | スクリプト実行を伴う | xlsx/xlsm/xlsの数式再計算・エラーセル検出。 |
 | `excel-vba-read` | `skills/` | スクリプト実行を伴う | xlsm/xlsのVBAマクロコードの読み込み専用。 |
 | `excel-vba-edit` | `skills/` | スクリプト実行を伴う | xlsmのVBAマクロコードの追加/上書き/削除・実行。 |

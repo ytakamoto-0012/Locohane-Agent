@@ -77,14 +77,14 @@ tools: read_skill, read_skill_file, get_tool_source, check_work_dir_status, anal
 
 | スキル | SKILL.md | ピボット・テーブル関連セクション |
 |---|---|---|
-| `excel-edit` | `skills/excel-edit/SKILL.md` | 「構造化テーブル」op一覧（`add_table`/`update_table`/`remove_table`）、「美しい表を作る基本レシピ」「行ごとに異なる背景色」「同じ値が続く列はセルを結合する」「`insert_row_group`」「`format_table`」 |
+| `excel-edit` | `skills/excel-edit/SKILL.md` | 「その他のよく使う操作」の構造化テーブル（`Table`/`TableStyleInfo`）、「美しい表を作る基本レシピ」「行ごとに異なる背景色」「同じ値が続く列はセルを結合する」「グルーピングされた表の、既存グループの前後へ行を挿入したいとき」、ヘルパー`format_table` |
 | `excel-vba-knowledge` | `skills/excel-vba-knowledge/SKILL.md` | 索引「ピボットテーブル」→ `excel-vba-knowledge/references/pivot-tables.md`（PivotCache/PivotTableの階層、フィールド配置、RefreshTable、PivotItemsのVisible切り替え、ManualUpdate） |
 | `excel-vba-knowledge` | `skills/excel-vba-knowledge/SKILL.md` | 索引「テーブル（ListObject）」→ `excel-vba-knowledge/references/excel-tables-listobject.md`（DataBodyRangeが空時にNothingになる罠、ListRows.Add、列名からのIndex解決、AutoFilter、ピボットの元データにする方法） |
 
 共通注意点:
 - **`excel-edit` スキルではピボットテーブルは作成・編集できません。** ピボットテーブルを
   扱う場合は `excel-vba-edit` + `excel-vba-knowledge` を使ってください。
-- `excel-edit` の `add_table` で作成できるのは**構造化テーブル（ListObject）**です。
+- `excel-edit` で `Table`（`ws.add_table`）により作成できるのは**構造化テーブル（ListObject）**です。
   ピボットテーブルとは異なるものなので、用途に合わせて使い分けること。
 - テーブルをピボットの元データにする場合、`SourceData` にはセル範囲ではなく
   テーブル名を渡すこと（行追加時に `RefreshTable` だけで追従できる）。
@@ -105,7 +105,7 @@ PDFやOffice文書に画像・グラフを埋め込む場合、各スキルのSK
 | `docx-edit` | `skills/docx-edit/SKILL.md` | 「insert_image / set_image_size（画像の挿入・サイズ変更）」節 |
 | `pptx-create` | `skills/pptx-create/SKILL.md` | 「layout（スライド種類）」節（`picture`レイアウト） |
 | `pptx-edit` | `skills/pptx-edit/SKILL.md` | 「add_picture / add_chart（新規画像・グラフの追加）」節、「crop_picture」節 |
-| `excel-edit` | `skills/excel-edit/SKILL.md` | 「画像・グラフの追加と調整（`add_image`/`set_image_position`/`update_chart`）」節 |
+| `excel-edit` | `skills/excel-edit/SKILL.md` | 「グラフ」節・「画像」節（`style_chart`/`place_image`/`move_image`） |
 
 共通注意点:
 - 委譲task文や計画で「過去資料を参考に」「◯◯を基に」等、参照元ファイルが

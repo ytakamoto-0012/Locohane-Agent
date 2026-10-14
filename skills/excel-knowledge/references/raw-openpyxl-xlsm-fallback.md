@@ -1,31 +1,16 @@
-# フォント名変更でraw openpyxlに頼るときの安全な手順
+# フォント名変更など既存書式の一部だけを変えるときの安全な手順
 
-[[beyond-excel-edit-capabilities]]の「積み上げグラフ」と同じ失敗類型
-（`excel-edit`のopで表現できない要求→生openpyxlへのバイパス→`.xlsm`破損）の
-別実例。実際の作業ログ（`.xlsm`のフォントを「游ゴシック」に統一する依頼）で
-観測された、この類型特有の追加の落とし穴と、迷走を長引かせないための
-振る舞いをまとめる。
+旧ops方式の時代に、opに無い要求（`.xlsm`のフォントを「游ゴシック」に統一）を
+`execute_python_code`の生openpyxlで実現しようとして`.xlsm`を壊し、
+1時間以上迷走した実例（[[beyond-excel-edit-capabilities]]と同じ失敗類型）から
+得た落とし穴と、迷走を長引かせないための振る舞いをまとめる。
+現在は`edit_excel.py --code`で同じことが安全に書ける（`keep_vba`・
+保存前バックアップはスクリプト側が行う）ので、生openpyxlで迂回しない。
 
-## 前提: excel-editのstyleスキーマにフォント名（フォントファミリー）は無い
-
-`excel-edit`（`edit_excel.py`）の`style`辞書は`bold`/`italic`/`font_color`/
-`font_size`/`fill_color`/`number_format`/`align`/`valign`/`wrap_text`/
-`border`/`role`のみに対応しており、**フォント名を変更するキーは存在しない**
-（内部実装`excel-edit/scripts/_style.py`の`build_font()`を確認済み）。
-「フォントを游ゴシックに統一して」はopsだけでは実現できない。まず
-[[beyond-excel-edit-capabilities]]の「推奨する対処の順序」（制約を先に
-ユーザーへ伝える→どうしても必要ならバックアップ前提で生openpyxl）に従う。
-
-## raw openpyxlでフォント名だけを変える際に追加で必要な注意
-
-生openpyxlに進む場合、`.xlsm`なら`keep_vba=True`・保存前バックアップ・
-render確認という基本手順に加えて、**フォント変更特有の罠**がもう1つある。
+## フォント名だけを変える際の罠: Fontはcopy()してから変える
 
 ```python
 from copy import copy
-import openpyxl
-
-wb = openpyxl.load_workbook(src, keep_vba=True)
 
 for ws in wb.worksheets:
     for row in ws.iter_rows():
@@ -44,8 +29,7 @@ for ws in wb.worksheets:
 
 `Font`オブジェクトはセル単位の不変オブジェクトで、部分更新ができない
 （`cell.font.name = "..."`のような属性直接代入は効かない）。全セルを
-一括で書き換える配列処理（`excel-edit`の`set_range`のような発想）は
-`Font`には使えないため、対象セル数が多い場合は時間がかかる旨を先に
+一括で書き換える配列処理は`Font`には使えないため、対象セル数が多い場合は時間がかかる旨を先に
 ユーザーへ伝えておくとよい。
 
 ## render_excelの失敗は「破損」を意味するとは限らない
@@ -68,8 +52,7 @@ for ws in wb.worksheets:
 
 ## 同じ仮説を実行せず繰り返し始めたら、迷走のサインとして扱う
 
-観測されたセッションでは、[[beyond-excel-edit-capabilities]]の教訓に反して
-生openpyxlへバイパスした後、1時間以上・70ターン以上を「VBAプロジェクトが
+観測されたセッションでは、生openpyxlへバイパスした後、1時間以上・70ターン以上を「VBAプロジェクトが
 壊れた」→「いや無かった」→「content-typeの不整合では」→「zip構造が
 壊れているのでは」→「一時ファイル経由で保存すれば直るかも」→「やっぱり
 VBA関連かも」と**一度否定した仮説に戻り続ける**ことに消費し、最終的に
@@ -95,6 +78,6 @@ Locohane自身のループ検知機構に強制停止された。「シンプル
 と決めつけず、`zipfile.ZipFile(path).namelist()`に`xl/vbaProject.bin`が
 含まれるかで実際の有無を確認できる。`excel-edit`経由の構造変更（行挿入・
 書式適用等）だけでは`render_excel.py`は安定して成功しており、失敗が
-目立ち始めたのは生openpyxlによるフォント名変更を試みた前後からだった。
+目立ち始めたのは`excel-edit`を経由しない生openpyxlでの保存を試みた前後からだった。
 「直前にどちらの経路で保存したか」を都度記録しておくと、失敗の原因切り分けが
 速くなる。

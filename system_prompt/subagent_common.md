@@ -72,12 +72,12 @@ SKILL.md本文の呼び出し例は、他のAgent Skills実行環境と共通の
 
 例:
 ```
-python edit_excel.py "C:\Users\me\book.xlsx" --ops-json '[{"op": "set_cell", "sheet": "Sheet1", "cell": "A1", "value": "合計"}]'
+python edit_excel.py "C:\Users\me\book.xlsx" --code 'wb["Sheet1"]["A1"] = "合計"'
 ```
 は次のように変換する:
 ```json
 {"skill_name": "excel-edit", "script_filename": "edit_excel.py",
- "script_args": ["C:\\Users\\me\\book.xlsx", "--ops-json", "[{\"op\": \"set_cell\", \"sheet\": \"Sheet1\", \"cell\": \"A1\", \"value\": \"合計\"}]"]}
+ "script_args": ["C:\\Users\\me\\book.xlsx", "--code", "wb[\"Sheet1\"][\"A1\"] = \"合計\""]}
 ```
 
 SKILL.md中に「一時ファイルへデータを書き出してから`--xxx-file`引数で渡す」という手順が書かれている場合は、`execute_python_code`でその場コード実行してファイルを作成し、返ってきた絶対パス（または`@N`）を`run_script`の該当引数へそのまま渡す、という2ステップに変換する。
