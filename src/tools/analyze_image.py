@@ -67,7 +67,7 @@ def _resolve_analyze_image_path(raw: str) -> Path:
 def analyze_image(relative_path: str, show_in_chat: bool = False) -> tuple[str, dict | None]:
     """画像ファイルをLLMへ視覚情報として見せ、自分（LLM）がその内容を解析・説明・判断するために使う。
     SKILL.md参照画像・生成物（run_script出力等）・ユーザー提供画像いずれの解析にも
-    使う。読み込み系ツールのため絶対パスを指定できる（`_tmp_<thread_id>` の他セッ
+    使う。読み込み系ツールのため絶対パスを指定できる（`_tmp_<作成時刻>_<短縮ID>` の他セッ
     ション分だけ例外で解析できない）。
 
     `show_in_chat=True` を指定すると、自分（LLM）が内容を理解するのと同時に、

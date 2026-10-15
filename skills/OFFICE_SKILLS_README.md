@@ -110,7 +110,7 @@ from excel_common import setup_utf8_stdio, ...  # スキルのファミリーに
 
 - `AGENT_SRC_DIR`: `src/path_memory.py`をimportするためのパス
 - `AGENT_THREAD_ID` / `AGENT_PATH_MEMORY_DIR` / `AGENT_PATH_MEMORY_MAX_ENTRIES`: `@N`パスメモリー登録用（`register_output_path`）
-- `AGENT_EXEC_TMP_NAME`: `_tmp_<name>/`（中間生成物置き場）のディレクトリ名（`write_json_result`）。未設定時は`AGENT_THREAD_ID`（作成時刻プレフィックス無しの生のthread_id）へフォールバックする
+- `AGENT_EXEC_TMP_NAME`: `_tmp_<name>/`（中間生成物置き場）のディレクトリ名（`write_json_result`）。未設定時は`AGENT_THREAD_ID`（生のthread_id。Locohaneが実際に作る名前は「作成時刻+thread_idの短縮ID」でこれとは異なる）へフォールバックする
 
 いずれも**未設定時は例外を出さずNoneへフォールバックする**設計（`AGENT_THREAD_ID`/
 `AGENT_EXEC_TMP_NAME`とも未設定時は`"_no_session"`扱い）。そのため他基盤でこれらの

@@ -225,11 +225,12 @@ Chainlit UI上に `cl.File`（または画像なら `cl.Image`）付きメッセ
 作れる。中間生成物（変換途中のPDF、レンダリング画像など、最終成果物ではない
 ファイル）はここに書き、作業ディレクトリ本体を汚さないこと。
 
-`<name>` は「作成時刻（ミリ秒まで）+ thread_id」（例:
-`20260826_012433_572_<thread_id>`）。default_workdir 直下に並ぶ `_tmp_*`
-フォルダをファイラーで見たとき作成順に並ぶようにするための先頭タイムスタンプ
-であり、スキルスクリプト側はこの厳密なフォーマットを気にする必要はなく、
-下記の環境変数からそのまま読めばよい。
+`<name>` は「作成時刻（秒まで）+ thread_id の短縮ID（SHA-1 先頭10桁）」（例:
+`260826012433_3f2a9c1b7e`）。先頭の時刻は default_workdir 直下に並ぶ `_tmp_*`
+フォルダをファイラーで見たとき作成順に並ぶようにするため、thread_id を短縮IDに
+しているのはパス長上限（260文字）を超えにくくするため。thread_id から
+組み立て直すことはできないので、スキルスクリプト側はこのフォーマットを
+気にせず、下記の環境変数からそのまま読めばよい。
 
 **基準ディレクトリは常に default_workdir（環境変数 `AGENT_DEFAULT_WORKDIR`）**
 であり、`run_script` の cwd（4-2参照。ユーザーが ChatSettings で指定した
@@ -276,9 +277,9 @@ from pathlib import Path
 def _exec_tmp_dir(category: str | None = None) -> Path:
     # ディレクトリ名は AGENT_EXEC_TMP_NAME（execute_python_code が実際に
     # 作ったディレクトリと同じ名前）を優先し、無ければ AGENT_THREAD_ID
-    # （生のthread_id、作成時刻プレフィックス無し）へフォールバックする。
+    # （生のthread_id）へフォールバックする。
     # ここを AGENT_THREAD_ID 単独にすると、execute_python_code が作る
-    # 実際のディレクトリ名（先頭に作成時刻が付く）と食い違い、書き込み
+    # 実際のディレクトリ名（作成時刻 + 短縮ID）と食い違い、書き込み
     # ガードに「他セッションの一時ディレクトリ」として弾かれる。
     name = os.environ.get("AGENT_EXEC_TMP_NAME") or os.environ.get("AGENT_THREAD_ID") or "_no_session"
     base_dir = Path(os.environ.get("AGENT_DEFAULT_WORKDIR") or "./data/temp")

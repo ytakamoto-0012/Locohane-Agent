@@ -13,7 +13,7 @@ async def run_script(skill_name: str, script_filename: str, script_args: list[st
 
     作業ディレクトリは、作業フォルダアイコンでユーザーが
     セッションに設定していればそのディレクトリを使う。未設定・アクセス不可・
-    書き込み不可の場合は自セッション専用の一時フォルダ（`_tmp_<thread_id>`）を
+    書き込み不可の場合は自セッション専用の一時フォルダ（`_tmp_<作成時刻>_<短縮ID>`）を
     使う（`check_work_dir_status`の`write_dir`と同じ場所。作業ディレクトリが
     複数セッションから同じパスで見える共有フォルダの場合、直下に成果物を
     書くと他セッションから見えてしまう事故を避けるため）。**この場合、
@@ -34,7 +34,7 @@ async def run_script(skill_name: str, script_filename: str, script_args: list[st
     **重要: 書き込みは作業ディレクトリ配下限定（サンドボックス）**
     起動するサブプロセスへ書き込みガードを注入しており、open()の書き込み
     モードや os.remove/os.rename/shutil.move 等の呼び出し先が作業
-    ディレクトリ・`_tmp_<thread_id>` 配下以外（他ドライブ・Locohaneプロジェクト
+    ディレクトリ・`_tmp_<作成時刻>_<短縮ID>` 配下以外（他ドライブ・Locohaneプロジェクト
     本体を含む）の場合は PermissionError で失敗する。出力先パス
     （output_path/--output 等）は必ず作業ディレクトリ配下を指定すること。
     既存ファイルの読み取りはこのガードの対象外で制限されない。
