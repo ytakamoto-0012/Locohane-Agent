@@ -25,6 +25,11 @@ from pathlib import Path
 from src.config import PROJECT_ROOT, load_config
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+# 新規作成時のインスタンス名の上限文字数。インスタンス名は data/<name>/ 等のパスに
+# そのまま入るため、長いと配下（default_workdir の _tmp_*、スキルの生成物等）で
+# Windows のパス長上限（260文字）を超えやすい。既存インスタンス（default 等）の
+# 参照には影響させないよう、validate_name() ではなく create_instance() だけで見る。
+NEW_NAME_MAX_LEN = 6
 
 DEFAULT_INSTANCE_NAME = "default"
 DEFAULT_APP_HOST = "127.0.0.1"
@@ -78,6 +83,15 @@ def validate_name(name: str) -> None:
     """インスタンス名の妥当性を検証する（そのままディレクトリ名に使うため制限する）。"""
     if not _NAME_RE.match(name):
         raise InstanceError(f"インスタンス名は半角英数字・アンダースコア・ハイフンのみ、1〜32文字にしてください: {name!r}")
+
+
+def validate_new_name(name: str) -> None:
+    """新規作成するインスタンス名を検証する（validate_name() に加えて NEW_NAME_MAX_LEN 文字以内）。"""
+    validate_name(name)
+    if len(name) > NEW_NAME_MAX_LEN:
+        raise InstanceError(
+            f"インスタンス名は{NEW_NAME_MAX_LEN}文字以内にしてください（データ保存先のパスが長くなりすぎるため）: {name!r}"
+        )
 
 
 def instance_dir(instances_root: Path, name: str) -> Path:
@@ -289,9 +303,9 @@ def create_instance(
     ディレクトリを削除してロールバックする。
 
     Raises:
-        InstanceError: 名前が不正、既に存在する、または整合性チェック失敗。
+        InstanceError: 名前が不正（NEW_NAME_MAX_LEN 文字超を含む）、既に存在する、または整合性チェック失敗。
     """
-    validate_name(name)
+    validate_new_name(name)
     if kind not in INSTANCE_KINDS:
         raise InstanceError(f"インスタンスの種類が不正です: {kind!r}（{', '.join(INSTANCE_KINDS)} のいずれか）")
     if instance_dir(instances_root, name).exists():

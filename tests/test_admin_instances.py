@@ -35,6 +35,19 @@ def test_validate_name_rejects_invalid(name):
         inst.validate_name(name)
 
 
+def test_create_instance_rejects_name_longer_than_new_name_max(root):
+    """新規作成時だけインスタンス名を6文字以内に制限する（パス長上限対策）。"""
+    with pytest.raises(inst.InstanceError, match="6文字以内"):
+        inst.create_instance(root, CONFIG_INI_PATH, name="a" * (inst.NEW_NAME_MAX_LEN + 1))
+    assert not (root / ("a" * (inst.NEW_NAME_MAX_LEN + 1))).exists()
+    inst.create_instance(root, CONFIG_INI_PATH, name="a" * inst.NEW_NAME_MAX_LEN)
+
+
+def test_validate_name_still_accepts_existing_long_name():
+    """既存インスタンス（default 等の7文字以上）の参照は引き続き通す。"""
+    inst.validate_name("default")
+
+
 def test_ensure_default_instance_creates_once(root):
     meta1 = inst.ensure_default_instance(root)
     assert meta1.name == "default"

@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
+import hashlib
 import shutil
 
 import chainlit as cl
@@ -222,6 +223,16 @@ def _build_workdir_status_info(work_dir: str | None, status: "WorkDirAccessStatu
     return info
 
 
+# `_tmp_<name>` に使う thread_id の短縮ID（SHA-1 16進）の桁数。10桁（40bit）あれば
+# default_workdir 直下に並ぶスレッド数で衝突する心配はまず無い。
+_EXEC_TMP_ID_LEN = 10
+
+
+def _short_thread_id(thread_id: str) -> str:
+    """thread_id を `_tmp_<name>` 用の短い固定長IDにする（同じ thread_id なら常に同じ値）。"""
+    return hashlib.sha1(thread_id.encode("utf-8")).hexdigest()[:_EXEC_TMP_ID_LEN]
+
+
 def _exec_tmp_name() -> str:
     """`_tmp_<name>` の `<name>` 部分を返す（作成時刻プレフィックス付きthread_id）。
 
@@ -251,28 +262,41 @@ def _exec_tmp_name() -> str:
     `endswith(f"_{thread_id}")` で拾えるため、そのまま追記先として
     使われる（後方互換）。
 
+    以前は `<YYYYMMDD_HHMMSS_ミリ秒>_<thread_id（UUID 36文字）>` と長く、
+    `_tmp_` を含めフォルダ名だけで約65文字あったため、default_workdir が
+    深い場所にあったり配下でスキルがさらに入れ子のフォルダ・長いファイル名を
+    作ったりすると、Windows のパス長上限（260文字）を超えて書き込みに
+    失敗しやすかった。時刻は秒まで（`YYMMDDHHMMSS`）に、thread_id は
+    SHA-1 の先頭 `_EXEC_TMP_ID_LEN` 桁に縮める（フォルダ名は28文字）。
+    スレッドの識別はこの短縮IDで行うため、再開時の探索も短縮IDの末尾一致で
+    行い、旧形式（末尾が生の thread_id）のフォルダも引き続き拾う。
+
     Returns:
         `_tmp_` の直後に続く名前。キャッシュにも既存ディレクトリにも
-        見つからなければ `<YYYYMMDD_HHMMSS_ffffff（ミリ秒まで）>_<thread_id>`
-        を新規に生成してキャッシュする（ディレクトリ自体はここでは
-        作成しない）。
+        見つからなければ `<YYMMDDHHMMSS>_<短縮ID>` を新規に生成して
+        キャッシュする（ディレクトリ自体はここでは作成しない）。
     """
     thread_id = cl.user_session.get("thread_id") or "_no_session"
     cached = _state._EXEC_TMP_NAME_CACHE.get(thread_id)
     if cached is not None:
         return cached
+    short_id = _short_thread_id(thread_id)
     name = None
     if _state._DEFAULT_WORKDIR is not None:
         try:
             for entry in _state._DEFAULT_WORKDIR.iterdir():
-                if entry.name.startswith("_tmp_") and entry.name.endswith(f"_{thread_id}") and entry.is_dir():
+                if (
+                    entry.name.startswith("_tmp_")
+                    and entry.name.endswith((f"_{short_id}", f"_{thread_id}"))
+                    and entry.is_dir()
+                ):
                     name = entry.name[len("_tmp_"):]
                     break
         except OSError:
             pass
     if name is None:
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
-        name = f"{stamp}_{thread_id}"
+        stamp = datetime.now().strftime("%y%m%d%H%M%S")
+        name = f"{stamp}_{short_id}"
     _state._EXEC_TMP_NAME_CACHE[thread_id] = name
     return name
 

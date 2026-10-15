@@ -547,7 +547,7 @@ Locohane/
 | `data/skill_drafts/<ユーザー名>/` | skill-creator が作ったユーザー別ドラフトスキル（`<スキル名>/`）と、その評価結果（`_workspace/`）。`[skill_creator] draft_dir`。不採用のドラフトも記録として残る（一覧には出ない） | 不要なドラフトがあるとき | ドラフトのフォルダを削除（作成者は skill-creator の `delete_draft.py` でも消せる）。自動削除はされない |
 | `data/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
 | `data/skill_lab/themes/<テーマID>/` | スキル研究室の研究テーマ（仕様・開発中の資産・ケース・入力ファイル・評価と AI 修正の記録 `runs/`）。対象インスタンスごとに分かれる | テーマが終わり、記録が不要になったとき | テーマのフォルダを削除（実行中でないこと） |
-| `data/temp/_tmp_<作成時刻>_<thread_id>/` | `execute_python_code`/`run_script` の中間生成物・`write_scratch_note`/`write_thread_note` の書き出し先。チャットでアップロードしたファイル（`uploads/<送信日時>/`。作業フォルダを指定していてもここ）。自セッション専用（`[default_workdir]` 参照）。フォルダ名先頭の作成時刻（ミリ秒まで）はファイラー上で作成順に並べるためのもの | セッション終了後、不要になったとき | フォルダ内を削除（`[default_workdir] retention_days`/`cleanup_interval_hours` により自動削除もされる） |
+| `data/temp/_tmp_<作成時刻>_<短縮ID>/` | `execute_python_code`/`run_script` の中間生成物・`write_scratch_note`/`write_thread_note` の書き出し先。チャットでアップロードしたファイル（`uploads/<送信日時>/`。作業フォルダを指定していてもここ）。自セッション専用（`[default_workdir]` 参照）。フォルダ名先頭の作成時刻（`YYMMDDHHMMSS`）はファイラー上で作成順に並べるためのもの。短縮IDは thread_id の SHA-1 先頭10桁（パス長上限 260文字を超えにくくするため、thread_id をそのまま使わない。旧形式 `_tmp_<作成時刻>_<thread_id>` のフォルダも再開時にそのまま使われる） | セッション終了後、不要になったとき | フォルダ内を削除（`[default_workdir] retention_days`/`cleanup_interval_hours` により自動削除もされる） |
 | `data/elements/<thread_id>/` | 添付ファイル（`provide_download`/`analyze_image`の`show_in_chat=True`等）・回答本文への画像埋め込みの永続化先。スレッド再開・プロセス再起動後も表示できるようここへ実体をコピー保存する（`[elements]`参照、`src/thread_store.py`） | 添付ファイルが不要になったとき | フォルダ内を削除 |
 | `.files/` | Chainlit自身のセッションファイル配信ディレクトリ（送信直後のライブ表示にのみ使う一時配信。プロジェクト直下、`data/`配下ではない） | いつでも | フォルダ内を削除 |
 | `data/app.lock` | 同一データディレクトリへの多重起動を防ぐプロセス排他ロック（`src/instance_lock.py`）。空ファイルにOSのファイルロックをかけるだけで中身は使わない | アプリ停止中、削除しても実害はない | ファイルを削除（アプリ起動中は削除不可） |
@@ -1469,7 +1469,11 @@ config.ini 既定の `[paths] common_data_dir = ./data/${instance}` により
 環境変数 `LOCOHANE_INSTANCE=<インスタンス名>` を渡し、`app.bat` で直接
 起動した場合は `default` になる。永続メモリーだけ全インスタンスで共有したい
 場合は、`memory_dir` を `${instance}` を含まない固定パスに上書きすればよい。
-作成時に既存インスタンスの設定を複製することもできる（複製元に
+新しく作るインスタンスの名前（表示名ではない方）は半角英数字・`_`・`-` の
+**6文字以内**に制限している。名前がそのまま `data/<インスタンス名>/`・
+`instances/<インスタンス名>/` 等のパスに入るため、長いと配下のスキル生成物等で
+Windows のパス長上限（260文字）を超えやすいため（制限導入前に作った
+`default` 等の既存インスタンスはそのまま使える）。作成時に既存インスタンスの設定を複製することもできる（複製元に
 `common_data_dir` の上書きがあっても、それだけは引き継がない）。ポート・
 データ保存先が他インスタンスと重複する場合は、作成・起動時と、設定画面での
 保存・バックアップ復元時にエラーとして拒否される。

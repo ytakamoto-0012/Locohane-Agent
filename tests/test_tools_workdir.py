@@ -105,6 +105,32 @@ class TestResolveWorkdirFallback:
         assert _workdir._resolve_workdir(need_write=True) == _workdir._resolve_exec_workdir()
 
 
+class TestExecTmpNameLength:
+    """`_tmp_<name>` のフォルダ名をパス長上限（260文字）対策で短く保つ。"""
+
+    def test_new_name_is_short_and_does_not_contain_raw_thread_id(self, workdir_env, monkeypatch) -> None:
+        thread_id = "0f8fad5b-d9cb-469f-a165-70867728950e"
+        monkeypatch.setattr(tools.cl, "user_session", _FakeUserSession({"thread_id": thread_id}))
+
+        name = _workdir._exec_tmp_name()
+
+        assert thread_id not in name
+        assert len(f"_tmp_{name}") == 28
+        assert name.endswith(f"_{_workdir._short_thread_id(thread_id)}")
+
+    def test_resume_reuses_existing_short_dir(self, workdir_env) -> None:
+        existing = workdir_env / f"_tmp_260101000000_{_workdir._short_thread_id('thread-1')}"
+        existing.mkdir()
+
+        assert _workdir._resolve_exec_workdir() == existing
+
+    def test_resume_reuses_legacy_dir_with_raw_thread_id(self, workdir_env) -> None:
+        legacy = workdir_env / "_tmp_20260101_000000_000_thread-1"
+        legacy.mkdir()
+
+        assert _workdir._resolve_exec_workdir() == legacy
+
+
 class TestResolveExecWorkdirSeeding:
     def test_first_creation_copies_default_workdir_contents(self, workdir_env) -> None:
         (workdir_env / "existing.xlsx").write_text("data", encoding="utf-8")

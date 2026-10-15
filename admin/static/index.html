@@ -96,7 +96,7 @@
           </select>
         </label>
         <p class="hint lab-only hidden">スキル調整ワーカーは、上部の「スキル研究室」タブで頼んだ評価・AI 修正・下書きを裏で処理する実行役です（研究テーマは持たず、チャット画面・ポートもありません）。作成後、config.ini の [llm] main_url / sub_url にワーカー専用の接続先（本番と同じモデル）を設定してから起動してください。</p>
-        <label>インスタンス名（半角英数字・_・- のみ）<input type="text" name="name" required pattern="[A-Za-z0-9_-]{1,32}" /></label>
+        <label>インスタンス名（半角英数字・_・- のみ、6文字以内）<input type="text" name="name" required pattern="[A-Za-z0-9_-]{1,6}" maxlength="6" /></label>
         <label>表示名<input type="text" name="display_name" /></label>
         <label class="app-only">ホスト<input type="text" name="app_host" value="127.0.0.1" /></label>
         <label class="app-only">ポート（空欄で自動提案）<input type="number" name="app_port" min="1024" max="65535" /></label>
