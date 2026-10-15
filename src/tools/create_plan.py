@@ -9,7 +9,6 @@ import uuid
 
 from ..plan_persist import persist_plan_state, plan_message_id
 
-from . import _state
 from ._plan_render import _render_plan_payload, _write_plan_detail
 
 logger = logging.getLogger(__name__)
@@ -19,20 +18,15 @@ logger = logging.getLogger(__name__)
 async def create_plan(steps: list[dict[str, str]], detail_markdown: str | None = None) -> str:
     """複数ステップの実行計画を作成し、ユーザーへチェックリストとして表示する。
 
-    書き込み系ツール（run_script、run_script_background、execute_python_code、
-    execute_python_code_background）を1回でも使うタスクに着手する前に、まず
-    このツールでステップ一覧を提示する。作成しただけでは書き込み系ツールの
-    ブロックは解除されない。承認を得るには続けて approve_plan を呼ぶこと。
+    複数ステップにわたる作業（特に書き込み系ツール run_script、
+    run_script_background、execute_python_code、execute_python_code_background
+    を使うタスク）に着手する前に、このツールでステップ一覧を提示し、
+    update_task_progress で進捗を見せながら進める。ユーザーの承認は不要で、
+    作成後そのまま実行に移ってよい。
 
     steps/detail_markdown は調査で得た具体的事実に基づいて書くこと。
     自分の記憶・推測だけでsteps文言（行番号・セル位置等の具体的数値を
     含む）を作らない。
-
-    既に approve_plan で承認済み（Edit Automatically）の状態でこのツールを
-    再度呼んで steps を差し替えると、config.ini の
-    [plan].reset_approval_on_recreate の設定によっては承認状態が失われ
-    Plan Mode（未承認）へ戻る（既定は失われる側）。その場合、続けて
-    approve_plan を呼び直さない限り書き込み系ツールは再びブロックされる。
 
     run_script_background/execute_python_code_background でバックグラウンド
     ジョブを扱う場合、「起動」と「完了確認」を同じステップにまとめないこと。
@@ -70,15 +64,8 @@ async def create_plan(steps: list[dict[str, str]], detail_markdown: str | None =
         if not isinstance(s, dict) or not s.get("content") or not s.get("activeForm"):
             return f"エラー: steps[{i}] には content と activeForm の両方を" f"文字列で指定してください: {s!r}"
     plan = [{"content": s["content"], "activeForm": s["activeForm"], "status": "pending"} for s in steps]
-    # 既に承認済み（Edit Automatically）だった場合にこの呼び出しでも承認状態を
-    # 維持するかは config.ini の [plan].reset_approval_on_recreate で切り替え可能
-    # （既定 True＝従来通り常にリセットして Plan Mode へ戻す）。未承認状態からの
-    # 呼び出しは元々 False なので、この設定に関わらず結果は変わらない。
-    still_approved = bool(cl.user_session.get("plan_approved")) and not _state._PLAN_RESET_APPROVAL_ON_RECREATE
     cl.user_session.set("plan", plan)
-    cl.user_session.set("plan_approved", still_approved)
-    cl.user_session.set("awaiting_approve_plan_call", not still_approved)
-    # send() 失敗（通信エラー等）でも plan/plan_approved の永続化自体は
+    # send() 失敗（通信エラー等）でも plan の永続化自体は
     # 効かせるため、send() より前に呼ぶ（src/plan_persist.py docstring、
     # 2026-08-24 ユーザー報告参照）。
     await persist_plan_state()
@@ -93,21 +80,17 @@ async def create_plan(steps: list[dict[str, str]], detail_markdown: str | None =
     _thread_id = cl.user_session.get("thread_id")
     message = cl.Message(
         id=plan_message_id(_thread_id) if _thread_id else str(uuid.uuid4()),
-        content=_render_plan_payload(plan, approved=still_approved),
+        content=_render_plan_payload(plan),
     )
     await message.send()
     cl.user_session.set("plan_message", message)
     logger.info(
-        "create_plan: %d steps, detail_markdown=%d chars, still_approved=%s",
+        "create_plan: %d steps, detail_markdown=%d chars",
         len(steps),
         len(detail_markdown or ""),
-        still_approved,
     )
 
-    if still_approved:
-        result = f"計画を更新しました（全{len(steps)}件）。承認済み状態を維持しているため、approve_plan を呼ばずに書き込み系ツールを続行できます。"
-    else:
-        result = f"計画を作成しました（全{len(steps)}件）。approve_plan でユーザーの承認を得てください。"
+    result = f"計画を作成しました（全{len(steps)}件）。update_task_progress で進捗を更新しながら実行してください。"
     if detail_markdown and detail_markdown.strip():
         # プレフィックス無しの通常メッセージとして送る（PLAN_PREFIX 付きの
         # チェックリストと違い、messageTree.ts の selectMainThread でサイドパネル

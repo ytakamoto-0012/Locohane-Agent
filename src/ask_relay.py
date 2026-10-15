@@ -1,4 +1,4 @@
-"""ask系ツール（approve_plan/AskUserQuestion/ask_user_choice）の応答待ちを、
+"""ask系ツール（AskUserQuestion/ask_user_choice）の応答待ちを、
 スレッド切り替え後の別セッションへ引き継ぐための状態。app.py（Chainlit
 エントリスクリプト）と src/tools.py の双方から参照されるため、どちらにも
 属さないこの中立モジュールに置く。
@@ -51,7 +51,7 @@ from typing import Any, Awaitable, Callable
 
 import chainlit as cl
 
-# thread_id -> 応答待ち（approve_plan/ask_user_question/ask_user_choice の
+# thread_id -> 応答待ち（ask_user_question/ask_user_choice の
 # Ask*Message）の引き継ぎ用状態。
 # 値: {"factory": Callable[[], Awaitable], "timeout": int, "future": asyncio.Future}
 # factory は「呼べば同じ内容のAsk*Message(...).send()をもう一度実行する」

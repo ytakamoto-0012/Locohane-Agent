@@ -1,22 +1,20 @@
-"""plan/plan_approved の変更を、ターン完了を待たずに即座に thread_store へ
-永続化するためのフック。app.py（Chainlit エントリスクリプト）と src/tools.py
+"""plan（実行計画のステップ一覧・進捗）の変更を、ターン完了を待たずに即座に
+thread_store へ永続化するためのフック。app.py（Chainlit エントリスクリプト）と src/tools.py
 の双方から参照されるため、どちらにも属さないこの中立モジュールに置く
 （src/ask_relay.py と同じ理由。`from app import ...` を tools.py 側からやると
 chainlit run が app.py を未初期化の別モジュールとして再実行してしまい、
 稼働中のハンドラを壊す。ask_relay.py 冒頭のdocstring参照）。
 
-背景（2026-08-24 ユーザー報告）: 従来、plan/plan_approved はターン完了時
+背景（2026-08-24 ユーザー報告）: 従来、plan はターン完了時
 （_on_message_impl 末尾、work_dirと共に thread_store へまとめてスナップ
 ショット）にしか永続化されておらず、work_dir と同じ「異常終了でスナップ
 ショットに到達しないと保存されない」不具合を抱えていた
 （app.py の _persist_work_dir docstring参照、2026-08-21に work_dir 側は
-修正済みだった）。承認直後のターンが停止ボタン・通信エラー・思考ループ
-上限・recursion_limit・計画却下等で異常終了すると、approve_plan で
-承認済みになった最新状態が一度もDBへ書き込まれず、スレッド再開時に
-古い（未承認の）metadataへ巻き戻ってPlan Modeへ戻ってしまっていた。
-plan_approved を変更する各ツール（create_plan/approve_plan/
-update_task_progress/lock_plan_mode/toggle_plan_mode_from_ui）が、
-変更直後にここを呼んで即座に保存する。
+修正済みだった）。ターンが停止ボタン・通信エラー・思考ループ上限・
+recursion_limit 等で異常終了すると、最新の計画が一度もDBへ書き込まれず、
+スレッド再開時に古いmetadataへ巻き戻ってしまっていた。plan を変更する
+各ツール（create_plan/update_task_progress）が、変更直後にここを呼んで
+即座に保存する。
 """
 
 from __future__ import annotations

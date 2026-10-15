@@ -247,8 +247,8 @@ expect:
 
 ### 6. その他フィールドを設定する
 
-- `auto_approve`: `run_script`/`execute_python_code`/`approve_plan` の
-  承認ダイアログを自動承認するか。却下時の挙動を検証したいケースのみ
+- `auto_approve`: `ask_user_choice` 等の確認ダイアログを自動承認するか
+  （選択肢形式なら先頭を選ぶ）。却下時の挙動を検証したいケースのみ
   `false` にする。
 - `timeout_seconds`: 既定（`run_all.py` の `CASE_TIMEOUT_SECONDS`）で
   足りない重量級ケースのみ上書きする。

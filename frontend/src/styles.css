@@ -947,40 +947,6 @@
   cursor: default;
 }
 
-.plan-mode-badge {
-  display: inline-flex;
-  align-items: center;
-  height: 24px;
-  padding: 0 10px;
-  border: none;
-  border-radius: 999px;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.plan-mode-badge:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-.plan-mode-badge:not(:disabled):hover {
-  filter: brightness(0.95);
-}
-
-.plan-mode-badge-locked {
-  background: var(--surface-muted);
-  color: var(--text-muted);
-}
-
-.plan-mode-badge-auto {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
 .composer-textarea {
   width: 100%;
   resize: none;

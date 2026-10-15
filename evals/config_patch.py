@@ -13,7 +13,6 @@ config_patch.json の形式（足す項目だけを書く。config.ini と同じ
 
     {
       "subagent": {"agent_type_run_script_allowlist": [["my-agent", "excel-read"], ["my-agent", ["pdf-tools", "read_pdf.py"]]]},
-      "plan": {"plan_approval_exempt_scripts": [["my-skill", "run.py"]]},
       "main_agent_tool_guard": {"allow_entries": [[["my-skill", "run.py"], -1]]}
     }
 """
@@ -27,7 +26,6 @@ from pathlib import Path
 # 足してよいキー: (セクション, キー) -> 対応する環境変数（config.py の os.getenv 名）。
 PATCHABLE_KEYS: dict[tuple[str, str], str] = {
     ("subagent", "agent_type_run_script_allowlist"): "SUBAGENT_AGENT_TYPE_RUN_SCRIPT_ALLOWLIST",
-    ("plan", "plan_approval_exempt_scripts"): "PLAN_APPROVAL_EXEMPT_SCRIPTS",
     ("main_agent_tool_guard", "allow_entries"): "MAIN_AGENT_TOOL_GUARD_ALLOW_ENTRIES",
 }
 
@@ -101,7 +99,6 @@ def _validate_items(section: str, key: str, items: list) -> None:
             raise ConfigPatchError(f"[{section}].{key} の項目に使えない値があります（文字列・数値・リストだけ）: {item!r}")
     parser = {
         ("subagent", "agent_type_run_script_allowlist"): config_mod._parse_agent_type_run_script_allowlist,
-        ("plan", "plan_approval_exempt_scripts"): config_mod._parse_plan_approval_exempt_scripts,
         ("main_agent_tool_guard", "allow_entries"): config_mod._parse_main_agent_tool_guard_allow_entries,
     }[(section, key)]
     try:

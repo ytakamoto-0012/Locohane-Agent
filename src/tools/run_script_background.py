@@ -37,7 +37,7 @@ async def run_script_background(skill_name: str, script_filename: str, script_ar
     check_script_job（結果取得）・stop_script_job（明示的な中断指示があった
     場合のみ）を使う。
 
-    引数解決・作業ディレクトリ解決・計画承認チェック（例外の扱いも含む）、
+    引数解決・作業ディレクトリ解決（例外の扱いも含む）、
     および書き込みサンドボックスガード（出力先は作業ディレクトリ/
     default_workdir配下限定、詳細は run_script のdocstring参照）は
     run_script と同じ。バックグラウンドジョブを強制終了するまでの上限は
@@ -52,7 +52,7 @@ async def run_script_background(skill_name: str, script_filename: str, script_ar
     Returns:
         通常は run_script と同じ形式の最終結果文字列。安全上限に達した
         場合のみ job_id を含む案内文字列。引数不正・スクリプトが見つからない・
-        計画未承認・起動自体に失敗した場合は run_script 同様「エラー: ...」
+        起動自体に失敗した場合は run_script 同様「エラー: ...」
         形式の文字列を返す（この場合 job は作られない）。
     """
     prepared = _script_job._prepare_script_execution(skill_name, script_filename, script_args)

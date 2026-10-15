@@ -28,10 +28,7 @@ from .dispatch_agent_batch import dispatch_agent_batch
 from .check_dispatch_agent_job import check_dispatch_agent_job
 from .stop_dispatch_agent_job import stop_dispatch_agent_job
 from .create_plan import create_plan
-from .approve_plan import approve_plan
 from .update_task_progress import update_task_progress
-from .get_plan_status import get_plan_status
-from .lock_plan_mode import lock_plan_mode
 from .ask_user_question import ask_user_question
 from .ask_user_choice import ask_user_choice
 from .memory_tools import create_memory, update_memory, delete_memory, read_memory, search_memory, list_memories
@@ -102,10 +99,7 @@ _BASE_TOOLS: list[BaseTool] = [
     ask_user_question,
     ask_user_choice,
     create_plan,
-    approve_plan,
     update_task_progress,
-    get_plan_status,
-    lock_plan_mode,
     create_memory,
     update_memory,
     delete_memory,

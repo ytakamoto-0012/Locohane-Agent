@@ -392,7 +392,7 @@ def register_output_path(path, description: str | None = None) -> dict[str, str]
    スキル名のいずれとも文字列としての接頭辞関係を持たないようにする。
    LLMがスキルを選ぶ手がかりは`name: description`の一覧のみであり、似た
    接頭辞を持つスキルが並ぶと、より短い/単純な方の名前へ誤って吸い寄せ
-   られるリスクがある（agent_type名での実例は`AGENTS_README.md` 8節参照）。
+   られるリスクがある（agent_type名での実例は`AGENTS_README.md` 7節参照）。
 2. 必要なら `skills/<skill-name>/scripts/` にスクリプトを置く（`.py` 推奨、Windows実行環境のため）。
 3. `SKILL.md` 本文に、いつ使うか・手順・呼び出しコマンド（`python <script>.py <args...>` 形式。4-0節参照）・出力の解釈方法・エッジケースを書く。
 4. アプリを再起動して `scan_skills()` に発見させる（ホットリロードなし。起動ログの `スキル発見: <name>` を確認）。

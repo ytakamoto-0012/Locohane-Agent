@@ -69,7 +69,6 @@ from . import registry
 from ._dispatch_agent_job import cancel_dispatch_agent_jobs_for_thread
 from ._script_job import cancel_background_script_jobs_for_thread
 from ._state import init_tools
-from .lock_plan_mode import toggle_plan_mode_from_ui
 from .check_work_dir_status import WorkDirAccessStatus, probe_workdir_access
 from ._duplicate_guard import reset_call_history_guards_after_compaction
 from ._path_memory_helpers import register_raw_unc_paths_in_text
@@ -86,7 +85,6 @@ from .registry import (  # noqa: F401
     ask_user_choice,
     ask_user_question,
     analyze_image,
-    approve_plan,
     check_dispatch_agent_job,
     check_script_job,
     check_work_dir_status,
@@ -98,7 +96,6 @@ from .registry import (  # noqa: F401
     execute_python_code,
     execute_python_code_background,
     execute_python_code_readonly,
-    get_plan_status,
     get_tool_source,
     glob_tool,
     grep_tool,
@@ -106,7 +103,6 @@ from .registry import (  # noqa: F401
     list_memories,
     search_path_memory,
     list_thread_notes,
-    lock_plan_mode,
     provide_download,
     read_memory,
     read_skill,
@@ -141,5 +137,4 @@ __all__ = [
     "register_raw_unc_paths_in_text",
     "reset_call_history_guards_after_compaction",
     "thread_note_status_text",
-    "toggle_plan_mode_from_ui",
 ]

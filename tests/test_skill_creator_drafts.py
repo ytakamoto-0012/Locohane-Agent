@@ -330,11 +330,9 @@ def test_promote_registers_exemptions_in_instance_overrides(tmp_path, monkeypatc
     overrides_path = tmp_path / "instances" / "inst1" / "config_overrides.json"
     assert result["added"] and overrides_path.is_file()
     cfg = load_config(overrides_path=overrides_path, instance_name="inst1")
-    assert ("my-tool", "run.py") in cfg.plan_approval_exempt_scripts
     assert (("my-tool", "run.py"), -1) in cfg.main_agent_tool_guard_allow_entries
     # config.ini の既定値も残る（上書きはキー単位で値全体を置き換えるため）
     assert ("Glob", 1) in cfg.main_agent_tool_guard_allow_entries
-    assert ("excel-read", "read_excel.py") in cfg.plan_approval_exempt_scripts
     assert helper._register_guard_exemptions("inst1", [("my-tool", "run.py")], actor="test")["added"] == {}
     assert (tmp_path / "instances" / "admin_changes.log").is_file()
 
@@ -343,8 +341,8 @@ def test_promote_refuses_registration_when_instance_env_overrides_key(tmp_path, 
     helper = _load_promote_helper()
     monkeypatch.setenv("INSTANCES_DIR", str(tmp_path / "instances"))
     (tmp_path / "instances" / "inst1").mkdir(parents=True)
-    (tmp_path / "instances" / "inst1" / ".env").write_text("PLAN_APPROVAL_EXEMPT_SCRIPTS=[]\n", encoding="utf-8")
-    with pytest.raises(SystemExit, match="PLAN_APPROVAL_EXEMPT_SCRIPTS"):
+    (tmp_path / "instances" / "inst1" / ".env").write_text("MAIN_AGENT_TOOL_GUARD_ALLOW_ENTRIES=[]\n", encoding="utf-8")
+    with pytest.raises(SystemExit, match="MAIN_AGENT_TOOL_GUARD_ALLOW_ENTRIES"):
         helper._register_guard_exemptions("inst1", [("my-tool", "run.py")], actor="test")
 
 
@@ -395,11 +393,9 @@ def test_run_case_overlay_scripts_are_evaluated_as_registered(tmp_path):
 
     @dataclasses.dataclass(frozen=True)
     class _Cfg:
-        plan_approval_exempt_scripts: frozenset
         main_agent_tool_guard_allow_entries: frozenset
 
-    cfg = _with_overlay_guard_exemptions(_Cfg(frozenset(), frozenset({("Glob", 1)})), tmp_path)
-    assert cfg.plan_approval_exempt_scripts == {("my-tool", "run.py")}
+    cfg = _with_overlay_guard_exemptions(_Cfg(frozenset({("Glob", 1)})), tmp_path)
     assert cfg.main_agent_tool_guard_allow_entries == {("Glob", 1), (("my-tool", "run.py"), -1)}
 
 

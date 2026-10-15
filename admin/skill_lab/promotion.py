@@ -12,7 +12,7 @@
 1. 事前確認: トライアウトが今の内容（資産・ケース・設定パッチ）を規定回数で評価して全回合格したものか、
    複製元の正式資産が複製後に変わっていないか、取り込み元のドラフトが変わっていないか（変わっていれば
    人の確認が要る）、配置先の同名資産、設定の登録が環境変数に邪魔されないか。
-2. 設定の登録: スキルのスクリプト（計画承認の免除・main_agent_tool_guard の allow_entries）と
+2. 設定の登録: スキルのスクリプト（main_agent_tool_guard の allow_entries）と
    config_patch.json の項目を、各インスタンスの config_overrides.json へ（admin/overrides.save()。
    検証・バックアップ・変更履歴つき）。評価（evals/run_case.py）で足したのと同じ値になる。
 3. 配置: スキル・エージェントを置く（置き換えるものは evals/history/promote/ へ退避）。
@@ -44,7 +44,6 @@ PROMOTE_HISTORY_DIR = PROJECT_ROOT / "evals" / "history" / "promote"
 CONFIG_INI_PATH = PROJECT_ROOT / "config.ini"
 WORKSPACE_DIRNAME = "_workspace"
 
-_PLAN_KEY = ("plan", "plan_approval_exempt_scripts")
 # 昇格・差し戻しは管理ツールの1プロセスの中で1件ずつ行う（二重クリック等で同じテーマを
 # 2回昇格すると、1回目に置いたものを2回目が「置き換え」として退避してしまう）。
 _LOCK = threading.Lock()
@@ -92,7 +91,6 @@ def settings_to_register(directory: Path) -> dict[tuple[str, str], list]:
     result: dict[tuple[str, str], list] = {}
     for name in themes.list_assets(directory)["skills"]:
         for skill, script in guard_exempt_entries_for_skill(name, directory / themes.ASSETS_DIRNAME / "skills" / name):
-            result.setdefault(_PLAN_KEY, []).append([skill, script])
             result.setdefault(_ALLOW_KEY, []).append([[skill, script], -1])
     for key, items in load_patch(directory / themes.CONFIG_PATCH_FILENAME).items():
         for item in items:

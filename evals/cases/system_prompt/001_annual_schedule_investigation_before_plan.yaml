@@ -1,7 +1,7 @@
 id: annual_schedule_investigation_before_plan
 target: system_prompt
 work_dir: evals/fixtures/annual_schedule_large100
-auto_approve: false
+auto_approve: true
 timeout_seconds: 1800
 turns:
   - >-
@@ -16,11 +16,10 @@ judge: |
   2026-07-25修正）の再発防止を検証する回帰ケース。work_dir は年10件×10年
   （写真100枚+OCR済みmd29件、計129ファイル）の実データ相当規模。
 
-  auto_approve: false のため、approve_plan は必ず却下される。system_prompt.md
-  の規定により、却下されたらモデルは計画を直さず・他のツールも呼ばず、却下
-  された旨を述べて応答を終えるはずなので、このケースは create_plan/approve_plan
-  到達時点で短く終わる（Excel生成やverifier検証までは実行させない・させる
-  必要もない）。判定対象は「create_planを呼ぶまでの調査が十分だったか」のみ。
+  計画承認（approve_plan）は廃止済みのため、create_plan の後もそのまま
+  Excel生成・verifier検証まで進む。判定対象は「create_planを呼ぶまでの
+  調査が十分だったか」のみで、create_plan 以降の生成・検証の出来や、
+  timeout_seconds 到達による打ち切りは合否に含めない。
 
   以下を確認せよ:
   1. create_plan を呼ぶ前に、dispatch_agent(agent_type="explore") への委譲
@@ -35,10 +34,7 @@ judge: |
      「後で調べればいい」「実行時にskillを読めばいい」という趣旨で調査を
      先送りにする判断が見られないか（見られた場合、たとえ結果的にexploreへ
      委譲していても、判断プロセスとして不合格に近いと評価してよい）。
-  4. approve_plan が却下された後、モデルが計画を直したり別のツールを呼んだり
-     せず、却下された旨を伝えて応答を終えているか（この部分は今回の3点修正
-     の対象外だが、既存ルールの回帰確認として併せて見る）。
-  5. turn_cutoffs（recursion_limit/thinking_loop によるターン打ち切り）が
+  4. turn_cutoffs（recursion_limit/thinking_loop によるターン打ち切り）が
      発生していないか結果JSONを確認し、発生していれば理由を報告せよ
      （打ち切り自体は不合格の直接理由にはしないが、何が起きたかは必ず
      報告すること）。
@@ -47,10 +43,9 @@ notes: >-
   system_prompt.md Plan & Progress節の3点修正（分岐条件の明記・create_plan
   直前の自己チェック・観測済みNG例の明記）の効果検証用。本番ログ
   （app_20260725_11.log 11:32-11:34付近）で実際に観測された「調査を省略して
-  create_planに進む」失敗パターンの再現シナリオ。auto_approve:falseで
-  approve_plan却下による早期終了を利用し、Excel生成・verifier検証まで
-  待たずに済むようにしている（fixtureが129ファイル規模のため探索自体には
-  時間がかかるが、生成・検証工程を省略できる分、end-to-end検証より高速）。
+  create_planに進む」失敗パターンの再現シナリオ。以前は
+  approve_plan却下による早期終了で生成・検証工程を省略していたが、計画承認の
+  廃止によりその仕組みは無くなった（create_plan以降も実行が続く）。
   フィクスチャは
   `python evals/fixtures/answer/system_prompt/generate_annual_schedule_fixture.py --preset large
   --years 10 --events-per-year 10 --out-dir evals/fixtures/annual_schedule_large100`

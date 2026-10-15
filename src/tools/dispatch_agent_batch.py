@@ -385,10 +385,6 @@ async def dispatch_agent_batch(
     内容を抽出・要約するだけなら explore、読んで書き出すなら worker、生成済みの
     多数のファイルを検証するなら verifier。
 
-    書き込みを伴う agent_type（worker 等）で使う場合は、dispatch_agent と同じく
-    先に create_plan → approve_plan で承認を得ておくこと（計画のステップは
-    「このツールで一括処理する」の1ステップでよい）。
-
     Args:
         task: 全グループ共通の指示。対象パスは `@N` を埋め込んでよい。
         agent_type: 使用するサブエージェントの種別名（dispatch_agent と同じ）。

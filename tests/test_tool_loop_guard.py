@@ -15,7 +15,7 @@ from src.tool_loop_guard import (
     raise_if_tool_call_loop,
 )
 
-ERROR = "エラー: create_planの直後はapprove_planを呼んでください（他のツールは実行されませんでした）。"
+ERROR = "エラー: スクリプトが見つかりません（他のツールは実行されませんでした）。"
 
 
 @dataclass
@@ -53,7 +53,7 @@ def _err(task: str = "x") -> list:
 def test_same_response_three_times_is_a_loop():
     loop = detect_tool_call_loop(_history(_err(), _err(), _err()), _Cfg())
     assert loop is not None and loop.repeats == 3 and loop.tool_names == ("dispatch_agent",)
-    assert "create_planの直後" in loop.result_excerpt
+    assert "スクリプトが見つかりません" in loop.result_excerpt
 
 
 def test_two_repeats_is_not_a_loop():
@@ -66,7 +66,7 @@ def test_same_response_is_a_loop_even_if_results_differ():
 
 
 def test_success_results_are_not_required():
-    steps = [_step(("get_plan_status", {}, "Plan Mode")) for _ in range(3)]
+    steps = [_step(("check_work_dir_status", {}, "ok")) for _ in range(3)]
     assert detect_tool_call_loop(_history(*steps), _Cfg()) is not None
 
 

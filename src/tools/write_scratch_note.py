@@ -65,9 +65,7 @@ def write_scratch_note(content: str) -> str:
     （打ち切り時、委譲元にはこのファイルのパスが案内され、そこから
     続きを判断できる）。
 
-    execute_python_code/run_script と異なり、計画（create_plan/approve_plan）が
-    未承認でも常に呼べる（調査は通常 create_plan より前に行うため）。書き込み先の
-    ファイル名はこのツール自身が決めるため任意パスへは書き込めず、ユーザーの
+    書き込み先のファイル名はこのツール自身が決めるため任意パスへは書き込めず、ユーザーの
     作業ディレクトリや出力先には一切触れない（execute_python_code の中間生成物と
     同じスクラッチ領域を使う）。
 

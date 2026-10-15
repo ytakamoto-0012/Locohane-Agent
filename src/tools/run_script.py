@@ -26,10 +26,6 @@ async def run_script(skill_name: str, script_filename: str, script_args: list[st
     このツールではなく run_script_background を使うこと。
     .py スクリプトは設定された Python 実行ファイルで起動する。
     Agent Skills 標準の progressive disclosure における第3段階（Execute）に相当する。
-    書き込み系ツールのため、create_plan/approve_plan で計画が承認済みでない
-    限り実行できない（未承認の場合はエラーを返す）。ただし副作用のない
-    読み取り専用スクリプト（一部は事前に例外登録されている。例: excel-vba-read の
-    read_vba.py）はこの承認チェックを免除される。
 
     **重要: 書き込みは作業ディレクトリ配下限定（サンドボックス）**
     起動するサブプロセスへ書き込みガードを注入しており、open()の書き込み
@@ -53,7 +49,7 @@ async def run_script(skill_name: str, script_filename: str, script_args: list[st
         「[終了コード] N」に続けて、標準出力・標準エラーがあれば
         それぞれ「[標準出力]」「[標準エラー]」の見出し付きで連結した文字列。
         スキルに scripts/ が無い場合、スクリプトが見つからない場合、
-        計画が未承認の場合、タイムアウトした場合、起動自体に失敗した場合は
+        タイムアウトした場合、起動自体に失敗した場合は
         いずれも例外を送出せず「エラー: ...」形式で返す。
     """
     return await _run_script_impl(skill_name, script_filename, script_args)

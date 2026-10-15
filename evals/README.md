@@ -110,8 +110,8 @@ python evals/run_all.py --cases-dir <ドラフト>/evals --skill-overlay <ドラ
 - `--skill-overlay`（複数可）: 本番のスキル構成（`skills_dir`・`project_locohane_dir`）をそのまま残し、
   指定したスキルフォルダを一時ディレクトリへコピーして最優先で重ねる（`run_case.py` にも同名オプションがある）。
   同名の正式スキルがあれば上書きした状態で評価される。重ねたスキルの `scripts/*.py` は、昇格時に
-  promote-skill がインスタンスの `config_overrides.json` へ登録するのと同じく、計画承認と
-  `[main_agent_tool_guard]` を免除した設定（`plan_approval_exempt_scripts`・`allow_entries` に max_calls=-1 で
+  promote-skill がインスタンスの `config_overrides.json` へ登録するのと同じく、
+  `[main_agent_tool_guard]` を免除した設定（`allow_entries` に max_calls=-1 で
   追加した状態）で評価する（`src/skill_drafts.py` の `guard_exempt_entries_for_skill`）。
 - `--exclude-skill`（複数可）: スキル一覧から除く（baseline 用）。
 - `--results-dir`: 結果の出力先ルート（既定 `evals/results/<target>/`）。
@@ -155,8 +155,8 @@ expect:                              # ルールベース判定（省略可、�
 judge: |                             # 自由記述の判定基準（省略可）。
   ClaudeCode が transcript を読んで合否判定する。expect と併用可、
   どちらか一方でもよいが両方無いケースは無効。
-auto_approve: true                   # run_script/execute_python_code/approve_plan の
-                                      # 承認ダイアログを自動承認(true)/拒否(false)するか
+auto_approve: true                   # ask_user_choice 等の確認ダイアログを
+                                      # 自動承認(true)/拒否(false)するか
 scripted_text_answers: []            # AskUserQuestion が labels 省略で呼ばれるたびに1件ずつ消費して返す回答
 work_dir: "evals/fixtures/xxx"       # run_script/execute_python_code/analyze_image の既定
                                       # 作業ディレクトリをこのケース専用に固定したい場合の

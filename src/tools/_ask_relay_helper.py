@@ -15,7 +15,7 @@ async def _ask_with_cross_session_relay(thread_id: str, factory, timeout: int):
 
     左サイドバーでの会話切り替え（frontend/src/components/Sidebar.tsx の
     goToThread）はフルページリロードのため、生成中スレッドから離れて
-    ask系ツール（approve_plan/ask_user_question/ask_user_choice）の応答待ちの
+    ask系ツール（ask_user_question/ask_user_choice）の応答待ちの
     まま戻ってくると、Chainlit的には元セッションとは別物の新セッションになる
     （sessionIdState が毎回新規発行されるため）。素の
     cl.AskActionMessage/AskUserMessage/AskElementMessage.send() だけだと、

@@ -22,7 +22,7 @@ class _FakeUserSession:
 async def test_persists_token_totals_without_touching_other_metadata(tmp_path, monkeypatch) -> None:
     conn = await thread_store.init_db(tmp_path / "chat_threads.sqlite")
     try:
-        await thread_store.save_thread(conn, "t1", owner="alice", metadata={"work_dir": "C:/w", "plan_approved": True})
+        await thread_store.save_thread(conn, "t1", owner="alice", metadata={"work_dir": "C:/w", "plan": [{"content": "a", "activeForm": "a中", "status": "pending"}]})
         monkeypatch.setattr(app, "_thread_store_conn", conn)
         monkeypatch.setattr(
             app.cl,
@@ -42,7 +42,7 @@ async def test_persists_token_totals_without_touching_other_metadata(tmp_path, m
         assert meta["token_usage_cumulative_main"]["total"] == 50
         # 他のキー（ターン完了時スナップショット・作業ディレクトリ等）は消さない
         assert meta["work_dir"] == "C:/w"
-        assert meta["plan_approved"] is True
+        assert meta["plan"][0]["content"] == "a"
         assert detail["userIdentifier"] == "alice"
     finally:
         await conn.close()

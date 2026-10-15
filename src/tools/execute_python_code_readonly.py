@@ -30,9 +30,6 @@ async def execute_python_code_readonly(code: str) -> str:
     専用スクリプトを使うこと（このツールでファイルを書こうとしても
     PermissionError になり失敗する）。
 
-    execute_python_code と異なり計画承認（Plan Mode）を必要としない
-    （書き込みが一切できないため、計画未承認でも安全に実行できる）。
-
     Args:
         code: 実行する Python コード全文。path_memory の @N トークンを使う
            場合は execute_python_code と同じ方法（path_memory.resolve()）

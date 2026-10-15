@@ -492,9 +492,6 @@ class Config:
             進捗メモの最大文字数。全量を表示するとコンテキストを圧迫する
             ため切り詰める。dispatch_agent の進捗表示（_dispatch_agent_job.py）
             も同じ値を共有する。
-        plan_approval_exempt_scripts: run_script/run_script_background
-            の計画承認（Plan Mode）を免除する、副作用のない読み取り専用
-            スクリプトのホワイトリスト（{(スキル名, スクリプトファイル名), ...}）。
         subagent_agent_type_run_script_allowlist: dispatch_agent サブエージェントの
             agent_type ごとに run_script で呼べるスキル/
             スクリプトを制限するホワイトリスト（{(agent_type, 対象), ...}）。
@@ -516,8 +513,7 @@ class Config:
         main_agent_tool_guard_mode: メインエージェント自身が呼び出せるツールを
             main_agent_tool_guard_allow_entries の許可リストへ限定するガード
             機能のモード（"false"/"tools_skills_only"/"all"、
-            MAIN_AGENT_TOOL_GUARD_MODES参照）。plan_approval_exempt_scripts は
-            計画承認を免除するだけで直接呼び出し自体は妨げないため、
+            MAIN_AGENT_TOOL_GUARD_MODES参照）。
             render_pdf_pages.py→analyze_image のような「1件の重い調査」を
             メインエージェントが委譲せず自分で最後まで実行し続けてトークン
             上限に達する事例（src/tools.py の _guard_main_agent_tool_limit
@@ -541,7 +537,7 @@ class Config:
             -1=登録した上で無制限に許可、1以上=その回数まで許可。他の
             呼び出し回数ガード（_record_and_check_duplicate）は0以下を
             「無制限」として扱うが、本ガードは0と-1の意味が逆になる点に
-            注意）。plan_approval_exempt_scripts とは独立したリストで、
+            注意）。
             **ここに登録されていないツール・スクリプトは main_agent_tool_guard_
             mode="all"（または"tools_skills_only"時のMCP以外）の間、
             メインエージェントから一切呼び出せない**（許可リスト方式）。
@@ -620,43 +616,11 @@ class Config:
             使い切ってもなお空の応答が続いた場合は、正常終了として空文字列を
             返さず、それまでに集めたツール実行結果を要約して打ち切る
             （subagent_max_iterations到達時と同じ要約フォーマット）。
-        approval_timeout_seconds: create_plan/approve_plan の計画承認で
-            ユーザーの応答を待つ秒数。未応答は安全側に倒してタイムアウト
-            扱いにする。0以下は無期限待ち（タイムアウトしない）。
         ask_user_question_timeout_seconds: AskUserQuestion（自由記述の
             質問。labels省略時は単発質問、labels指定時は複数項目フォーム）
             でユーザーの応答を待つ秒数。0以下は無期限待ち。
         ask_user_choice_timeout_seconds: ask_user_choice（選択肢形式の
             質問）でユーザーの応答を待つ秒数。0以下は無期限待ち。
-        plan_badge_allow_unlock: 送信ボタン付近の Plan Mode / Edit Automatically
-            バッジをクリックした際、Plan Mode → Edit Automatically 方向への
-            切り替え（ロック解除）も許可するか。False にすると Edit
-            Automatically → Plan Mode 方向（ロック）のクリックのみ有効になり、
-            ロック解除は approve_plan（ユーザー承認フロー）経由に限定される
-            （config.ini の [plan].allow_badge_unlock 由来）。
-        plan_reset_approval_on_recreate: 既に Edit Automatically（計画承認済み）の
-            状態で create_plan が再度呼ばれた際、plan_approved を強制的に
-            False へ戻す（Plan Mode へ戻す）か。True（既定）なら常に戻し
-            approve_plan による再承認を必須にする。False なら承認済み状態を
-            維持したまま steps だけ差し替える（未承認状態からの呼び出しは
-            この設定に関わらず常に Plan Mode のまま）。
-            （config.ini の [plan].reset_approval_on_recreate 由来）。
-        plan_reset_approval_on_new_message: 新しいユーザーメッセージを受け取る
-            たびに plan_approved を無条件で False へ戻す（Plan Mode へ戻す）か。
-            True（既定）なら常に戻し、承認済みの計画が途中でも新しいメッセージ
-            ごとに approve_plan による再承認を必須にする（計画承認を
-            「このユーザーメッセージへの応答」に限定するための従来挙動）。
-            False なら承認済み状態をメッセージをまたいで維持する。
-            thinking_loop_guard がリトライ上限に達して打ち切られ、ユーザーが
-            続行を促す新しいメッセージを送った場合も同一タスクの継続として
-            扱われ、承認済みの計画をやり直させられずに済む。
-            （config.ini の [plan].reset_approval_on_new_message 由来）。
-        plan_auto_approve: True の場合、approve_plan 呼び出し時にユーザーへの
-            確認（承認/却下ボタンの表示・応答待ち）を一切行わず、その場で
-            自動的に承認済み扱いにする。書き込み系ツール（run_script/
-            execute_python_code等）が人の確認を経ずに実行されるようになるため、
-            信頼できる自動化用途以外では False（既定）を推奨する。
-            （config.ini の [plan].auto_approve 由来）。
         thinking_loop_guard_enabled: LLM応答（thinking/本文）のストリーミング中に
             反復ループを検知したら生成を打ち切って再試行する機能の有効/無効。
         thinking_loop_guard_target: ループ検知の監視対象（THINKING_LOOP_GUARD_TARGETS）。
@@ -1009,9 +973,6 @@ class Config:
     script_background_progress_push_interval_seconds: int
     script_background_job_output_tail_chars: int
 
-    # --- run_script/run_script_background の計画承認免除ホワイトリスト ---
-    plan_approval_exempt_scripts: frozenset[tuple[str, str]]
-
     # --- dispatch_agent のagent_typeごとに run_script で呼べるスキル/スクリプトを制限するホワイトリスト ---
     subagent_agent_type_run_script_allowlist: frozenset[tuple[str, str | tuple[str, str]]]
 
@@ -1055,15 +1016,8 @@ class Config:
     subagent_batch_stop_after_unreachable_groups: int
 
     # --- ユーザー応答待ちタイムアウト（Chainlit の Ask*Message） ---
-    approval_timeout_seconds: int
     ask_user_question_timeout_seconds: int
     ask_user_choice_timeout_seconds: int
-
-    # --- Plan Mode / Edit Automatically バッジ（送信ボタン付近のUI） ---
-    plan_badge_allow_unlock: bool
-    plan_reset_approval_on_recreate: bool
-    plan_reset_approval_on_new_message: bool
-    plan_auto_approve: bool
 
     # --- LLM応答の反復ループ検知（src/llm.py の ChatLlamaCpp） ---
     thinking_loop_guard_enabled: bool
@@ -1513,7 +1467,7 @@ def _as_optional_thinking_level(value: str | None, key_name: str) -> str | None:
 # [thinking_control].after_tools が config.ini に無い場合の既定値。
 _DEFAULT_THINKING_CONTROL_AFTER_TOOLS = (
     '["Read", "Glob", "Grep", "json_query", "search_path_memory", "check_work_dir_status",'
-    ' "update_task_progress", "get_plan_status"]'
+    ' "update_task_progress"]'
 )
 
 
@@ -1976,42 +1930,6 @@ def _parse_auth_users(value: str | None) -> dict[str, str]:
     return users
 
 
-def _parse_plan_approval_exempt_scripts(value: str | None) -> frozenset[tuple[str, str]]:
-    """config.ini の [plan].plan_approval_exempt_scripts をパースする。
-
-    run_script/run_script_background の計画承認（Plan Mode）を免除する、
-    副作用のない読み取り専用スクリプトのホワイトリスト。Python風の
-    [["スキル名","スクリプトファイル名"], ...] リテラルを _parse_auth_users
-    と同様 ast.literal_eval で読む（末尾カンマ等の緩い記法も許容するため）。
-
-    Args:
-        value: config.ini から得たリスト形式の文字列、または環境変数由来の文字列。
-            空欄・None なら空集合を返す。
-
-    Returns:
-        {(スキル名, スクリプトファイル名), ...} の frozenset。
-
-    Raises:
-        ValueError: リストとして解釈できない場合、または各要素が
-            [スキル名, スクリプトファイル名] の2要素配列でない場合。
-    """
-    if not value or not value.strip():
-        return frozenset()
-    text = value.strip()
-    try:
-        parsed = ast.literal_eval(text)
-    except (ValueError, SyntaxError) as e:
-        raise ValueError(f"plan_approval_exempt_scripts はPythonのリスト形式で指定してください: {text!r}") from e
-    if not isinstance(parsed, list):
-        raise ValueError(f"plan_approval_exempt_scripts はリスト（配列）形式で指定してください: {text!r}")
-    entries: set[tuple[str, str]] = set()
-    for item in parsed:
-        if not (isinstance(item, (list, tuple)) and len(item) == 2):
-            raise ValueError(f"plan_approval_exempt_scripts の各要素は [スキル名, スクリプトファイル名] の" f"2要素にしてください: {item!r}")
-        entries.add((str(item[0]), str(item[1])))
-    return frozenset(entries)
-
-
 def _parse_agent_type_run_script_allowlist(value: str | None) -> frozenset[tuple[str, str | tuple[str, str]]]:
     """config.ini の [subagent].agent_type_run_script_allowlist をパースする。
 
@@ -2086,8 +2004,7 @@ def _parse_main_agent_tool_guard_allow_entries(value: str | None) -> frozenset[t
     （"tools_skills_only" ならMCP動的ツールは登録不要で常に許可される）。
 
     各要素は [対象, max_calls] の2要素配列。max_calls をエントリごとに
-    個別指定できるようにするため、plan_approval_exempt_scripts のような
-    「対象だけの集合」ではなく「対象→上限回数」のペアの集合として持つ。
+    個別指定できるようにするため、「対象だけの集合」ではなく「対象→上限回数」のペアの集合として持つ。
     対象（1つ目の要素）はさらに次の2種類のいずれかを許容する
     （メインエージェント自身の直接呼び出しを制限したい対象が、ビルトイン
     ツール名単体の場合と run_script 配下のスキルスクリプトの場合の
@@ -2232,24 +2149,6 @@ def _parse_allow_sandbox_dir(value: str | None, base: Path) -> tuple[SandboxDirE
     return tuple(result)
 
 
-def render_plan_approval_exempt_scripts_block(entries: frozenset[tuple[str, str]]) -> str:
-    """system_prompt.md の {{plan_approval_exempt_scripts}} へ差し込むテキストを組み立てる。
-
-    config.ini の [plan].plan_approval_exempt_scripts（frozenset）は集合の
-    ため反復順序が不定。プロンプトへ差し込む表示を安定させるため、
-    スキル名→スクリプトファイル名の順にソートしてから箇条書きへ整形する。
-
-    Args:
-        entries: {(スキル名, スクリプトファイル名), ...}（config.plan_approval_exempt_scripts）。
-
-    Returns:
-        差し込み用テキスト。空集合の場合は「（登録なし）」を返す。
-    """
-    if not entries:
-        return "（登録なし）"
-    return "\n".join(f"- `{skill}` / `{script}`" for skill, script in sorted(entries))
-
-
 def render_agent_type_run_script_allowlist_block(agent_type: str, entries: frozenset[tuple[str, str | tuple[str, str]]]) -> str:
     """agents/*.md の `{{run_script_allowlist}}` へ差し込むテキストを組み立てる。
 
@@ -2316,8 +2215,7 @@ def load_config(
       SUBAGENT_MAX_ITERATIONS / SUBAGENT_SYSTEM_PROMPT_PATH / SUBAGENT_MAX_PARALLEL
       SUBAGENT_TOKEN_GUARD_ENABLED / SUBAGENT_TOKEN_GUARD_SOFT_THRESHOLD /
       SUBAGENT_TOKEN_GUARD_HARD_THRESHOLD
-      APPROVAL_TIMEOUT_SECONDS / ASK_USER_TEXT_TIMEOUT_SECONDS / ASK_USER_CHOICE_TIMEOUT_SECONDS
-      PLAN_BADGE_ALLOW_UNLOCK
+      ASK_USER_TEXT_TIMEOUT_SECONDS / ASK_USER_CHOICE_TIMEOUT_SECONDS
       THINKING_LOOP_GUARD_ENABLED / THINKING_LOOP_GUARD_WINDOW_CHARS /
       THINKING_LOOP_GUARD_CHECK_INTERVAL_CHARS / THINKING_LOOP_GUARD_COMPRESSION_RATIO_THRESHOLD /
       THINKING_LOOP_GUARD_CONFIRM_COUNT / THINKING_LOOP_GUARD_MAX_RETRIES /
@@ -2401,7 +2299,6 @@ def load_config(
     graph = parser["graph"] if parser.has_section("graph") else {}
     subagent = parser["subagent"] if parser.has_section("subagent") else {}
     timeouts = parser["user_response_timeouts"] if parser.has_section("user_response_timeouts") else {}
-    plan_section = parser["plan"] if parser.has_section("plan") else {}
     thinking_loop_guard = parser["thinking_loop_guard"] if parser.has_section("thinking_loop_guard") else {}
     thinking_control = parser["thinking_control"] if parser.has_section("thinking_control") else {}
     tool_loop_guard = parser["tool_loop_guard"] if parser.has_section("tool_loop_guard") else {}
@@ -2790,21 +2687,6 @@ def load_config(
                 scripts.get("background_job_output_tail_chars", 4000),
             )
         ),
-        plan_approval_exempt_scripts=_parse_plan_approval_exempt_scripts(
-            os.getenv(
-                "PLAN_APPROVAL_EXEMPT_SCRIPTS",
-                plan_section.get(
-                    "plan_approval_exempt_scripts",
-                    '[["excel-vba-read","read_vba.py"],["excel-read","read_excel.py"],'
-                    '["excel-render","render_excel.py"],'
-                    '["docx-read","read_docx.py"],["docx-render","render_docx.py"],'
-                    '["pdf-tools","read_pdf.py"],["pdf-tools","render_pdf_pages.py"],'
-                    '["pptx-read","read_pptx.py"],["pptx-inspect","inspect_pptx.py"],'
-                    '["pptx-render","render_pptx.py"],'
-                    '["web-search","search_web.py"]]',
-                ),
-            )
-        ),
         subagent_agent_type_run_script_allowlist=_parse_agent_type_run_script_allowlist(
             os.getenv(
                 "SUBAGENT_AGENT_TYPE_RUN_SCRIPT_ALLOWLIST",
@@ -2963,17 +2845,8 @@ def load_config(
                 subagent.get("batch_stop_after_unreachable_groups", 1),
             )
         ),
-        approval_timeout_seconds=int(os.getenv("APPROVAL_TIMEOUT_SECONDS", timeouts.get("approval_seconds", 300))),
         ask_user_question_timeout_seconds=int(os.getenv("ASK_USER_QUESTION_TIMEOUT_SECONDS", timeouts.get("ask_user_question_seconds", 60))),
         ask_user_choice_timeout_seconds=int(os.getenv("ASK_USER_CHOICE_TIMEOUT_SECONDS", timeouts.get("ask_user_choice_seconds", 90))),
-        plan_badge_allow_unlock=_as_bool(os.getenv("PLAN_BADGE_ALLOW_UNLOCK", plan_section.get("allow_badge_unlock", True))),
-        plan_reset_approval_on_recreate=_as_bool(
-            os.getenv("PLAN_RESET_APPROVAL_ON_RECREATE", plan_section.get("reset_approval_on_recreate", True))
-        ),
-        plan_reset_approval_on_new_message=_as_bool(
-            os.getenv("PLAN_RESET_APPROVAL_ON_NEW_MESSAGE", plan_section.get("reset_approval_on_new_message", True))
-        ),
-        plan_auto_approve=_as_bool(os.getenv("PLAN_AUTO_APPROVE", plan_section.get("auto_approve", False))),
         thinking_loop_guard_enabled=_as_bool(os.getenv("THINKING_LOOP_GUARD_ENABLED", thinking_loop_guard.get("enabled", True))),
         thinking_loop_guard_target=_as_thinking_loop_guard_target(
             os.getenv("THINKING_LOOP_GUARD_TARGET", thinking_loop_guard.get("target", "all"))

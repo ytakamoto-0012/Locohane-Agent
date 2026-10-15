@@ -26,8 +26,7 @@ async def execute_python_code(code: str) -> str:
     run_script が skills/*/scripts/ 配下の既存ファイルしか実行できないのに対し、
     このツールはコード文字列を一時ファイルへ書き出してその場で実行する。任意コード
     実行はリスクが高いため、サーバー設定で無効化されている場合は実行せずエラーを
-    返す。書き込み系ツールのため、create_plan/approve_plan で計画が承認済みで
-    ない限り実行できない（未承認の場合はエラーを返す）。
+    返す。
 
     **cwd（作業ディレクトリ）は run_script とは異なる**。run_script の cwd は
     ユーザーが設定した作業ディレクトリだが、このツールの cwd は常に
@@ -95,24 +94,13 @@ async def execute_python_code(code: str) -> str:
         「[終了コード] N」に続けて、標準出力・標準エラー、生成/更新
         ファイルの path_memory 参照（あれば）を、それぞれ見出し付きで
         連結した文字列。code が空の場合、実行が無効化されている場合、
-        計画が未承認の場合、タイムアウトした場合、起動自体に失敗した
-        場合はいずれも例外を送出せず「エラー: ...」形式で返す。
+        タイムアウトした場合、起動自体に失敗した場合はいずれも例外を送出せず「エラー: ...」形式で返す。
     """
     if not code.strip():
         return "エラー: code が空です。"
     if not _state._CODE_EXEC_ENABLED:
         return "エラー: LLMが生成したPythonコードの実行はconfig.iniで無効化されています" "（[scripts] code_execution_enabled=false）。"
     workdir = _resolve_exec_workdir()
-
-    if not cl.user_session.get("plan_approved"):
-        logger.info("execute_python_code: 計画未承認のためブロック")
-        return (
-            "エラー: 計画が未承認のため実行できません。"
-            "create_plan で計画を作成し、approve_plan でユーザーの承認を得てから"
-            "実行してください。自分のtoolsにcreate_plan/approve_planが無い"
-            "（サブエージェントである）場合は、それ以上試行せずこのエラーを"
-            "そのまま最終回答として委譲元へ報告してください。"
-        )
 
     try:
         before_snapshot = {p: p.stat().st_mtime for p in workdir.iterdir() if p.is_file()}

@@ -48,8 +48,8 @@ class EvalCase:
         expect: ルールベース判定の期待値。未指定なら None。
         judge: ClaudeCode が transcript を読んで判定するための自由記述の指示文。
             未指定なら None。
-        auto_approve: run_script/execute_python_code/approve_plan の
-            承認ダイアログを自動承認するか拒否するか
+        auto_approve: ask_user_choice 等の AskActionMessage による
+            確認ダイアログを自動承認するか拒否するか
             （evals/headless_chainlit.install に渡す）。
         scripted_text_answers: AskUserQuestion が labels 省略（単一質問）で
             呼ばれるたびに1件ずつ消費して返す回答のリスト。

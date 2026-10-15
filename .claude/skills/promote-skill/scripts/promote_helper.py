@@ -23,9 +23,9 @@ install は昇格の前に次を確かめる:
   ハッシュとケースのハッシュ）を、全ケース・tryout_repeats 回以上で評価したものか。
   トライアウト後にドラフトが1か所でも変わっていれば合格回数は0に戻ったものとして
   扱い、昇格させない。
-- ドラフトのスクリプトは会話では計画承認・[main_agent_tool_guard] を免除されて
+- ドラフトのスクリプトは会話では [main_agent_tool_guard] を免除されて
   いたため、昇格後も同じ挙動になるよう、--instance の
-  インスタンスの config_overrides.json の [plan].plan_approval_exempt_scripts と
+  インスタンスの config_overrides.json の
   [main_agent_tool_guard].allow_entries（max_calls=-1）へ登録する。トライアウト
   （evals/run_case.py --skill-overlay）も登録済みと同じ状態で評価している。
   config_overrides.json の値はキー単位で config.ini を置き換えるため、今の実効値
@@ -57,7 +57,6 @@ CONFIG_INI_PATH = PROJECT_ROOT / "config.ini"
 # 昇格時に登録する config_overrides.json のキー（セクション, キー, 対応する環境変数）。
 # 環境変数は config_overrides.json より優先されるため、インスタンスの .env に
 # あると登録しても効かない（その場合は登録せずに止める）。
-_PLAN_EXEMPT_KEY = ("plan", "plan_approval_exempt_scripts", "PLAN_APPROVAL_EXEMPT_SCRIPTS")
 _ALLOW_ENTRIES_KEY = ("main_agent_tool_guard", "allow_entries", "MAIN_AGENT_TOOL_GUARD_ALLOW_ENTRIES")
 
 
@@ -242,7 +241,7 @@ def _merged_value(current_text: str, entries: list[tuple[str, str]], allow_entri
 
 
 def _register_guard_exemptions(instance: str, entries: list[tuple[str, str]], actor: str) -> dict:
-    """entries を instance の config_overrides.json の2キーへ登録する（管理ツールと同じ保存処理）。"""
+    """entries を instance の config_overrides.json の allow_entries へ登録する（管理ツールと同じ保存処理）。"""
     from dotenv import dotenv_values
 
     from admin import instances as inst
@@ -253,7 +252,7 @@ def _register_guard_exemptions(instance: str, entries: list[tuple[str, str]], ac
     instances_root = resolve_instances_root(CONFIG_INI_PATH)
     env_file = inst.env_path(instances_root, instance)
     instance_env = dotenv_values(env_file) if env_file.is_file() else {}
-    blocked = [env for _, _, env in (_PLAN_EXEMPT_KEY, _ALLOW_ENTRIES_KEY) if instance_env.get(env)]
+    blocked = [env for _, _, env in (_ALLOW_ENTRIES_KEY,) if instance_env.get(env)]
     if blocked:
         raise SystemExit(
             f"インスタンス {instance} の .env に {blocked} があり、config_overrides.json への登録が効きません。"
@@ -264,7 +263,7 @@ def _register_guard_exemptions(instance: str, entries: list[tuple[str, str]], ac
     existing = overrides.read(path)
     updates: dict[tuple[str, str], str] = {}
     added: dict[str, list] = {}
-    for section, key, _env in (_PLAN_EXEMPT_KEY, _ALLOW_ENTRIES_KEY):
+    for section, key, _env in (_ALLOW_ENTRIES_KEY,):
         info = find_key(catalog, section, key)
         if info is None:
             raise SystemExit(f"config.ini に [{section}].{key} がありません。")

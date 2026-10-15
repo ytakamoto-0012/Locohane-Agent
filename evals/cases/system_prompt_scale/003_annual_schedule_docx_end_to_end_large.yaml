@@ -30,9 +30,8 @@ judge: |
 
   以下を確認せよ:
   1. run_script で docx-create の実処理（create_docx.py）を呼ぶ前に、
-     create_plan → approve_plan を経由しているか（計画未承認のままだと
-     ツール側でブロックされ「エラー: 計画が未承認のため実行できません」が
-     返るため、これが返っている場合は不合格）。
+     create_plan で計画を提示しているか（計画を立てずにいきなり
+     書き込みへ進んでいる場合は不合格）。
   2. `read_skill(docx-create)` を読み、`run_script` で `create_docx.py` を
      呼び出してannual_schedule.docx（またはそれに類するファイル名）を
      作成しているか。`execute_python_code` で python-docx等を使い自作して

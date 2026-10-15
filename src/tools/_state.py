@@ -266,18 +266,8 @@ _PATH_MEMORY_MAX_ENTRIES: int = 500
 _PATH_MEMORY_SEARCH_MIN_SCORE: float = 0.3
 _PATH_MEMORY_SEARCH_FILENAME_WEIGHT: float = 0.7
 _SRC_DIR: Path = Path(__file__).parent.parent  # src/ディレクトリ（path_memory.py 等がある。このファイルはsrc/tools/にあるため一段上）
-_APPROVAL_TIMEOUT_SECONDS: int = 300
 _ASK_USER_QUESTION_TIMEOUT_SECONDS: int = 60
 _ASK_USER_CHOICE_TIMEOUT_SECONDS: int = 90
-_PLAN_BADGE_ALLOW_UNLOCK: bool = True
-_PLAN_RESET_APPROVAL_ON_RECREATE: bool = True
-_PLAN_AUTO_APPROVE: bool = False
-
-# run_script は本来「書き込み系ツール」として一律に計画承認を要求するが、
-# 副作用のない純粋な読み取り専用スクリプトはここに (skill_name, script_filename)
-# を明示的に登録することで承認チェックを免除できる。init_tools() が config.ini の
-# [plan].plan_approval_exempt_scripts から注入するため、ここでは空集合で初期化する。
-_PLAN_APPROVAL_EXEMPT_SCRIPTS: set[tuple[str, str]] = set()
 
 
 # 「無期限待ち」の代替として使う実質無期限の秒数（2^31-1 ≈ 68年）。
@@ -307,10 +297,8 @@ def init_tools(
     path_memory_dir: Path,
     path_memory_max_entries: int,
     code_exec_enabled: bool = False,
-    approval_timeout_seconds: int = 300,
     ask_user_question_timeout_seconds: int = 60,
     ask_user_choice_timeout_seconds: int = 90,
-    plan_badge_allow_unlock: bool = True,
     dispatch_agent_max_parallel: int = 1,
     graph_tool_max_parallel: int = 1,
     script_background_max_runtime_seconds: int = 3600,
@@ -328,11 +316,8 @@ def init_tools(
     dispatch_agent_background_llm_timeout_max_retries: int = 3,
     dispatch_agent_batch_max_groups: int = 50,
     dispatch_agent_batch_stop_after_unreachable_groups: int = 1,
-    plan_approval_exempt_scripts: Iterable[tuple[str, str]] = (),
     agent_type_run_script_allowlist: Iterable[tuple[str, str | tuple[str, str]]] | None = None,
     plans_dir: Path | None = None,
-    plan_reset_approval_on_recreate: bool = True,
-    plan_auto_approve: bool = False,
     allow_sandbox_dirs: Iterable[SandboxDirEntry] = (),
     path_memory_search_min_score: float = 0.3,
     path_memory_search_filename_weight: float = 0.7,
@@ -386,9 +371,6 @@ def init_tools(
             Pythonコードをその場で実行する）の有効/無効。False の場合、
             ツールは呼び出されてもエラー文字列を返すのみでコードは
             実行されない（config.ini の [scripts].code_execution_enabled 由来）。
-        approval_timeout_seconds: create_plan/approve_plan の計画承認で
-            ユーザーの応答を待つ秒数（config.ini の
-            [user_response_timeouts].approval_seconds 由来）。0以下は無期限待ちを意味する。
         ask_user_question_timeout_seconds: AskUserQuestion（自由記述の
             質問。labels省略時は単発質問、labels指定時は複数項目フォーム）
             がユーザーの応答を待つ秒数（config.ini の
@@ -396,10 +378,6 @@ def init_tools(
         ask_user_choice_timeout_seconds: ask_user_choice がユーザーの
             応答を待つ秒数（config.ini の
             [user_response_timeouts].ask_user_choice_seconds 由来）。0以下は無期限待ちを意味する。
-        plan_badge_allow_unlock: 送信ボタン付近の Plan Mode / Edit Automatically
-            バッジをクリックした際、Plan Mode → Edit Automatically 方向
-            （ロック解除）も許可するか。False の場合はロック方向のクリックのみ
-            有効になる（config.ini の [plan].allow_badge_unlock 由来）。
         dispatch_agent_max_parallel: dispatch_agent ツールの実LLM呼び出しを、
             1セッションあたり _DISPATCH_AGENT_SEMAPHORES で同時に何件まで
             許可するか。1以上はその値までにガードし（既定1＝完全直列化）、
@@ -485,10 +463,6 @@ def init_tools(
             LLMのタイムアウト・通信エラーにより打ち切られたグループがこの数に
             達したら、未起動のグループを起動しない。0以下なら無効（config.ini の
             [subagent].batch_stop_after_unreachable_groups 由来）。
-        plan_approval_exempt_scripts: run_script/run_script_background の
-            計画承認（Plan Mode）を免除する、副作用のない読み取り専用
-            スクリプトのホワイトリスト。(skill_name, script_filename) の
-            並び（config.ini の [plan].plan_approval_exempt_scripts 由来）。
         agent_type_run_script_allowlist: dispatch_agent サブエージェントの
             agent_type ごとに run_script で呼んでよい
             スキル/スクリプトを制限するホワイトリスト。(agent_type, 対象) の
@@ -501,17 +475,6 @@ def init_tools(
             Markdownを書き出す保存先ディレクトリ（config.ini の
             [paths].plans_dir 由来）。None の場合は detail_markdown を
             渡してもファイル保存をスキップする。
-        plan_reset_approval_on_recreate: 既に Edit Automatically（計画承認済み）
-            の状態で create_plan が再度呼ばれた際、plan_approved を強制的に
-            False へ戻す（Plan Mode へ戻す）か。True（既定）なら常に戻し
-            approve_plan による再承認を必須にする。False なら承認済み状態を
-            維持したまま steps だけ差し替える（未承認状態からの呼び出しは
-            この設定に関わらず常に Plan Mode のまま）。
-            （config.ini の [plan].reset_approval_on_recreate 由来）。
-        plan_auto_approve: True の場合、approve_plan 呼び出し時にユーザーへの
-            確認（承認/却下ボタンの表示・応答待ち）を一切行わず、その場で
-            自動的に承認済み扱いにする。False（既定）なら従来通りユーザーの
-            明示的な承認を必須にする（config.ini の [plan].auto_approve 由来）。
         allow_sandbox_dirs: 書き込みサンドボックスガード（run_script/
             run_script_background 経由のみ対象。execute_python_code系は
             対象外）が work_dir/default_workdir に加えて書き込み・削除を
@@ -545,14 +508,10 @@ def init_tools(
     global _HELP_PATH
     global _PATH_MEMORY_DIR, _PATH_MEMORY_MAX_ENTRIES
     global _PATH_MEMORY_SEARCH_MIN_SCORE, _PATH_MEMORY_SEARCH_FILENAME_WEIGHT
-    global _APPROVAL_TIMEOUT_SECONDS, _ASK_USER_QUESTION_TIMEOUT_SECONDS
+    global _ASK_USER_QUESTION_TIMEOUT_SECONDS
     global _ASK_USER_CHOICE_TIMEOUT_SECONDS
-    global _PLAN_BADGE_ALLOW_UNLOCK
-    global _PLAN_RESET_APPROVAL_ON_RECREATE
-    global _PLAN_AUTO_APPROVE
     global _DISPATCH_AGENT_MAX_PARALLEL
     global _TOOL_CALL_MAX_PARALLEL
-    global _PLAN_APPROVAL_EXEMPT_SCRIPTS
     global _AGENT_TYPE_RUN_SCRIPT_ALLOWLIST
     _skills_root_list = [skills_root] if isinstance(skills_root, (str, Path)) else list(skills_root)
     _SKILLS_ROOTS = [Path(p).resolve() for p in _skills_root_list]
@@ -579,7 +538,6 @@ def init_tools(
     _DISPATCH_AGENT_BACKGROUND_LLM_TIMEOUT_MAX_RETRIES = dispatch_agent_background_llm_timeout_max_retries
     _DISPATCH_AGENT_BATCH_MAX_GROUPS = dispatch_agent_batch_max_groups
     _DISPATCH_AGENT_BATCH_STOP_AFTER_UNREACHABLE_GROUPS = dispatch_agent_batch_stop_after_unreachable_groups
-    _PLAN_APPROVAL_EXEMPT_SCRIPTS = set(plan_approval_exempt_scripts)
     if agent_type_run_script_allowlist is not None:
         grouped: dict[str, set[str | tuple[str, str]]] = {}
         for agent_type, target in agent_type_run_script_allowlist:
@@ -600,12 +558,8 @@ def init_tools(
     _PATH_MEMORY_MAX_ENTRIES = path_memory_max_entries
     _PATH_MEMORY_SEARCH_MIN_SCORE = path_memory_search_min_score
     _PATH_MEMORY_SEARCH_FILENAME_WEIGHT = path_memory_search_filename_weight
-    _APPROVAL_TIMEOUT_SECONDS = approval_timeout_seconds
     _ASK_USER_QUESTION_TIMEOUT_SECONDS = ask_user_question_timeout_seconds
     _ASK_USER_CHOICE_TIMEOUT_SECONDS = ask_user_choice_timeout_seconds
-    _PLAN_BADGE_ALLOW_UNLOCK = plan_badge_allow_unlock
-    _PLAN_RESET_APPROVAL_ON_RECREATE = plan_reset_approval_on_recreate
-    _PLAN_AUTO_APPROVE = plan_auto_approve
     _DISPATCH_AGENT_MAX_PARALLEL = dispatch_agent_max_parallel
     _TOOL_CALL_MAX_PARALLEL = graph_tool_max_parallel
     # 設定値の変更（再初期化）に追従できるよう、以前の値で生成済みの

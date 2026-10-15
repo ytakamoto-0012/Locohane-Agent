@@ -1,6 +1,6 @@
 """Chainlit の UI 呼び出しをスタブ化し、Chainlit サーバー無しで
 src.tools のツール群（run_script / execute_python_code / AskUserQuestion /
-ask_user_choice / create_plan / approve_plan / update_task_progress）を
+ask_user_choice / create_plan / update_task_progress）を
 そのまま ainvoke できるようにする。
 
 src.tools は `import chainlit as cl` 済みだが、`cl.xxx` への参照は
@@ -9,7 +9,7 @@ src.tools の関数を呼ぶより前に一度実行しておけば十分。差�
 tools.py が実際に使っている範囲（user_session / AskActionMessage /
 AskUserMessage / CustomElement / AskElementMessage / Message）に限定し、
 cl.Action はコンストラクタが副作用を持たないためそのまま使う。
-加えて、approve_plan/ask_user_choice/ask_user_question の3モジュールが
+加えて、ask_user_choice/ask_user_question の2モジュールが
 個別に import 済みの `_ask_with_cross_session_relay`（スレッド切り替え後の
 別セッションからの回答中継を待つ本番用ロジック）も、headlessモードには
 「別セッション」概念が無く中継先が永久に解決されないため、factory() を
@@ -45,7 +45,7 @@ class _FakeAskActionMessage:
     """cl.AskActionMessage の代替。承認/拒否ダイアログを即答する。
 
     auto_approve が True なら payload.value == "approve" のアクションを選ぶ
-    （run_script/execute_python_code/approve_plan の承認ダイアログ用）。
+    （承認/却下の2択ダイアログ用）。
     False ならそれ以外（"deny" 等）を選ぶ。ask_user_choice のように
     approve/deny という値を持たない選択肢のみの場合は、その中から
     auto_approve=True なら先頭、False なら末尾を選ぶ。
@@ -166,8 +166,8 @@ def install(auto_approve: bool = True, scripted_text_answers: list[str] | None =
     run_case.py の冒頭、src.tools の関数を呼ぶより前に一度だけ呼ぶ。
 
     Args:
-        auto_approve: run_script/execute_python_code/approve_plan の
-            承認ダイアログを自動で承認するか拒否するか。
+        auto_approve: AskActionMessage による確認ダイアログを
+            自動で承認するか拒否するか。
         scripted_text_answers: AskUserQuestion が呼ばれるたびに消費して返す
             回答のリスト。labels 省略時（単一質問）は1件、labels 指定時は
             その件数だけまとめて消費する。尽きればタイムアウト扱い（None）。
@@ -183,17 +183,17 @@ def install(auto_approve: bool = True, scripted_text_answers: list[str] | None =
     cl.Message = _FakeMessage
 
 
-_ASK_RELAY_TOOL_NAMES = ("approve_plan", "ask_user_choice", "AskUserQuestion")
+_ASK_RELAY_TOOL_NAMES = ("ask_user_choice", "AskUserQuestion")
 
 
 def patch_ask_relay(tools) -> None:
-    """approve_plan/ask_user_choice/AskUserQuestion の
+    """ask_user_choice/AskUserQuestion の
     `_ask_with_cross_session_relay`（スレッド切り替え後の別セッションからの
     回答中継を待つ本番用ロジック）を、headlessモード向けの即時解決版へ
     差し替える。init_tools() 実行後、get_all_tools() が返す実際のツール
     オブジェクトに対して呼ぶこと（run_case.py 参照）。
 
-    3モジュールが `from ._ask_relay_helper import _ask_with_cross_session_relay`
+    2モジュールが `from ._ask_relay_helper import _ask_with_cross_session_relay`
     で名前を自分の名前空間へ直接束縛しているため、
     `src.tools._ask_relay_helper` 側や `sys.modules['src.tools.xxx']` 経由の
     属性差し替えでは反映されないことがある（2026-09-02、init_tools() 実行後に

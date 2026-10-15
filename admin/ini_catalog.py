@@ -90,7 +90,7 @@ _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
 # リスト値の構造定義。管理画面で「文字/数値」等の型を選ばせず、意味のある
 # 名前付きの入力欄で編集させるために使う（admin/static/admin.js の
 # buildSchemaEditor が解釈する）。形式は src/config.py の各パーサー
-# （_as_llm_endpoints / _parse_plan_approval_exempt_scripts 等）に合わせること。
+# （_as_llm_endpoints / _parse_agent_type_run_script_allowlist 等）に合わせること。
 #   {"type": "string", "placeholder": ..., "default": 追加時の初期値（省略時は ""）}
 #   {"type": "number", "placeholder": ..., "default": 追加時の初期値（省略時は 0）}
 #   {"type": "choice", "choices": [...]}
@@ -140,7 +140,6 @@ _LLM_URL = {
 _KEY_SCHEMAS: dict[tuple[str, str], dict[str, Any]] = {
     ("llm", "main_url"): _LLM_URL,
     ("llm", "sub_url"): _LLM_URL,
-    ("plan", "plan_approval_exempt_scripts"): {"type": "list", "item": _SKILL_SCRIPT},
     ("subagent", "agent_type_run_script_allowlist"): {
         "type": "grouped",
         "group_label": "agent_type",

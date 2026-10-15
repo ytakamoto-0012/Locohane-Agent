@@ -41,9 +41,9 @@ Locohane はミスが許されない専門業務が前提のため、正式ス�
    - 正式スキルの必須ルール・禁止事項を消している
    - ケースが中身を確かめておらず、合格しても安全性・正確性の根拠にならない
 4. 差分の要点と、気になった点をユーザーに短く伝える。
-5. `register_entries`（scripts/ のスクリプト）を控える。ドラフトのスクリプトは会話では計画承認・
+5. `register_entries`（scripts/ のスクリプト）を控える。ドラフトのスクリプトは会話では
    main_agent_tool_guard を免除されていたため、昇格時にインスタンスの `config_overrides.json` へ
-   `plan_approval_exempt_scripts` と `allow_entries`（max_calls=-1）として登録し、昇格後も同じ挙動にする
+   `allow_entries`（max_calls=-1）として登録し、昇格後も同じ挙動にする
    （トライアウトも登録済みと同じ状態で評価される）。
 
 ## 手順2: スキル安定化トライアウト

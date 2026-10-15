@@ -8,7 +8,7 @@ from langchain_core.messages import ToolMessage
 from langchain_core.tools import BaseTool
 from pydantic import Field, create_model
 from langgraph.prebuilt import ToolNode
-import chainlit as cl
+import chainlit as cl  # noqa: F401 - テストが monkeypatch.setattr(tool_node.cl, ...) で参照する
 import logging
 
 from .. import skill_drafts
@@ -144,59 +144,6 @@ def _guard_leaked_tool_markup(input):  # noqa: A002
     }
 
 
-_ALLOWED_WHILE_AWAITING_APPROVAL = {"approve_plan", "get_plan_status", "lock_plan_mode"}
-# このうち呼ばれたらガードのフラグ自体を解除するもの（それ以外
-# （get_plan_status）は読み取り専用の確認だけなので、フラグは維持したまま
-# 通過させる）。
-_CLEARS_AWAITING_APPROVAL = {"approve_plan", "lock_plan_mode"}
-
-
-def _guard_awaiting_approve_plan(input):  # noqa: A002
-    """create_plan 直後、approve_plan/get_plan_status/lock_plan_mode 以外の
-    tool_calls を実行させず、合成 ToolMessage に差し替える。
-
-    本番ログ・evalで、create_plan の直後に規定の approve_plan ではなく
-    ask_user_choice 等を自作して承認確認の代わりに使ってしまう事例が確認された
-    （システムプロンプトの指示のみでは確実性が無いため、コード側でも強制する）。
-    ただし、モデルが調査不足に自分で気づき lock_plan_mode で計画をやり直そうと
-    する自己修正（evalで実際に観測済み）は正当な経路として許可する。
-    ガード対象でなければ None を返す（呼び出し側はこの場合、通常通り
-    super().ainvoke()/invoke() を呼ぶこと）。
-
-    Args:
-        input: ImageAwareToolNode.invoke/ainvoke がそのまま受け取った入力
-            （_extract_tool_call_from_node_input 参照）。
-
-    Returns:
-        ブロックする場合は ToolNode.invoke/ainvoke と同じ形式の結果
-        （{"messages": [ToolMessage]}）。ガード対象外・許可リスト内の
-        呼び出しの場合は None。
-    """
-    if not cl.user_session.get("awaiting_approve_plan_call"):
-        return None
-    call = _extract_tool_call_from_node_input(input)
-    if not call:
-        return None
-    name = call.get("name")
-    if name in _ALLOWED_WHILE_AWAITING_APPROVAL:
-        if name in _CLEARS_AWAITING_APPROVAL:
-            cl.user_session.set("awaiting_approve_plan_call", False)
-        return None
-    # フラグはクリアしない（モデルが approve_plan/lock_plan_mode を呼ぶまで、
-    # 次の呼び出しも引き続きブロックする。plan_approved ガードと同様、
-    # 明示的に解除されるまでブロックし続ける設計）。
-    return {
-        "messages": [
-            ToolMessage(
-                content=("エラー: create_planの直後はapprove_planを呼んでください" "（他のツールは実行されませんでした）。"),
-                name=name,
-                tool_call_id=call.get("id"),
-                status="error",
-            )
-        ]
-    }
-
-
 def _guard_main_agent_tool_limit(input):  # noqa: A002
     """[main_agent_tool_guard] の許可リストに基づき、メインエージェントが直接
     呼べるツールとその回数を制限し、dispatch_agentへの委譲を促すガード。
@@ -207,7 +154,7 @@ def _guard_main_agent_tool_limit(input):  # noqa: A002
     その後 analyze_image をメインエージェント自身が委譲せずページ数分連打した
     ことだった（英検3級PDF調査、2026-08-10）。ビルトインツールを一切問わず
     任意の名前を登録できるよう、ImageAwareToolNode.invoke/ainvoke の共通
-    差し込みポイント（_guard_awaiting_approve_plan と同じ場所）でツール名
+    差し込みポイント（_guard_leaked_tool_markup と同じ場所）でツール名
     そのものを判定する汎用ガードに統合し、Globガードもここへ統合済み。
 
     本ガードは許可リスト（ホワイトリスト）方式: [main_agent_tool_guard].allow_entries
@@ -501,7 +448,6 @@ class ImageAwareToolNode(ToolNode):
             call_args = call_args.get("args", {})
         blocked = (
             _guard_leaked_tool_markup(input)
-            or _guard_awaiting_approve_plan(input)
             or _guard_main_agent_tool_limit(input)
         )
         if blocked is not None:
@@ -518,7 +464,6 @@ class ImageAwareToolNode(ToolNode):
             call_args = call_args.get("args", {})
         blocked = (
             _guard_leaked_tool_markup(input)
-            or _guard_awaiting_approve_plan(input)
             or _guard_main_agent_tool_limit(input)
         )
         if blocked is not None:

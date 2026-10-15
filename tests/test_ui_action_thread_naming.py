@@ -1,4 +1,4 @@
-"""UIボタン（作業フォルダ選択・Plan Modeバッジ）クリックが、会話履歴に
+"""UIボタン（作業フォルダ選択等）クリックが、会話履歴に
 "pick_work_dir" 等という名前のスレッドを作ってしまう不具合の回帰テスト。
 
 背景（2026-08-19 ユーザー報告）: Chainlit本体の /project/action ハンドラは、
@@ -79,7 +79,7 @@ async def test_ui_action_click_does_not_flush_queued_steps() -> None:
         session.flush_method_queue = fake_flush_method_queue
 
         emitter = cl_emitter.ChainlitEmitter(session)
-        await emitter.flush_thread_queues("toggle_plan_mode")
+        await emitter.flush_thread_queues("pick_work_dir")
 
         assert flushed == []
     finally:

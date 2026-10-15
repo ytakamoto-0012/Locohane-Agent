@@ -122,7 +122,6 @@ def test_schema_matches_default_value_for_every_schema_key():
     catalog = parse_file(CONFIG_INI_PATH)
     schema_keys = [info for info in catalog.keys if info.schema is not None]
     assert {(info.section, info.key) for info in schema_keys} >= {
-        ("plan", "plan_approval_exempt_scripts"),
         ("subagent", "agent_type_run_script_allowlist"),
         ("main_agent_tool_guard", "allow_entries"),
         ("default_workdir", "allow_sandbox_dir"),

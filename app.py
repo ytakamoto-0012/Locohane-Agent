@@ -103,7 +103,6 @@ from src.config import (
     expand_config_vars,
     load_config,
     render_agent_type_run_script_allowlist_block,
-    render_plan_approval_exempt_scripts_block,
 )
 from src.context_compaction import (
     force_write_thread_note,
@@ -167,7 +166,6 @@ from src.tools import (
     probe_workdir_access,
     register_raw_unc_paths_in_text,
     reset_call_history_guards_after_compaction,
-    toggle_plan_mode_from_ui,
 )
 from src.tools.dispatch_agent_batch import BATCH_GROUP_RUN_NAME, interrupted_note_topic
 from src.tools._plan_render import _render_plan_payload
@@ -300,7 +298,7 @@ def _unmark_thread_generating(thread_id: str, owner: str | None = None) -> None:
         _generating_owner_threads.pop(owner, None)
 
 
-# thread_id -> 応答待ち（approve_plan/ask_user_question/ask_user_choice の
+# thread_id -> 応答待ち（ask_user_question/ask_user_choice の
 # Ask*Message）の引き継ぎ用状態。
 # Sidebar.goToThread()（frontend/src/components/Sidebar.tsx）はスレッド切り替え時に
 # フルページリロードするため、sessionIdState は毎回 uuid4() で新規発行され直す
@@ -310,7 +308,7 @@ def _unmark_thread_generating(thread_id: str, owner: str | None = None) -> None:
 # cl.AskActionMessage/AskUserMessage/AskElementMessage.send() は元セッションの
 # emitterへ送信済みのまま応答不能（相手のWebSocketが既に切断済み）になり、
 # ボタン・入力フォームが戻ってきたセッションに一切表示されない
-# （2026-08-21 ユーザー報告。当初は approve_plan のみで確認されたが、同じ
+# （2026-08-21 ユーザー報告。当初は計画承認ダイアログのみで確認されたが、同じ
 # 仕組みの ask_user_question/ask_user_choice にも同一の欠落があったため
 # 2026-08-22 に一般化）。
 # ここに登録した内容を on_chat_resume が検知し、今まさに繋がっているセッション
@@ -330,7 +328,7 @@ async def _relay_pending_ask(thread_id: str) -> None:
     今このセッション（＝実際にブラウザと繋がっている生きたWebSocket。
     Chainlit自体がon_chat_resumeハンドラ実行前にcl.contextをこの新セッション
     へ束縛済み）で同じAsk*Messageを出し直し、回答を _pending_asks の
-    Future 経由で元セッション（approve_plan/ask_user_question/ask_user_choice
+    Future 経由で元セッション（ask_user_question/ask_user_choice
     を呼んだ側）へ引き継ぐ。
 
     元セッション側の Ask*Message.send() はフルページリロードで切断済みの
@@ -353,8 +351,8 @@ def _make_relayed_emit(session, thread_id: str, original_emit):
     そのスレッドを開いた画面自体は生成中の内容が全く見えず「止まって見える」
     問題が残っていた）。
 
-    中継は _RELAYED_EMIT_EVENTS の許可リストに限定する。'ask'系（Plan Mode
-    承認等の対話プロンプト）は session.emit ではなく session.emit_call
+    中継は _RELAYED_EMIT_EVENTS の許可リストに限定する。'ask'系（ask_user_choice
+    等の対話プロンプト）は session.emit ではなく session.emit_call
     経由で送られるため、そもそもこの関数の対象外＝自動的に中継されない
     （閲覧側セッションは常に読み取り専用のまま）。task_start/task_end も
     意図的に中継しない — 中継すると閲覧側の useChatData().loading が真になり
@@ -695,11 +693,11 @@ def _patch_chainlit_websocket_ping_timeout() -> None:
 # 呼ばれる action_callback。これらのクリックは「最初の発言」ではないが、
 # Chainlit本体側にその区別が無い（_patch_chainlit_ignore_ui_action_first_interaction
 # のdocstring参照）。
-_NON_CHAT_ACTION_NAMES = frozenset({"pick_work_dir", "toggle_plan_mode"})
+_NON_CHAT_ACTION_NAMES = frozenset({"pick_work_dir"})
 
 
 def _patch_chainlit_ignore_ui_action_first_interaction() -> None:
-    """作業フォルダ選択・Plan Modeバッジ等のUIボタンを、送信前に押しただけで
+    """作業フォルダ選択等のUIボタンを、送信前に押しただけで
     会話履歴（左サイドバー）に "pick_work_dir" 等という名前の会話が作られて
     しまう不具合を防ぐ、chainlit.emitter.ChainlitEmitter.flush_thread_queues
     のモンキーパッチ（2026-08-19 ユーザー報告）。
@@ -808,7 +806,7 @@ if _config.thread_store_enabled:
         （/locohane/threads/{id}/status のdocstring参照。自分自身の生成中
         スレッドにもパルスドットが出てしまう見た目の紛らわしさを防ぐ）。
 
-        isWaitingForUser は _pending_asks（src/ask_relay.py。approve_plan/
+        isWaitingForUser は _pending_asks（src/ask_relay.py。
         ask_user_question/ask_user_choice が応答待ちの間だけ thread_id が
         キーとして存在する）との突き合わせ。「生成中」ではあるがユーザーの
         入力・選択を待って止まっている状態を区別して示すための項目で、
@@ -885,7 +883,7 @@ if _config.thread_store_enabled:
         session_id（sessionIdState。呼び出し元自身の Chainlit セッションID）を
         渡すと、そのスレッドを生成中なのが呼び出し元自身のセッションである場合
         isGenerating=false を返す。これが無いと、自分自身のターンでも
-        Plan Mode承認待ち等で一時的に useChatData().loading が false になる
+        ask_user_choice の応答待ち等で一時的に useChatData().loading が false になる
         瞬間（session.emit_call経由の"ask"はtask_end/task_startを挟むため）
         フロントが「他セッションが生成中」と誤検知し、待っても終わらない
         ため window.location.reload() が発火して自分自身のターンを見失い、
@@ -1494,7 +1492,7 @@ def _patch_chainlit_connection_successful_task_end() -> None:
     task完了後に呼んでも害はない。
 
     _resync_live_steps() では救えないケースがもう一つある: 切断ウィンドウ
-    中に「新規作成」されたStep（例: create_plan/approve_planのツール呼び出し）
+    中に「新規作成」されたStep（例: create_plan/update_task_progressのツール呼び出し）
     そのもの。_resync_live_steps() は cl.Step.update() を呼ぶだけで、これは
     フロント（@chainlit/react-client）の update_message ハンドラ側で「既存
     messages配列内でid一致するものを探して書き換える」実装になっており、
@@ -1502,7 +1500,7 @@ def _patch_chainlit_connection_successful_task_end() -> None:
     はしない）。つまり作成イベント自体が切断済みソケットへ送られて消えた場合、
     その後どれだけ update() を再送してもフロントには永久に復元されない
     （2026-08-30 ユーザー報告。verifier完了直後の320秒経過表示で画面が固まり、
-    その後のcreate_plan/approve_planのStepが一度も表示されなかった実例で確認。
+    その後のcreate_plan等のStepが一度も表示されなかった実例で確認。
     ログ上はバックエンドが正常に進行し続けていたにもかかわらず、フロントは
     停止ボタン押下時の最終メッセージ以外一切更新されなかった）。
 
@@ -1856,12 +1854,6 @@ async def _setup() -> None:
     system_prompt = system_prompt.replace("{{memory}}", render_memory_block(_config.memory_dir))
     # dispatch_agent が選べるエージェント種別一覧を {{agent_types}} へ差し込む。
     system_prompt = system_prompt.replace("{{agent_types}}", agent_types_block)
-    # 計画承認（Plan Mode）を免除される読み取り専用スクリプトのホワイトリストを
-    # {{plan_approval_exempt_scripts}} へ差し込む（config.ini の値が唯一の正）。
-    system_prompt = system_prompt.replace(
-        "{{plan_approval_exempt_scripts}}",
-        render_plan_approval_exempt_scripts_block(_config.plan_approval_exempt_scripts),
-    )
     # config.ini の値を ${変数名} として埋め込めるよう展開する（{{...}}置換完了後に行う）。
     system_prompt = expand_config_vars(system_prompt, _config)
     # .locohane/LOCOHANE.md はユーザー自由記述のため ${...} を偶然含んでいても
@@ -1898,10 +1890,8 @@ async def _setup() -> None:
         _config.path_memory_dir,
         _config.path_memory_max_entries,
         _config.code_exec_enabled,
-        _config.approval_timeout_seconds,
         _config.ask_user_question_timeout_seconds,
         _config.ask_user_choice_timeout_seconds,
-        _config.plan_badge_allow_unlock,
         _config.subagent_max_parallel,
         _config.graph_tool_max_parallel,
         script_background_max_runtime_seconds=_config.script_background_max_runtime_seconds,
@@ -1918,12 +1908,9 @@ async def _setup() -> None:
         dispatch_agent_background_llm_timeout_max_retries=_config.subagent_background_llm_timeout_max_retries,
         dispatch_agent_batch_max_groups=_config.subagent_batch_max_groups,
         dispatch_agent_batch_stop_after_unreachable_groups=_config.subagent_batch_stop_after_unreachable_groups,
-        plan_approval_exempt_scripts=_config.plan_approval_exempt_scripts,
         agent_type_run_script_allowlist=_config.subagent_agent_type_run_script_allowlist,
         plans_dir=_config.plans_dir,
         allow_sandbox_dirs=_config.allow_sandbox_dirs,
-        plan_reset_approval_on_recreate=_config.plan_reset_approval_on_recreate,
-        plan_auto_approve=_config.plan_auto_approve,
         path_memory_search_min_score=_config.path_memory_search_min_score,
         path_memory_search_filename_weight=_config.path_memory_search_filename_weight,
         skill_names=[s.name for s in skills],
@@ -2238,11 +2225,10 @@ async def on_chat_start() -> None:
     cl.user_session.set("work_dir_notice_pending", True)
     # サイドパネル上部の「作業ディレクトリ」表示を初期状態（未設定）から出す。
     await cl.Message(content=_format_work_dir_status(None)).send()
-    # Task Management ツール（create_plan/approve_plan/update_task_progress）の
-    # セッション状態。新しいセッションでは未作成・未承認から開始する。
+    # Task Management ツール（create_plan/update_task_progress）の
+    # セッション状態。新しいセッションでは未作成から開始する。
     cl.user_session.set("plan", None)
     cl.user_session.set("plan_message", None)
-    cl.user_session.set("plan_approved", False)
     # トークン使用量の会話全体累計（on_message の on_chat_model_end で加算）。
     # メインエージェント自身のLLM呼び出しとサブエージェント（dispatch_agent）
     # 内部のLLM呼び出しの両方を合算した値。
@@ -2316,10 +2302,10 @@ if _config.thread_store_enabled:
         （ステップとして永続化されないライブ push のみの情報のため、
         再開直後はギアアイコンのパネルが空になってしまう）。
 
-        work_dir/plan/plan_approved/トークン累計は on_message 側で毎ターン
+        work_dir/plan/トークン累計は on_message 側で毎ターン
         thread_store へスナップショットした値（thread["metadata"]）から
         復元する（無ければ on_chat_start と同じ既定値）。これが無いと、
-        Plan Mode中のタスク一覧・承認状態は cl.user_session 限定の状態
+        タスク一覧は cl.user_session 限定の状態
         （LangGraph側には保存されない）のため、再開のたびに静かに失われる。
         """
         await _setup()
@@ -2350,9 +2336,7 @@ if _config.thread_store_enabled:
         cl.user_session.set("work_dir_access", None)
         cl.user_session.set("work_dir_notice_pending", True)
         plan = meta.get("plan")
-        plan_approved = bool(meta.get("plan_approved"))
         cl.user_session.set("plan", plan)
-        cl.user_session.set("plan_approved", plan_approved)
         if plan:
             # plan_message（サイドパネルのPlanCard用メッセージ）は cl.Message
             # インスタンスのためスレッドのmetadataへ永続化できず、旧実装は
@@ -2399,7 +2383,7 @@ if _config.thread_store_enabled:
             plan_message = cl.Message(
                 id=resolved_message_id,
                 created_at=(existing_step or {}).get("createdAt"),
-                content=_render_plan_payload(plan, finished=finished, approved=plan_approved),
+                content=_render_plan_payload(plan, finished=finished),
             )
             cl.user_session.set("plan_message", plan_message)
         else:
@@ -2556,16 +2540,15 @@ async def _persist_work_dir(resolved: str | None) -> None:
 
 
 async def _persist_plan_state() -> None:
-    """plan/plan_approved の変更を、ターン完了を待たずに即座に thread_store へ
+    """plan の変更を、ターン完了を待たずに即座に thread_store へ
     保存する。src/plan_persist.py 経由で src/tools.py の各ツール
-    （create_plan/approve_plan/update_task_progress/lock_plan_mode/
-    toggle_plan_mode_from_ui）から呼ばれる（同モジュールのdocstring参照）。
+    （create_plan/update_task_progress）から呼ばれる（同モジュールのdocstring参照）。
 
-    _persist_work_dir と同じ理由・同じパターン: 承認直後のターンが停止
-    ボタン・通信エラー・思考ループ上限・recursion_limit・計画却下等で異常
+    _persist_work_dir と同じ理由・同じパターン: ターンが停止
+    ボタン・通信エラー・思考ループ上限・recursion_limit 等で異常
     終了すると、ターン完了時のまとめてスナップショット（_on_message_impl
-    末尾）に到達せず、承認済み状態が一度もDBへ保存されないままスレッドが
-    再開時に古い（未承認の）metadataへ巻き戻ってしまう
+    末尾）に到達せず、最新の計画が一度もDBへ保存されないままスレッドが
+    再開時に古いmetadataへ巻き戻ってしまう
     （2026-08-24 ユーザー報告）。ここで即座に保存することで、ターンの
     成否に関わらず状態を一致させる。
     """
@@ -2579,7 +2562,6 @@ async def _persist_plan_state() -> None:
         thread_id,
         metadata={
             "plan": cl.user_session.get("plan"),
-            "plan_approved": cl.user_session.get("plan_approved"),
         },
     )
 
@@ -2657,22 +2639,6 @@ async def on_settings_update(settings: dict) -> None:
         None。
     """
     await _apply_work_dir(settings.get("work_dir") or "")
-
-
-@cl.action_callback("toggle_plan_mode")
-async def on_toggle_plan_mode(action: cl.Action) -> None:
-    """送信ボタン付近の Plan Mode / Edit Automatically バッジをクリックした際の
-    action_callback。実体は src/tools.py の toggle_plan_mode_from_ui（config.ini の
-    [plan].allow_badge_unlock によるロック解除方向のガードもそちら側で行う）。
-
-    Args:
-        action: フロントエンドから callAction で渡された cl.Action（未使用）。
-
-    Returns:
-        None。
-    """
-    del action
-    await toggle_plan_mode_from_ui()
 
 
 @cl.action_callback("pick_work_dir")
@@ -3249,20 +3215,6 @@ async def _aclose_event_stream(event_stream) -> bool:
         return True
 
 
-class _PlanDeniedInterrupt(Exception):
-    """approve_plan が明示的に却下された直後、このターンを打ち切るための内部例外。
-
-    ToolNode が生成した ToolMessage はこの時点ではまだチェックポイントへ
-    コミットされていない。async for ループの外側（except節、finallyの
-    aclose()より前）まで運んでから graph.aupdate_state() で明示コミットする
-    ことで、次回のグラフ実行時に「tool_calls に対応する ToolMessage が無い」
-    という不整合（_validate_chat_history エラー）を防ぐ。
-    """
-
-    def __init__(self, tool_message: ToolMessage) -> None:
-        self.tool_message = tool_message
-
-
 class _CompactionCheckpoint(Exception):
     """ループ内の安全な区切りでコンテキスト圧縮の条件を満たしたことを、
     async for ループの外側まで伝えるための内部例外。
@@ -3270,9 +3222,10 @@ class _CompactionCheckpoint(Exception):
     「安全な区切り」とは、直近のメインエージェントのAIMessageが発行した
     tool_calls に対応する ToolMessage が on_tool_end で全て返却済みになった
     時点を指す（サブエージェント内部の呼び出しは対象外。_is_subagent_call
-    参照）。_PlanDeniedInterrupt と同じ理由（ToolNode が生成した
-    ToolMessage群はこの時点ではまだチェックポイントへコミットされていない）
-    で、まず aupdate_state(as_node="tools") で明示コミットしてから圧縮を行う。
+    参照）。ToolNode が生成した ToolMessage群はこの時点ではまだ
+    チェックポイントへコミットされていないため（コミットしないまま圧縮すると
+    次回のグラフ実行時に「tool_calls に対応する ToolMessage が無い」という
+    不整合（_validate_chat_history エラー）になる）、まず aupdate_state(as_node="tools") で明示コミットしてから圧縮を行う。
     """
 
     def __init__(self, tool_messages: list[ToolMessage]) -> None:
@@ -3284,7 +3237,7 @@ def _find_orphaned_tool_calls(messages: list) -> list[dict]:
 
     停止ボタン等によるCancelledErrorでターンが中断された場合、チェックポイントに
     コミット済みのAIMessage(tool_calls)に対し、ToolNodeが生成するはずだった
-    ToolMessageが記録されないまま終わることがある（_PlanDeniedInterruptの
+    ToolMessageが記録されないまま終わることがある（_CompactionCheckpointの
     docstring参照）。次回グラフ実行前にこの孤立を検出するために使う。
 
     以前は末尾のAIMessageだけを見ていたが、孤立tool_callの発生後に
@@ -3565,12 +3518,11 @@ async def _run_context_compaction(
     dry_run引数の使い方は _run_context_compaction_visible 参照。
 
     Args:
-        dry_run: True の場合、判定（awaiting_approve_plan_call/
-            orphaned_tool_calls/should_compact/is_compaction_blocked_by_
-            missing_note）だけを行い、実際の要約LLM呼び出し・aupdate_state・
+        dry_run: True の場合、判定（orphaned_tool_calls/should_compact/
+            is_compaction_blocked_by_missing_note）だけを行い、実際の要約LLM呼び出し・aupdate_state・
             各種カウンタのリセットは行わない。_run_context_compaction_visible
             が「圧縮が実際に発火するか」を正確に予測するために使う
-            （4つのゲートを個別に手で複製すると、ゲートが増減した際に
+            （3つのゲートを個別に手で複製すると、ゲートが増減した際に
             片方だけ更新し忘れて予測がずれる恐れがあるため、判定ロジック
             自体をここへ一本化する）。context_compaction_note_skip_count は
             読むだけで更新しない（実際に圧縮を試みる非dry_run呼び出し側でのみ
@@ -3580,12 +3532,6 @@ async def _run_context_compaction(
         圧縮を実行した場合（dry_run=True では「実行するはず」と判定した
         場合）は True。
     """
-    if cl.user_session.get("awaiting_approve_plan_call"):
-        # create_plan直後、approve_plan/lock_plan_modeが呼ばれるまでの承認待ち中。
-        # ここで圧縮（要約用LLM呼び出し）が割り込むと、失敗・長時間化した際に
-        # thinking/answerが既に確定送信済みでユーザーには何も表示されず、
-        # 承認ボタンも出ない見かけ上のハングになるため、承認確定まで圧縮しない。
-        return False
     try:
         state = await graph.aget_state(config)
     except Exception:
@@ -3721,8 +3667,8 @@ async def _run_context_compaction_visible(
     ターンでは何も表示されない）。
 
     表示要否の判定は _run_context_compaction(dry_run=True) にそのまま委譲する
-    （awaiting_approve_plan_call/orphaned_tool_calls/should_compact/
-    is_compaction_blocked_by_missing_note の4ゲート全てを1箇所のロジックで
+    （orphaned_tool_calls/should_compact/
+    is_compaction_blocked_by_missing_note の3ゲート全てを1箇所のロジックで
     判定させることで、以前ここに手で複製していた一部のゲートだけを見て
     「圧縮します」と表示した直後に本体側の別ゲートで却下される、という
     表示と実処理の食い違いを構造的に防ぐ）。
@@ -3796,18 +3742,8 @@ async def _on_message_impl(message: cl.Message) -> None:
     if too_long_reason is not None:
         await cl.Message(content=too_long_reason, type="system_message").send()
         return
-    # 計画承認は既定では「このユーザーメッセージへの応答で作られた計画の実行」に
-    # 限定されたスコープであるべきなので、新しいメッセージを受け取るたびに
-    # 前回（放置されて完了しなかった計画など）の承認状態を持ち越さない。
-    # ただし [plan].reset_approval_on_new_message=false の場合は、
-    # thinking_loop_guard のリトライ上限到達などで打ち切られたタスクを
-    # ユーザーが新しいメッセージで継続するケースを想定し、承認済み状態を
-    # メッセージをまたいで維持する（無関係な新規依頼でも維持される点は
-    # 設定側のトレードオフとしてドキュメント済み）。
-    if _config.plan_reset_approval_on_new_message:
-        cl.user_session.set("plan_approved", False)
     # main_agent_tool_guard（src/tools.py の _guard_main_agent_tool_limit）の
-    # カウンタも同様に、新しいターンでは前回の消費分を持ち越さない。
+    # カウンタは、新しいターンでは前回の消費分を持ち越さない。
     cl.user_session.set("main_agent_tool_guard_call_count", None)
     # dispatch_agent 経由でこのタスクから派生するサブエージェントの
     # build_model() 呼び出しも、このセッションへ紐づけて登録されるようにする
@@ -4147,25 +4083,6 @@ async def _on_message_impl(message: cl.Message) -> None:
                                     elements=elements,
                                     type="system_message",
                                 ).send()
-                    # 実行計画がユーザーに却下された直後。ツール結果の文言・
-                    # system_prompt.mdの指示だけに頼ると、LLMが計画を微修正して
-                    # 勝手に続行してしまう恐れがあるため、ここでコード側から
-                    # 確実にこのターンを打ち切る（approve_planがフラグを立てる。
-                    # src/tools.py参照）。ここで即returnせず _PlanDeniedInterrupt を
-                    # raise するのは、ToolNode が生成したこの ToolMessage がまだ
-                    # チェックポイントへコミットされていないため（下の except節参照）。
-                    # コンテキスト圧縮の安全点チェック（下）より必ず先に評価する:
-                    # 却下と圧縮条件が同時に満たされた場合、却下によるターン
-                    # 打ち切りを圧縮継続で握りつぶしてはならないため。
-                    if event["name"] == "approve_plan" and cl.user_session.get("plan_denied_just_now"):
-                        cl.user_session.set("plan_denied_just_now", False)
-                        await _close_all_outputs(thinkings, answers)
-                        await cl.Message(
-                            content="実行計画が却下されたため、処理を終了しました。ご指示をお待ちしています。",
-                            type="system_message",
-                        ).send()
-                        raise _PlanDeniedInterrupt(tool_message=event["data"].get("output"))
-
                     # コンテキスト圧縮: 直近のメインAIMessageが発行した
                     # tool_calls（pending_main_tool_ids）に、今回返却された
                     # ToolMessageが全て揃った時点が、孤立tool_callの無い
@@ -4183,21 +4100,19 @@ async def _on_message_impl(message: cl.Message) -> None:
                                 committed_messages = cstate.values.get("messages", []) if cstate else []
                                 approx_count = len(committed_messages) + len(pending_main_tool_msgs)
                                 compact_due = should_compact(cumulative_main, last_usage, approx_count, _config)
-                                awaiting_approval = bool(cl.user_session.get("awaiting_approve_plan_call"))
                                 # ISSUE調査用: 安全点（pending_main_tool_idsが空）に到達する
                                 # たびに、実際に圧縮まで踏み切ったかどうかを判定材料つきで
                                 # 記録する。cumulative_mainが閾値超なのに発火しない事例が
                                 # 観測されたため、原因切り分けに使う（2026-08-12調査）。
                                 logging.getLogger(__name__).debug(
-                                    "コンテキスト圧縮: 安全点到達 compact_due=%s awaiting_approval=%s "
+                                    "コンテキスト圧縮: 安全点到達 compact_due=%s "
                                     "cumulative_main_total=%s approx_count=%d [%s]",
                                     compact_due,
-                                    awaiting_approval,
                                     (cumulative_main or {}).get("total"),
                                     approx_count,
                                     describe_current_task(),
                                 )
-                                if compact_due and not awaiting_approval:
+                                if compact_due:
                                     raise _CompactionCheckpoint(list(pending_main_tool_msgs))
 
                 elif kind == "on_chat_model_end":
@@ -4207,7 +4122,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                     usage = getattr(output, "usage_metadata", None)
                     if usage:
                         _accumulate_usage(turn_totals, usage)
-                        # 長時間の承認待ち等でセッションデータが失われている場合に
+                        # 長時間の応答待ち等でセッションデータが失われている場合に
                         # 備え、Noneなら0から再初期化する（totals[key]でのクラッシュ防止）。
                         cumulative = cl.user_session.get("token_usage_cumulative") or _new_usage_totals()
                         _accumulate_usage(cumulative, usage)
@@ -4368,22 +4283,12 @@ async def _on_message_impl(message: cl.Message) -> None:
             ).send()
             await _remove_message_ids_if_present(graph, config, loop_nudge_ids)
             return
-        except _PlanDeniedInterrupt as e:
-            # 却下メッセージの送信・thinking/answerの確定は on_tool_end 内で
-            # 既に行っている（raise直前）。ここでは、その時点ではまだ
-            # チェックポイントへコミットされていない ToolMessage を、async for
-            # ループを抜けた今この場（finallyのaclose()より前）で明示的に
-            # コミットする。これにより次回のグラフ実行時に「tool_calls に
-            # 対応する ToolMessage が無い」という不整合を防ぐ。
-            await _finalize_orphaned_steps(steps, "interrupted")
-            await graph.aupdate_state(config, {"messages": [e.tool_message]}, as_node="tools")
-            return
         except _CompactionCheckpoint as exc:
             # ループ内の安全な区切り（直近のメインAIMessageのtool_callsに
             # 対応するToolMessageが全て返却済み）でコンテキスト圧縮の条件を
             # 満たした。thinking/answerを確定送信してから、まず孤立していない
-            # ことが確認済みのToolMessage群を明示コミットし（_PlanDeniedInterrupt
-            # と同じ理由）、圧縮を実行してから inputs=None で同じグラフ実行の
+            # ことが確認済みのToolMessage群を明示コミットし（_CompactionCheckpoint
+            # のdocstring参照）、圧縮を実行してから inputs=None で同じグラフ実行の
             # 続き（チェックポイントのpending task）を再開する。新しいユーザー
             # 発言を追加するわけではないため、ThinkingLoopDetectedのnudge注入
             # 経路（STARTからの再実行）とは異なる継続方法になる。
@@ -4420,12 +4325,12 @@ async def _on_message_impl(message: cl.Message) -> None:
             compaction_continued = True
         except asyncio.CancelledError as exc:
             # 停止ボタン・切断・リロード等でこのターンがキャンセルされた場合、
-            # 実行中だったtool_call（approve_planのAskActionMessage待機中など）
+            # 実行中だったtool_call（ask_user_choiceのAskActionMessage待機中など）
             # に対応するToolMessageが生成されないままチェックポイントが
             # コミット済みのAIMessage(tool_calls)だけを残し、次回グラフ実行時に
             # 「tool_callsに対応するToolMessageが無い」不整合を起こす
-            # （langchain-ai/langgraph#6726と同種の問題）。_PlanDeniedInterrupt
-            # と同じ手法で、プレースホルダのToolMessageを補完コミットしてから
+            # （langchain-ai/langgraph#6726と同種の問題）。_CompactionCheckpoint
+            # と同じ手法（aupdate_stateでの明示コミット）で、プレースホルダのToolMessageを補完コミットしてから
             # キャンセルを再送出する。
             #
             # P1: 無条件で1行WARNINGを出す（孤立tool_callの有無に関わらず）。
@@ -4699,7 +4604,6 @@ async def _on_message_impl(message: cl.Message) -> None:
             metadata={
                 "work_dir": cl.user_session.get("work_dir"),
                 "plan": cl.user_session.get("plan"),
-                "plan_approved": cl.user_session.get("plan_approved"),
                 "token_usage_cumulative": cl.user_session.get("token_usage_cumulative"),
                 "token_usage_cumulative_main": cl.user_session.get("token_usage_cumulative_main"),
                 "context_compaction_note_skip_count": cl.user_session.get("context_compaction_note_skip_count"),

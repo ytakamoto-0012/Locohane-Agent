@@ -194,8 +194,8 @@ function App() {
   // 「他セッションで処理中」の判定は sessionIdState（このセッション自身の
   // Chainlit セッションID）をバックエンドへ渡し、生成中セッションと突き合わせて
   // もらう（app.py の /locohane/threads/{id}/status 参照）。以前は
-  // useChatData().loading で自分自身のターンを除外していたが、Plan Mode承認待ち
-  // 等の一時的な "ask" 中は自分自身のターンでも loading が false になる
+  // useChatData().loading で自分自身のターンを除外していたが、ask_user_choice
+  // の応答待ち等の一時的な "ask" 中は自分自身のターンでも loading が false になる
   // （session.emit_call 経由でtask_end/task_startを挟むため）ため、
   // 自分自身の送信中にもかかわらず「他セッションで生成中」と誤検知し、
   // window.location.reload() が発火して自分自身のターンを見失い、URLに
@@ -365,7 +365,6 @@ function App() {
           />
         )}
         <Composer
-          plan={plan}
           remoteGenerating={remoteGenerating}
           onStopRemote={stopRemoteGenerating}
           blockedByOtherThread={blockingThreadId !== null}

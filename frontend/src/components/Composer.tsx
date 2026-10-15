@@ -3,7 +3,6 @@ import { v4 as uuidv4 } from 'uuid';
 import { useChatData, useChatInteract } from '@chainlit/react-client';
 import type { IFileRef, IStep } from '@chainlit/react-client';
 import { WorkDirButton } from './WorkDirButton';
-import { PlanModeBadge } from './PlanModeBadge';
 import { Icon } from './Icon';
 import type { InputLimits } from '../utils/messageTree';
 
@@ -29,7 +28,6 @@ function countLines(text: string): number {
 }
 
 interface ComposerProps {
-  plan?: IStep;
   // 今開いているスレッド自体が、他セッションで処理中（true）。
   remoteGenerating?: boolean;
   // /locohane/threads/{id}/stop を呼び、remoteGenerating中の停止ボタンから
@@ -55,7 +53,6 @@ interface ComposerProps {
 }
 
 export function Composer({
-  plan,
   remoteGenerating,
   onStopRemote,
   blockedByOtherThread,
@@ -268,7 +265,6 @@ export function Composer({
                 {totalChars.toLocaleString()} / {maxInputChars.toLocaleString()}
               </span>
             ) : null}
-            <PlanModeBadge step={plan} />
             {loading ? (
               <button type="button" className="composer-stop-button" onClick={stopTask}>
                 停止

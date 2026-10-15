@@ -10,7 +10,6 @@ interface PlanStepData {
 interface PlanPayload {
   steps: PlanStepData[];
   finished: boolean;
-  approved: boolean;
 }
 
 const STATUS_ICON: Record<PlanStepData['status'], string> = {

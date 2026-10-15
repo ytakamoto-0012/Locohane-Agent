@@ -1,4 +1,4 @@
-"""ask系ツール（approve_plan/ask_user_question/ask_user_choice）のクロス
+"""ask系ツール（ask_user_question/ask_user_choice）のクロス
 セッション引き継ぎの回帰テスト。
 
 背景（2026-08-21 ユーザー報告、2026-08-22 一般化）: 左サイドバーでの会話切り替え

@@ -64,15 +64,13 @@ def _render_plan(plan: list[dict], *, finished: bool = False) -> str:
 PLAN_PREFIX = "📋 実行計画\n"
 
 
-def _render_plan_payload(plan: list[dict], *, finished: bool = False, approved: bool = False) -> str:
+def _render_plan_payload(plan: list[dict], *, finished: bool = False) -> str:
     """サイドパネル表示用に plan を JSON 化し、プレフィックス付き文字列として返す。
 
     フロントエンドはこのプレフィックスでメインチャット窓への表示を除外し、
-    専用の PlanCard コンポーネント、および送信ボタン付近の PlanModeBadge が
-    JSON 部分をパースして描画する（approved は PlanModeBadge の Plan Mode /
-    Edit Automatically 表示に使う）。
+    専用の PlanCard コンポーネントが JSON 部分をパースして描画する。
     """
-    payload = {"steps": plan, "finished": finished, "approved": approved}
+    payload = {"steps": plan, "finished": finished}
     return PLAN_PREFIX + json.dumps(payload, ensure_ascii=False)
 
 

@@ -214,12 +214,11 @@ def drafts_signature(drafts: list[DraftSkill]) -> tuple:
 
 
 def guard_exempt_entries_for_skill(skill_name: str, skill_dir: Path) -> list[tuple[str, str]]:
-    """ドラフトと同じ扱い（計画承認・main_agent_tool_guard の免除）を正式スキルで
+    """ドラフトと同じ扱い（main_agent_tool_guard の免除）を正式スキルで
     再現するために登録する (スキル名, スクリプトファイル名) の一覧。
 
     ドラフトのスクリプトは会話では無条件に免除されるが、昇格後の正式スキルは
-    [plan].plan_approval_exempt_scripts と [main_agent_tool_guard].allow_entries
-    に登録しない限り免除されない。evals/run_case.py の --skill-overlay
+    [main_agent_tool_guard].allow_entries に登録しない限り免除されない。evals/run_case.py の --skill-overlay
     （トライアウト）と promote-skill の昇格処理がこの一覧を共有し、試した挙動・
     評価した挙動・昇格後の挙動を揃える。対象は scripts/ 直下の *.py
     （`_` 始まりの共通モジュールは除く。src/skills.py の _skill_has_scripts と同じ範囲）。
@@ -231,11 +230,10 @@ def guard_exempt_entries_for_skill(skill_name: str, skill_dir: Path) -> list[tup
 
 
 def merge_guard_exempt_entries(
-    plan_exempt: frozenset[tuple[str, str]],
     allow_entries: frozenset[tuple[str | tuple[str, str], int]],
     entries: list[tuple[str, str]],
-) -> tuple[frozenset[tuple[str, str]], frozenset[tuple[str | tuple[str, str], int]]]:
-    """entries を plan_approval_exempt_scripts と allow_entries（max_calls=-1）へ足した値を返す。
+) -> frozenset[tuple[str | tuple[str, str], int]]:
+    """entries を allow_entries（max_calls=-1）へ足した値を返す。
 
     allow_entries に同じ対象が既にあれば（max_calls=0 で明示的に禁止している等）
     その設定を尊重して上書きしない（_parse_main_agent_tool_guard_allow_entries は
@@ -243,7 +241,7 @@ def merge_guard_exempt_entries(
     """
     registered = {key for key, _ in allow_entries}
     new_allow = set(allow_entries) | {(e, -1) for e in entries if e not in registered}
-    return frozenset(plan_exempt | set(entries)), frozenset(new_allow)
+    return frozenset(new_allow)
 
 
 # 一覧に出さないドラフトの状態（_draft_meta.json の status）。昇格済みは正式スキルと
@@ -361,11 +359,11 @@ def is_builtin_skill_creator(path: Path, config: "Config | None") -> bool:
 
 
 def is_guard_exempt_script(path: Path, config: "Config | None") -> bool:
-    """計画承認と [main_agent_tool_guard] を無条件で免除するスクリプトか。
+    """[main_agent_tool_guard] を無条件で免除するスクリプトか。
 
     ドラフトのスクリプトと skill-creator 本体のスクリプトが対象。ドラフトの
     作成者はスキル開発の専門家とは限らず、config.ini の
-    plan_approval_exempt_scripts / allow_entries を自分で登録できないため。
+    allow_entries を自分で登録できないため。
     書き込み先は通常どおり書き込みサンドボックスガードで制限される
     （skill-creator はドラフト置き場の自分のフォルダにも書ける）。
     """

@@ -202,7 +202,7 @@ cwdに関係なく書き出せる。Claude Desktop等cwdが不定なクライア
 設定にある`command`が`env_local_agent_system`以外のPythonを指す場合）も
 あるため、環境変数`LOCOHANE_MCP_SKILLS_PYTHON`で明示的に上書きできる
 （`mcp_server/config.py`の`SCRIPT_PYTHON`）。Locohane本体にある書き込み
-サンドボックスガードや`create_plan`/`approve_plan`の承認フロー（Chainlitの
+サンドボックスガード（Chainlitの
 マルチユーザー運用が前提）はここには無い。MCP接続元（Claude Code等）は
 既にこのマシン上でファイルシステムへフルアクセスできる前提のため、追加の
 安全境界を設けても意味がないと判断した。

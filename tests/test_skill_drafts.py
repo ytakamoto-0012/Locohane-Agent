@@ -444,9 +444,6 @@ def test_guard_exempt_entries_skip_private_modules_and_keep_explicit_settings(tm
     entries = skill_drafts.guard_exempt_entries_for_skill("my-tool", skill_dir)
     assert entries == [("my-tool", "run.py"), ("my-tool", "second.py")]
 
-    plan, allow = skill_drafts.merge_guard_exempt_entries(
-        frozenset({("other", "x.py")}), frozenset({("Glob", 1), (("my-tool", "second.py"), 0)}), entries
-    )
-    assert plan == {("other", "x.py"), ("my-tool", "run.py"), ("my-tool", "second.py")}
+    allow = skill_drafts.merge_guard_exempt_entries(frozenset({("Glob", 1), (("my-tool", "second.py"), 0)}), entries)
     # 明示的に禁止（0）しているものは上書きしない
     assert allow == {("Glob", 1), (("my-tool", "second.py"), 0), (("my-tool", "run.py"), -1)}

@@ -6,7 +6,7 @@
 
 実装の中核は3か所（`tools.py` という単一ファイルは廃止され、`src/tools/` パッケージへツール1つ原則1ファイルで分割済み）:
 - `src/agent_types.py` … `agents/` 配下の走査・frontmatter検証・`AgentType` 定義
-- `src/tools/` パッケージ … ツール名の解決（`_resolve_agent_types()`、`src/tools/_state.py`）・委譲ツール本体（`dispatch_agent`、`src/tools/dispatch_agent.py`）・計画承認ガード（`src/tools/create_plan.py`/`src/tools/approve_plan.py`）
+- `src/tools/` パッケージ … ツール名の解決（`_resolve_agent_types()`、`src/tools/_state.py`）・委譲ツール本体（`dispatch_agent`、`src/tools/dispatch_agent.py`）
 - `src/subagent.py` … 委譲されたサブエージェント自身の独立した ReAct ループ
 
 ## 1. ディレクトリ構成
@@ -138,15 +138,7 @@ read_memory, search_memory, list_memories
 パスは必ず絶対パスをそのまま書く（`@N` は使わない）。
 ```
 
-## 7. 計画承認（`create_plan`/`approve_plan`）による書き込みブロック
-
-`worker.md` が使う `run_script`/`execute_python_code` は、計画未承認だとブロックされる。
-
-- `_prepare_script_execution()`（`src/tools/_script_job.py` 78行〜）内、同ファイル104-105行で `cl.user_session.get("plan_approved")` を判定する（`(skill_name, script_filename)` が `_PLAN_APPROVAL_EXEMPT_SCRIPTS` に含まれる場合のみ免除）。`execute_python_code`（`src/tools/execute_python_code.py` 107行）・`execute_python_code_background`（`src/tools/execute_python_code_background.py` 108行）にもそれぞれ同様の判定がある。
-- `cl.user_session` は Chainlit のセッションスコープ。メインエージェントの `create_plan`（`src/tools/create_plan.py` 101行）/`approve_plan`（`src/tools/approve_plan.py` 41行・67行、いずれも `plan_approved` を `cl.user_session.set`）が更新した値を、サブエージェント内から呼ばれるツールもそのまま参照する。**サブエージェント専用の特別なロジックは無く、セッション状態の共有のみで実現されている。**
-- したがって `explore`/`verifier` のように `execute_python_code`/`run_script` を持たない（または読み取り専用スクリプトしか呼ばない前提の）エージェントはこの制約と無関係だが、`worker` のように書き込み系ツールを持つエージェントは、委譲元で計画承認が済んでいないと途中でブロックされる。ブロックされた場合、サブエージェント自身は `approve_plan` を呼ぶ手段を持たないため、`worker.md` はリトライせず「計画未承認のため書き込みができなかった」旨を最終回答に明記するよう指示している。
-
-## 8. 新しいサブエージェント種別を追加する手順
+## 7. 新しいサブエージェント種別を追加する手順
 
 1. `agents/<agent-name>.md` を作成（frontmatter必須、`name` はファイル名(stem)と一致）。
 
@@ -163,11 +155,11 @@ read_memory, search_memory, list_memories
    重大な誤選択を引き起こした事例がある（2026-08-15、`explore-websearch`へ改名して対処。
    その後`explore-websearch`自体は廃止済み）。
 2. `tools:` に必要なツール名を `_SUBAGENT_TOOLS`（3節参照）の中から選んでカンマ区切りで列挙する（省略時は全ツール継承）。**`write_scratch_note`（run_id限定の自分用スクラッチ）と `write_thread_note`/`list_thread_notes`/`read_thread_note`（thread_id共有・他agent_typeやメインエージェントとも共有されるノート）は全種別共通の必須ツールなので、`tools:` を明示的に列挙する場合は必ず含めること**（省略して全ツール継承する場合は自動的に含まれるため対応不要）。thread note系3ツールは2026-08-20のthread note機能追加時に`agents/*.md`側への追加が漏れており、2026-08-21に全種別へ追加済み。
-3. 本文に、委譲元から見た役割・使ってよい/いけないツールの区別・手順・最終回答で書くべき内容（および書いてはいけない内容）を明記する。既存3種別（`explore`＝読み取り専用の汎用調査・オフィス文書/PDF調査、`verifier`＝成果物の検証専用、`worker`＝計画承認後の書き込み実作業）を参考にする。
+3. 本文に、委譲元から見た役割・使ってよい/いけないツールの区別・手順・最終回答で書くべき内容（および書いてはいけない内容）を明記する。既存3種別（`explore`＝読み取り専用の汎用調査・オフィス文書/PDF調査、`verifier`＝成果物の検証専用、`worker`＝書き込み実作業）を参考にする。
 4. **アプリを再起動する**（`app.py` の `_setup()` は起動後1回しか `scan_agent_types()` を呼ばない冪等関数のため、ホットリロードは無い。新規チャットセッションを開いただけでは再スキャンされない）。起動ログの `エージェント種別発見: <name>` を確認する。
 5. 実際にチャットから、メインエージェントが `dispatch_agent(agent_type="<agent-name>", ...)` を正しく呼び出し、サブエージェントが意図した最終回答を返すことを確認する。
 
-## 9. Anthropic（ClaudeCode）仕様との関係
+## 8. Anthropic（ClaudeCode）仕様との関係
 
 `agent_types.py` 冒頭コメント（3行）に「ClaudeCode の `.claude/agents/*.md` 相当」と明記されている通り、frontmatter形式（`name`/`description`/`tools`/`model`）・`tools` 省略時の全ツール継承・カンマ区切りを主形式とする書式は、Anthropic公式のサブエージェント仕様の挙動を踏襲している。
 

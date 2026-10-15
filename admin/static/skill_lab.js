@@ -523,8 +523,8 @@ async function renderThemePatch(state, box) {
       el("p", {
         class: "hint",
         text:
-          "評価と昇格で対象インスタンスの設定へ足す項目です（足せるのは [subagent] agent_type_run_script_allowlist・[plan] plan_approval_exempt_scripts・[main_agent_tool_guard] allow_entries）。" +
-          "スキルのスクリプトの計画承認の免除と、サブエージェントの「フォームで編集」で選んだ run_script の許可は自動で入るため、通常は書く必要はありません。",
+          "評価と昇格で対象インスタンスの設定へ足す項目です（足せるのは [subagent] agent_type_run_script_allowlist・[main_agent_tool_guard] allow_entries）。" +
+          "スキルのスクリプトの main_agent_tool_guard の免除と、サブエージェントの「フォームで編集」で選んだ run_script の許可は自動で入るため、通常は書く必要はありません。",
       }),
     ]),
   );

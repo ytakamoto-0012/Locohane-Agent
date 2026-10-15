@@ -380,13 +380,12 @@ def test_promote_places_into_instance_dir_registers_settings_and_archives_draft(
     assert (dest / "skills" / "my-skill" / "scripts" / "run.py").is_file()
     assert (dest / "agents" / "helper.md").is_file()
     assert (dest / "evals" / directory.name / "001.yaml").is_file()
-    assert ("my-skill", "run.py") in cfg_a.plan_approval_exempt_scripts
     assert (("my-skill", "run.py"), -1) in cfg_a.main_agent_tool_guard_allow_entries
     assert ("helper", "my-skill") in cfg_a.subagent_agent_type_run_script_allowlist
     # 他のインスタンスには何も入らず、設定も変わらない
     cfg_b = _cfg(lab_env, "org_b")
     assert not (cfg_b.instance_locohane_dir / "skills" / "my-skill").exists()
-    assert ("my-skill", "run.py") not in cfg_b.plan_approval_exempt_scripts
+    assert (("my-skill", "run.py"), -1) not in cfg_b.main_agent_tool_guard_allow_entries
     # 取り込み元のドラフトは _workspace ごとアーカイブへ
     assert not draft.exists()
     archived = Path(record["archived_drafts"][0])
@@ -665,10 +664,10 @@ def test_spec_purpose_may_have_subheadings(lab_env):
 
 def test_config_patch_rejects_malformed_items():
     with pytest.raises(config_patch.ConfigPatchError):
-        config_patch.validate_patch({"plan": {"plan_approval_exempt_scripts": [["only-one"]]}})
+        config_patch.validate_patch({"main_agent_tool_guard": {"allow_entries": [["only-one"]]}})
     with pytest.raises(config_patch.ConfigPatchError):
         config_patch.validate_patch({"subagent": {"agent_type_run_script_allowlist": [{"agent": "x"}]}})
-    assert config_patch.validate_patch({"plan": {"plan_approval_exempt_scripts": [["my-skill", "run.py"]]}})
+    assert config_patch.validate_patch({"main_agent_tool_guard": {"allow_entries": [[["my-skill", "run.py"], -1]]}})
 
 
 def _lab_worker(lab_env):

@@ -41,8 +41,7 @@ async def execute_python_code_background(code: str) -> str:
     check_script_job（結果取得）・stop_script_job（明示的な中断指示があった
     場合のみ）を使う。
 
-    引数チェック・作業ディレクトリ解決・計画承認チェック（免除なし、常に
-    create_plan/approve_plan による承認が必要）・実行可否チェックは
+    引数チェック・作業ディレクトリ解決・実行可否チェックは
     execute_python_code と同じ。生成・更新されたファイルは完了時に自動検知して
     path_memory（`@N`）へ登録し、結果に含める。
     バックグラウンドジョブを強制終了するまでの上限は既定3600秒。
@@ -95,7 +94,7 @@ async def execute_python_code_background(code: str) -> str:
     Returns:
         通常は execute_python_code と同じ形式の最終結果文字列。安全上限に
         達した場合のみ job_id を含む案内文字列。code が空・実行が
-        無効化されている・計画未承認・一時ファイル作成や起動自体に
+        無効化されている・一時ファイル作成や起動自体に
         失敗した場合は execute_python_code 同様「エラー: ...」形式の
         文字列を返す（この場合 job は作られない）。
     """
@@ -104,16 +103,6 @@ async def execute_python_code_background(code: str) -> str:
     if not _state._CODE_EXEC_ENABLED:
         return "エラー: LLMが生成したPythonコードの実行はconfig.iniで無効化されています" "（[scripts] code_execution_enabled=false）。"
     workdir = _resolve_exec_workdir()
-
-    if not cl.user_session.get("plan_approved"):
-        logger.info("execute_python_code_background: 計画未承認のためブロック")
-        return (
-            "エラー: 計画が未承認のため実行できません。"
-            "create_plan で計画を作成し、approve_plan でユーザーの承認を得てから"
-            "実行してください。自分のtoolsにcreate_plan/approve_planが無い"
-            "（サブエージェントである）場合は、それ以上試行せずこのエラーを"
-            "そのまま最終回答として委譲元へ報告してください。"
-        )
 
     try:
         before_snapshot = {p: p.stat().st_mtime for p in workdir.iterdir() if p.is_file()}

@@ -17,7 +17,7 @@ from . import _state
 from ._duplicate_guard import _track_failure_streak
 from ._path_memory_helpers import _resolve_path_memory_token
 from ._python_fs_guard import _register_exec_output_files
-from ._safe_path import _is_guard_exempt_script, _resolve_script_filename
+from ._safe_path import _resolve_script_filename
 from ._state import _SUBAGENT_AGENT_TYPE
 from ._subprocess_env import _run_script_guard_env
 from ._workdir import _resolve_workdir
@@ -93,10 +93,7 @@ def _script_python_for(script_path: Path) -> str:
 def _prepare_script_execution(skill_name: str, script_filename: str, script_args: list[str] | None = None) -> tuple[list[str], Path] | str:
     """run_script / run_script_background 共通の前処理。
 
-    _resolve_run_script_command に加え、作業ディレクトリ解決 → 計画承認
-    チェックを行う。(skill_name, script_filename) が config.ini の
-    [plan].plan_approval_exempt_scripts に登録されている場合は
-    計画未承認でも実行できる。
+    _resolve_run_script_command に加え、作業ディレクトリ解決を行う。
 
     メインエージェント自身の直接呼び出し回数ガード（[main_agent_tool_guard]）は
     ここではなく ImageAwareToolNode.invoke/ainvoke（_guard_main_agent_tool_limit）
@@ -115,23 +112,6 @@ def _prepare_script_execution(skill_name: str, script_filename: str, script_args
     # である default_workdir 直下に、相対パス書き込みの既定の置き場として
     # 全セッション共通で成果物が積まれるのを防ぐ）。
     workdir = _resolve_workdir(need_write=True)
-
-    # ドラフトスキル・skill-creator 本体のスクリプトは plan_approval_exempt_scripts の
-    # 登録に関係なく常に免除する（作成者はスキル開発の専門家とは限らず、
-    # config.ini を自分で編集できないため。書き込み先はガードで制限される）。
-    is_plan_exempt = (skill_name, script_filename) in _state._PLAN_APPROVAL_EXEMPT_SCRIPTS or _is_guard_exempt_script(
-        skill_name, script_filename
-    )
-    if not is_plan_exempt and not cl.user_session.get("plan_approved"):
-        logger.info("run_script: 計画未承認のためブロック skill=%s script=%s", skill_name, script_filename)
-        return (
-            "エラー: 計画が未承認のため実行できません"
-            f"（skill={skill_name}, script={script_filename}）。"
-            "create_plan で計画を作成し、approve_plan でユーザーの承認を得てから"
-            "実行してください。自分のtoolsにcreate_plan/approve_planが無い"
-            "（サブエージェントである）場合は、それ以上試行せずこのエラーを"
-            "そのまま最終回答として委譲元へ報告してください。"
-        )
 
     return cmd, workdir
 

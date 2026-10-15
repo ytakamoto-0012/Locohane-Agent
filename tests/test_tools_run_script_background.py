@@ -212,7 +212,6 @@ async def test_run_script_background_normal_completion_returns_final_result_dire
 async def test_execute_python_code_background_normal_completion_registers_output_files(monkeypatch, tmp_path) -> None:
     """完了時の新規/更新ファイル自動登録が、フォールバックを経ない直接完了経路でも動く。"""
     _setup(monkeypatch, tmp_path)
-    tools.cl.user_session.set("plan_approved", True)
     fake_process = _FakeProcess(started_running=True)
     _install_fake_subprocess(monkeypatch, fake_process)
 
@@ -465,21 +464,8 @@ async def test_run_script_background_unknown_skill_creates_no_job(monkeypatch, t
 
 
 @pytest.mark.asyncio
-async def test_execute_python_code_background_without_plan_approval_creates_no_job(monkeypatch, tmp_path) -> None:
-    _setup(monkeypatch, tmp_path)
-    captured = _install_fake_subprocess(monkeypatch, _FakeProcess())
-
-    result = await tools.execute_python_code_background.ainvoke({"code": "print(1)"})
-
-    assert result.startswith("エラー:")
-    assert tools._script_job._BACKGROUND_JOBS == {}
-    assert "cmd" not in captured
-
-
-@pytest.mark.asyncio
 async def test_execute_python_code_background_empty_code_creates_no_job(monkeypatch, tmp_path) -> None:
     _setup(monkeypatch, tmp_path)
-    tools.cl.user_session.set("plan_approved", True)
     captured = _install_fake_subprocess(monkeypatch, _FakeProcess())
 
     result = await tools.execute_python_code_background.ainvoke({"code": "   "})

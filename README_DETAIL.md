@@ -69,12 +69,11 @@
   加えて `context_trim` による切り詰めと `main_token_guard` による引継ぎ
   プロンプト自動生成で多重に補強している。
 - **bash/npm 相当のツールを持たせない設計**（`src/tools/` の `run_script`
-  系ツール、`create_plan`/`approve_plan`、`_GUARD_BLOCKED_CMDS`）: 低パラメータ
+  系ツール、`_GUARD_BLOCKED_CMDS`）: 低パラメータ
   モデルに任意コマンド実行を許すと暴走・誤操作のリスクが高いため、汎用シェル・
   bash・npm に相当するツールは一切公開しない。コマンド実行はスキル配下に
-  事前定義された `run_script`（ホワイトリスト方式）のみに限定し、書き込み系
-  ツールはすべて `create_plan`→`approve_plan` によるユーザー承認を得るまで
-  実行をブロックする。任意コード実行が可能な `execute_python_code` でも
+  事前定義された `run_script`（ホワイトリスト方式）のみに限定する。
+  任意コード実行が可能な `execute_python_code` でも
   git/npm/pip の起動とプロジェクト外への書き込みをガードで遮断し、最低限の
   破壊的操作を防いでいる。
 - **文書生成スキルの「ops JSON DSL」設計**（`skills/pptx-create`・`skills/excel-edit`・
@@ -113,8 +112,6 @@
                  │   - @cl.on_message でユーザー入力を受ける      │
                  │   - astream_events でトークンをストリーム表示  │
                  │   - ツールコールを cl.Step で可視化            │
-                 │   - approve_plan の承認を                      │
-                 │     cl.AskActionMessage で確認（承認/拒否）    │
                  └───────────────┬──────────────────────────────┘
                                  │ 実行
                  ┌───────────────▼──────────────────────────────┐
@@ -127,15 +124,14 @@
                  └───┬───────────────────────────┬──────────────┘
                      │ モデル呼び出し             │ ツール実行
        ┌─────────────▼───────────┐   ┌───────────▼──────────────────────┐
-       │ ChatOpenAI              │   │ src/tools/ (39ツール)               │
+       │ ChatOpenAI              │   │ src/tools/ (36ツール)               │
        │  → llama-server /v1     │   │  read_skill / read_skill_file /    │
        │  (OpenAI 互換)          │   │  run_script / execute_python_code /│
        └─────────────────────────┘   │  get_tool_source / check_work_dir_status /│
                                       │  Read / Glob / Grep / json_query / │
                                       │  search_path_memory / analyze_image /│
                                       │  dispatch_agent / create_plan /    │
-                                      │  approve_plan / update_task_progress/│
-                                      │  get_plan_status / lock_plan_mode /│
+                                      │  update_task_progress /            │
                                       │  AskUserQuestion / ask_user_choice /│
                                       │  provide_download /                │
                                       │  create_memory / update_memory /   │
@@ -261,11 +257,11 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 | `execute_python_code` | LLMが生成したPythonコードをその場で実行（要承認。`config.ini` で無効化可）。完了までブロックするため、タイムアウトに近い長時間実行が見込まれる場合は `execute_python_code_background` を使う。code内で `@N`（パスメモリ）を参照する場合は `AGENT_SRC_DIR` 環境変数経由で `path_memory.resolve()` を呼んで実パスへ展開する必要がある。実行前ガードにより `src/`・`app.py`・`config.ini`・`skills/` 等プロジェクトフォルダ配下への書き込み・削除・改名はブロックされる。書き込み先は、ユーザーが作業フォルダ（後述「作業ディレクトリの切り替え」参照）を指定していればそのフォルダ、未指定なら `default_workdir` 配下でも自セッション専用の一時領域 `_tmp_<name>` に限られる（`default_workdir` 直下への書き込みは、別セッションの誤動作を防ぐため許可しない） |
 | `execute_python_code_background` | `execute_python_code` と同じコードを起動する（要承認・`config.ini` での無効化・パスメモリ展開・プロジェクトフォルダ保護ガードは同様）。`run_script_background` と同じく完了まで進捗通知しながら待ち、状況確認・停止（安全上限超過時のみ）は共通の `check_script_job`/`stop_script_job` を使う |
 | `execute_python_code_readonly` | `execute_python_code` の読み取り専用版（ファイル書き込み不可、承認不要）。`explore` 等の読み取り専用サブエージェント種別（`agents/*.md` の `tools:`）にのみ付与され、メインエージェントは持たない |
-| `write_scratch_note` | 調査中に分かった内容をスクラッチファイルへ追記する。計画未承認でも常に呼べ、書き込み先はツール自身が決めるため任意パスには書けない。トークン上限打ち切り時の引き継ぎ用途 |
+| `write_scratch_note` | 調査中に分かった内容をスクラッチファイルへ追記する。書き込み先はツール自身が決めるため任意パスには書けない。トークン上限打ち切り時の引き継ぎ用途 |
 | `write_thread_note` / `list_thread_notes` / `read_thread_note` | 同一スレッド内に閉じたスレッド共有ノート（後述「スレッド共有ノートとの違い」参照）。委譲元・委譲先間で調査結果の詳細を引き継ぐための、`write_scratch_note`とは別系統のメモ機構。主エージェント・全サブエージェントが読み書き可能 |
 | `get_tool_source` | `run_script` がエラーになった際、原因調査用にスクリプトの絶対パスを返す（中身は返さない） |
 | `check_work_dir_status` | 現在の作業ディレクトリの実際のアクセス状況を確認する |
-| `Read` / `Glob` / `Grep` | ローカルファイルシステム上の任意の絶対パスに対する読込・ファイル名検索・全文検索（ClaudeCode の同名ツールに合わせた名前。読み取り専用のため計画未承認でも常に呼べる。ロジックは `src/tools/read_tool.py`/`glob_tool.py`/`grep_tool.py`、共通処理は `_file_tools_common.py`） |
+| `Read` / `Glob` / `Grep` | ローカルファイルシステム上の任意の絶対パスに対する読込・ファイル名検索・全文検索（ClaudeCode の同名ツールに合わせた名前。ロジックは `src/tools/read_tool.py`/`glob_tool.py`/`grep_tool.py`、共通処理は `_file_tools_common.py`） |
 | `json_query` | JSON/dict に対する JMESPath クエリ（読み取り専用） |
 | `search_path_memory` | 現在の会話のパスメモリー（`@N`）から、ファイル名等に似たパスを類似検索する（文字bigram＋コサイン類似度、読み取り専用） |
 | `provide_download` | 既存のファイルをチャット画面にダウンロードボタンとして提示する |
@@ -273,21 +269,15 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 | `dispatch_agent` | タスクをサブエージェント（`src/subagent.py`）へ委譲し最終回答のみ受け取る。`agent_type` 引数でサブエージェントの種別を必ず指定する（暗黙の既定値は無い）。種別定義は `agents/*.md`（ClaudeCode の `.claude/agents/*.md` 相当）。`.locohane/agents/*.md` ともマージ走査され、同名は `.locohane/agents` 側が優先される。任意の `orchestrator_skill` 引数（複数SKILLを横断的に使うオーケストレーター役SKILL.mdのスキル名）を指定すると、そのSKILL.md本文全体がtaskの先頭へ機械的に注入され、必須ルール・禁止事項の要約時の脱落を防ぐ（詳細は `skills/SKILLS_README.md` 7節）。任意の `model` 引数で `[llm].sub_url` のモデル名を指定でき、`agents/*.md` の frontmatter `model` より優先される（存在しないモデル名は無視）。完了までの間、進捗（経過時間・反復回数）をチャットへ直接通知しながら待つため、LLM自身がポーリングする必要は無い。設定した安全上限（`[subagent].background_inline_wait_max_seconds`）を超えてもなお完了しない場合のみ `job_id` を返してターンを終える |
 | `dispatch_agent_batch` | フォルダ内の多数のファイルへ同じ処理を行う作業を、複数のサブエージェントへ並列に委譲する。`pattern`（`path`からの相対。`/`を含まなければ直下のみ、`*/ocr_md/*.md`・`**/*.jpg`のように階層を含めればサブフォルダも探索。`{a,b}`展開可。`..`等で`path`の外に出るファイルは対象外）に一致するファイルを`path`からの相対パス順に取得し、`group_size`件ずつに分けて各グループの task 末尾へ担当ファイルの絶対パスを機械的に付け足し、`dispatch_agent` と同じジョブ基盤（`[subagent].max_parallel` のセマフォ・進捗通知・停止ボタン対応）で並列実行する。LLMは1回呼ぶだけでよく、1応答で複数の `dispatch_agent` を並べる必要が無い（低パラメータモデルでは並列発行が安定しないため）。戻り値はグループごとの状態と最終回答の先頭400文字のみで、全文は thread note に保存する。「エラー」「打ち切り」「強制終了」「未実行」のグループには再委任用に担当ファイルの一覧も載せる。進捗通知はグループごとではなく全グループを集約した1件のみ。1回あたりのグループ数は `[subagent].batch_max_groups` まで（既定50、0以下で無制限。超える場合は起動前にエラー）。安全上限（`background_inline_wait_max_seconds`）超過時は完了済みグループの結果と実行中グループの `job_id` を返す（実行中グループのStepは「バックグラウンド」バッジで閉じる）。LLMのタイムアウト・通信エラーで打ち切られたグループが `[subagent].batch_stop_after_unreachable_groups` 件に達すると、残りのグループは起動せず「未実行」として返す。停止ボタンで中断した場合は、完了済みグループの結果と未完了グループの担当ファイルを thread note に保存し、次のターンの案内にその topic を載せる |
 | `check_dispatch_agent_job` / `stop_dispatch_agent_job` | 上記の安全上限超過フォールバック時のみ使う、ジョブの状況確認・強制終了 |
-| `create_plan` / `approve_plan` / `update_task_progress` | 複数ステップの実行計画を作成・承認・進捗更新（承認後は`run_script`の個別確認をスキップ）。各ステップは `content`（内容）と `activeForm`（実行中表示用の現在進行形）を持つ |
-| `get_plan_status` / `lock_plan_mode` | 現在 Plan Mode（書き込み系ツールがブロックされたロック状態）か Edit Automatically（承認済み計画を実行できる状態）かを確認し、後者から前者へユーザー承認なしに手動で戻す |
+| `create_plan` / `update_task_progress` | 複数ステップの実行計画をチェックリストとして提示し、進捗を更新する（ユーザーの承認は待たない）。各ステップは `content`（内容）と `activeForm`（実行中表示用の現在進行形）を持つ |
 | `AskUserQuestion` / `ask_user_choice` | 会話継続に必要な追加情報をユーザーへ質問（`AskUserQuestion` は自由記述。`labels` 省略時は単一入力、指定時は複数項目をまとめて提示。`ask_user_choice` は選択肢形式で、表示される選択肢には常に「✏️ その他（自由入力）」「❌ キャンセル」が自動で追加される） |
 | `create_memory` / `update_memory` / `delete_memory` / `read_memory` / `search_memory` / `list_memories` | スレッドをまたぐ永続メモリー（`src/memory.py`）の保存・更新・削除・全文読込・検索・一覧。主エージェントは全6ツールを持つ。`dispatch_agent` のサブエージェントには種別ごとに絞って委譲し、`explore` は読み込み系（`read_memory`/`search_memory`/`list_memories`）のみ、`worker` は全6ツール（フルアクセス）を持つ（`agents/*.md` の `tools:` 参照） |
 | `help` | ユーザー向けヘルプ本文（`system_prompt/help.md`）をそのまま返す |
 
-`run_script`（`run_script_background` 含む）と `execute_python_code`（`execute_python_code_background`
-含む）は書き込み系ツールのため、`create_plan`/`approve_plan` で計画がユーザー承認済み
-（`cl.user_session["plan_approved"]` が True）でない限り実行できず、
-未承認の場合はエラーを返す（Plan Mode）。承認自体は `cl.AskActionMessage` による
-✅承認/🚫拒否ボタンで行い、タイムアウト時は安全側（拒否）に倒す。`execute_python_code`
-（`execute_python_code_background` 含む）は `config.ini` の `[scripts] code_execution_enabled`
+`execute_python_code`（`execute_python_code_background` 含む）は `config.ini` の `[scripts] code_execution_enabled`
 でツール自体を無効化できる。
 
-上記の39ツール・スキルすべてがメインエージェントから直接呼べるわけではない。
+上記の36ツール・スキルすべてがメインエージェントから直接呼べるわけではない。
 `config.ini` の `[main_agent_tool_guard]`（既定 `mode = all`）が、メインエージェント
 自身によるビルトインツール・`run_script` 配下スキルスクリプトの直接呼び出しを
 `allow_entries` のホワイトリストで制限する（`dispatch_agent` 配下のサブエージェントは
@@ -435,8 +425,8 @@ Locohane/
 │   ├── mcp_client.py        # MCPサーバー接続（stdio）・ツール変換
 │   ├── chat_log.py          # 会話ログのテキストファイル記録
 │   ├── thread_store.py      # 会話スレッド一覧（左サイドバー）・再開用の軽量ストア
-│   ├── plan_persist.py      # plan/plan_approved変更をターン完了を待たず即座にthread_storeへ永続化
-│   ├── ask_relay.py         # approve_plan/AskUserQuestion/ask_user_choice応答待ちをスレッド切替後の別セッションへ引き継ぐ状態
+│   ├── plan_persist.py      # plan変更をターン完了を待たず即座にthread_storeへ永続化
+│   ├── ask_relay.py         # AskUserQuestion/ask_user_choice応答待ちをスレッド切替後の別セッションへ引き継ぐ状態
 │   ├── instance_lock.py     # 同一データディレクトリへの多重起動を防ぐプロセス排他ロック
 │   ├── cleanup.py           # 不要ファイルの自動削除
 │   ├── files.py             # ファイルアップロード処理
@@ -446,7 +436,7 @@ Locohane/
 ├── agents/
 │   ├── README/AGENTS_README.md # エージェント種別定義（frontmatter）の書き方ガイド（*.mdスキャン時の警告を避けるためREADME/配下に退避）
 │   ├── explore.md           # 読み取り専用の汎用調査・オフィス文書/PDF調査エージェント種別
-│   ├── worker.md            # 承認済み計画に沿って読取り→書込みを内部完結させる書き込み可能エージェント種別
+│   ├── worker.md            # 計画に沿って読取り→書込みを内部完結させる書き込み可能エージェント種別
 │   └── verifier.md          # 成果物検証用エージェント種別
 ├── skills/
 │   ├── SKILLS_README.md    # スキル開発者向けガイド
@@ -847,8 +837,8 @@ LLM側の共通変換ルール（`system_prompt/system_prompt.md`・`system_prom
   `full`（実行・書き込み・評価まで）。判定は `src/skill_drafts.py` に集約し、`_safe_path`・`Read` 系のパス解決・
   Grep の再帰検索・Python 実行の書き込みガード（読み取り・一覧取得も禁止するルートと、作業ディレクトリが
   `draft_dir` を含んでいても書き込みを禁止するルート）の各所から呼ぶ。
-- **ドラフトは承認なしで直接使える**: ドラフトのスクリプトと skill-creator 本体のスクリプトは、
-  `[plan] plan_approval_exempt_scripts`・`[main_agent_tool_guard]` の設定に関係なく、計画承認なし・
+- **ドラフトは直接使える**: ドラフトのスクリプトと skill-creator 本体のスクリプトは、
+  `[main_agent_tool_guard]` の設定に関係なく、
   メインエージェントからの直接実行ができる（作成者は config.ini を編集できないため）。名前ではなく
   スクリプトの実体の場所で判定するため、同名スキルの偽装では免除されない。書き込み先は通常どおり作業ディレクトリに限られる。
   `[main_agent_tool_guard]` 有効時、メインエージェントへ渡す `run_script`/`run_script_background` は、
@@ -857,7 +847,7 @@ LLM側の共通変換ルール（`system_prompt/system_prompt.md`・`system_prom
 - **評価は本番の構成の上にドラフトを重ねて行う**: skill-creator の `run_isolated_eval.py` は
   `evals/run_all.py --cases-dir <ドラフト>/evals --skill-overlay <ドラフト>` を実行する。会社専用の
   `project_locohane_dir` を含む本番のスキル構成を残したまま、ドラフトだけを最優先で重ねる。
-  重ねたスキルのスクリプトは、昇格時に登録されるのと同じく計画承認・`[main_agent_tool_guard]` を免除した設定で
+  重ねたスキルのスクリプトは、昇格時に登録されるのと同じく`[main_agent_tool_guard]` を免除した設定で
   評価する（会話で試した挙動・評価した挙動・昇格後の挙動を揃える）。`--repeat N` でスキル安定化トライアウトになる。
 - **修正が入ったら合格回数は0から**: トライアウトは開始時のドラフトとケースを一時フォルダに固定して全回を評価し、
   その内容のハッシュを `tryout.json` に残す（`evals/skill_tree.py`）。ドラフトを1か所でも直すと、`_draft_meta.json` の
@@ -872,7 +862,7 @@ LLM側の共通変換ルール（`system_prompt/system_prompt.md`・`system_prom
 - **昇格先はインスタンス専用の置き場だけ**: 同梱の `skills/`・`agents/` や、全インスタンス共通の `project_locohane_dir`
   （`.locohane/` 等）には置かない。組織別・役割別に分けたほかのインスタンスへ混ざるのを防ぐため。同梱・共有のスキルを
   改善したものも専用の置き場に同じ名前で置き、そのインスタンスでだけ置き換わる（元のファイルと他のインスタンスは変わらない）。
-  スクリプトを持つスキルの免除設定（`[plan] plan_approval_exempt_scripts`・`[main_agent_tool_guard] allow_entries`）も、
+  スクリプトを持つスキルの免除設定（`[main_agent_tool_guard] allow_entries`）も、
   そのインスタンスの `config_overrides.json` にだけ登録する（管理ツールと同じ検証・バックアップ・変更履歴つき）。
   昇格したスキルと設定が効くのは再起動後。
 - **Claude Code の promote-skill も残している**: ドラフト1件をそのまま判定して昇格させたいときの経路。昇格先・アーカイブ・
@@ -1144,14 +1134,8 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[subagent]` | `background_progress_push_interval_seconds` | 待機中、人間向けに経過秒数・反復回数・進捗メモをチャットへ直接送る間隔（秒）。最初の表示以後は、今している動作（【思考中】等）が変わったら間隔を待たずに書き換える（最短1秒空ける） | `SUBAGENT_BACKGROUND_PROGRESS_PUSH_INTERVAL_SECONDS` |
 | `[subagent]` | `background_llm_timeout_max_retries` | 実行中のLLM呼び出しがタイムアウトした場合、モデルを再構築して同じ反復を再試行する最大回数 | `SUBAGENT_BACKGROUND_LLM_TIMEOUT_MAX_RETRIES` |
 | `[subagent]` | `agent_type_run_script_allowlist` | `dispatch_agent`の`agent_type`ごとに`run_script`で呼べるスキル/スクリプトを絞り込むホワイトリスト（`[[agent_type, 対象], ...]`形式、対象は`"スキル名"`または`["スキル名","スクリプトファイル名"]`、空欄なら既定19件。登録がある`agent_type`は`{{skills}}`の一覧も登録スキルのみに絞られる（絞り込みたくない場合は`{{skills}}`の代わりに`{{all_skills}}`を使う）） | `SUBAGENT_AGENT_TYPE_RUN_SCRIPT_ALLOWLIST` |
-| `[user_response_timeouts]` | `approval_seconds` | `approve_plan`／`run_script`・`execute_python_code`の個別実行確認でユーザー応答を待つ秒数。`0`で無期限待ち | `APPROVAL_TIMEOUT_SECONDS` |
 | `[user_response_timeouts]` | `ask_user_question_seconds` | `AskUserQuestion`（自由記述質問。`labels`省略時は単一入力、指定時は複数項目フォーム）でユーザー応答を待つ秒数。`0`で無期限待ち | `ASK_USER_QUESTION_TIMEOUT_SECONDS` |
 | `[user_response_timeouts]` | `ask_user_choice_seconds` | `ask_user_choice`（選択肢質問）でユーザー応答を待つ秒数。`0`で無期限待ち | `ASK_USER_CHOICE_TIMEOUT_SECONDS` |
-| `[plan]` | `allow_badge_unlock` | Plan Mode バッジの双方向切り替えを許可するか | `PLAN_ALLOW_BADGE_UNLOCK` |
-| `[plan]` | `reset_approval_on_recreate` | 承認済み（Edit Automatically）状態で`create_plan`を再度呼んだ際、`plan_approved`を無条件でリセットしてPlan Modeへ戻すか。`false`なら承認状態を維持したままstepsだけ差し替える | `PLAN_RESET_APPROVAL_ON_RECREATE` |
-| `[plan]` | `reset_approval_on_new_message` | 新しいユーザーメッセージを受け取るたびに`plan_approved`を無条件でリセットしてPlan Modeへ戻すか。`false`なら承認状態をメッセージをまたいで維持する（`thinking_loop_guard`のリトライ上限到達後、ユーザーが続行メッセージを送っても再承認が不要になる） | `PLAN_RESET_APPROVAL_ON_NEW_MESSAGE` |
-| `[plan]` | `auto_approve` | `approve_plan`呼び出し時にユーザーへの承認/却下確認を一切行わず自動承認するか（`false`が既定。書き込み系ツールが人の確認なしに実行されるため、無人自動化用途以外での使用は推奨しない） | `PLAN_AUTO_APPROVE` |
-| `[plan]` | `plan_approval_exempt_scripts` | `run_script`/`run_script_background`の計画承認（Plan Mode）を免除する読み取り専用スクリプトのホワイトリスト（`[["スキル名","スクリプトファイル名"], ...]`形式、空欄なら既定7件）。免除は承認のみで、`[main_agent_tool_guard]`によるメインエージェントからの直接呼び出し制限は別枠 | `PLAN_APPROVAL_EXEMPT_SCRIPTS` |
 | `[default_workdir]` | `dir` | エージェントの既定の作業ディレクトリのベース。実際の書き込み・`run_script`のcwdはこの配下の自セッション専用サブディレクトリ`_tmp_<name>`に限定される（`dir`直下への書き込みは許可されない） | `DEFAULT_WORKDIR` |
 | `[default_workdir]` | `allow_sandbox_dir` | セッション分離の外側で常時書き込みを許可する追加ディレクトリのリスト（`[{"dir": "パス", "allow_entries": [["スキル名","スクリプトファイル名"], ...]}, ...]`形式）。各要素の`allow_entries`を空リストにすると、対象を問わずそのディレクトリへ無制限に書き込み可能になる。登録したディレクトリはスレッドを問わず常時書き込み可能になる点に注意（既定は空リストで無効） | `ALLOW_SANDBOX_DIR` |
 | `[default_workdir]` | `retention_days` | 上記 `dir` 配下のファイル保持日数（0以下で自動削除無効） | `DEFAULT_WORKDIR_RETENTION_DAYS` |
@@ -1381,7 +1365,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 `admin/static/admin.js` の `CONFIG_PRESETS` で定義している。
 
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
-- **スキル関係**: `[paths] project_locohane_dir`・`[paths] instance_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー
+- **スキル関係**: `[paths] project_locohane_dir`・`[paths] instance_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[skill_creator]` の各キー
 - **スキル研究室**: `[llm] main_url`・`sub_url`（スキル調整ワーカーの LLM 接続先）・`[skill_lab]` の各キー
 
 ### 起動方法
