@@ -140,6 +140,7 @@ from src.llm.thinking_control import unknown_tool_names
 from src.log_rotation import LineCountRotatingFileHandler
 from src.mcp_client import init_mcp_tools, shutdown_mcp_tools
 from src.memory import render_memory_block
+from src import ask_reconnect
 from src.ask_relay import pending_asks as _pending_asks, resolve_pending_ask
 from src.plan_persist import plan_message_id, register_plan_persist
 from src.project_instructions import render_project_instructions_block
@@ -1548,6 +1549,11 @@ def _patch_chainlit_connection_successful_task_end() -> None:
 
         await _resync_live_steps()
 
+        # 標準の clear_ask で消えた回答待ちの質問を、新しい接続へ送り直させる
+        # （src/ask_reconnect.py 参照）。clear_ask・resume_thread より後に呼ぶこと。
+        ask_reconnect.notify_reconnected(context.session)
+
+    ask_reconnect.install()
     logging.getLogger(__name__).info(
         "Chainlit connection_successful の task_end 誤発火を防ぐパッチを適用しました。"
     )

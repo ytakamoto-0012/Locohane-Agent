@@ -437,6 +437,7 @@ Locohane/
 │   ├── thread_store.py      # 会話スレッド一覧（左サイドバー）・再開用の軽量ストア
 │   ├── plan_persist.py      # plan/plan_approved変更をターン完了を待たず即座にthread_storeへ永続化
 │   ├── ask_relay.py         # approve_plan/AskUserQuestion/ask_user_choice応答待ちをスレッド切替後の別セッションへ引き継ぐ状態
+│   ├── ask_reconnect.py     # 同じセッションのWebSocket再接続後に、回答待ちの質問（ボタン・入力欄）を新しい接続へ送り直すパッチ
 │   ├── instance_lock.py     # 同一データディレクトリへの多重起動を防ぐプロセス排他ロック
 │   ├── cleanup.py           # 不要ファイルの自動削除
 │   ├── files.py             # ファイルアップロード処理
