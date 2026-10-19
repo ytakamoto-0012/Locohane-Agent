@@ -16,7 +16,7 @@ httpx>=0.28.1                        # src/llm.py: keep-alive無効化用の htt
 openai>=2.45.0                       # src/llm.py: LLM_CONNECTION_ERRORS で直接importするため明記
 
 # --- MCP（Model Context Protocol）サーバー接続（stdio transport、src/mcp_client.py） ---
-mcp==1.28.1                           # 公式Python SDK。chainlitの推移的依存として環境には既に導入済みだが、直接importするため明記
+mcp==1.30.0                           # 公式Python SDK。chainlitの推移的依存として環境には既に導入済みだが、直接importするため明記
 
 # --- skills/ をMCPサーバーとして配布（mcp_server/、mcp_server/MCP_README.md参照） ---
 fastmcp==3.4.7                        # 非公式サードパーティ製ラッパー（Anthropic公式ではない）。SkillsDirectoryProviderを使用
