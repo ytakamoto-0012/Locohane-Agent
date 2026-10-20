@@ -773,6 +773,20 @@ const CONFIG_PRESETS = [
     keys: ["llm.max_concurrent_requests", "graph.max_parallel", "subagent.max_parallel"],
   },
   {
+    name: "トークン制御",
+    keys: [
+      "graph.token_guard_soft_threshold",
+      "subagent.token_guard_soft_threshold",
+      "subagent.token_guard_hard_threshold",
+      "context_trim.enabled",
+      "context_trim.trigger_total_tokens",
+      "context_compaction.enabled",
+      "context_compaction.token_threshold",
+      "context_compaction.single_request_token_threshold",
+      "context_compaction.pre_note_threshold",
+    ],
+  },
+  {
     name: "スキル関係",
     keys: [
       "paths.project_locohane_dir",

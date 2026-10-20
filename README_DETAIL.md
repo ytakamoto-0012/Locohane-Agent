@@ -1382,6 +1382,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 `admin/static/admin.js` の `CONFIG_PRESETS` で定義している。
 
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
+- **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[paths] instance_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー
 - **スキル研究室**: `[llm] main_url`・`sub_url`（スキル調整ワーカーの LLM 接続先）・`[skill_lab]` の各キー
 
