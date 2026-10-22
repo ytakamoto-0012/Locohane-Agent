@@ -762,6 +762,11 @@ async function loadConfigKeys() {
   const data = await api(`/api/instances/${encodeURIComponent(currentInstanceName)}/config`);
   configKeys = data.keys;
   configMtime = data.mtime;
+  const note = $("#config-scope-note");
+  if (note) {
+    note.textContent = data.scope_note || "";
+    note.classList.toggle("hidden", !data.scope_note);
+  }
 }
 
 let activeSection = null;
@@ -790,7 +795,6 @@ const CONFIG_PRESETS = [
     name: "スキル関係",
     keys: [
       "paths.project_locohane_dir",
-      "paths.instance_locohane_dir",
       "subagent.agent_type_run_script_allowlist",
       "main_agent_tool_guard.allow_entries",
       "plan.plan_approval_exempt_scripts",
@@ -798,18 +802,7 @@ const CONFIG_PRESETS = [
       "skill_creator.tryout_repeats",
       "skill_creator.other_users_drafts",
       "skill_creator.archive_dir",
-    ],
-  },
-  {
-    name: "スキル研究室",
-    keys: [
-      "llm.main_url",
-      "llm.sub_url",
-      "skill_lab.max_iterations",
-      "skill_lab.max_hours",
-      "skill_lab.poll_interval_seconds",
-      "skill_lab.fixer_max_file_chars",
-      "skill_lab.transcript_excerpt_chars",
+      "skill_lab.instance_locohane_dir",
     ],
   },
 ];
@@ -819,7 +812,11 @@ function buildPresetList() {
   const box = $("#preset-list");
   box.innerHTML = "";
   activePreset = null;
+  // その種類のインスタンスに出していないキーだけのプリセット（スキル調整ワーカーでの「並列数」等）は出さない。
+  // ワーカーは出すキーが少ないため、プリセットを使わずセクション一覧から選ぶ。
+  const available = new Set(configKeys.map(keyId));
   for (const preset of CONFIG_PRESETS) {
+    if (!preset.keys.some((id) => available.has(id))) continue;
     const btn = document.createElement("button");
     btn.type = "button";
     btn.textContent = preset.name;

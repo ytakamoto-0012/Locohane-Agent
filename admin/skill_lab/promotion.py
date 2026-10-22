@@ -1,7 +1,7 @@
 """研究テーマの昇格・差し戻しと、ドラフトのアーカイブ。
 
 昇格先は、テーマの対象インスタンス（と、配布先に選んだインスタンス）専用の拡張ディレクトリ
-（[paths].instance_locohane_dir、既定 instances/<名前>/locohane/）だけ。同梱の skills/・agents/ や、
+（[skill_lab].instance_locohane_dir、既定 instances/<名前>/）だけ。同梱の skills/・agents/ や、
 全インスタンス共通の project_locohane_dir には置かない（他のインスタンスを汚染しないため）。
 同梱・共有の資産を改善したものも、専用の置き場に同じ名前で置く（後から走査したものが優先され、
 そのインスタンスでだけ置き換わる）。

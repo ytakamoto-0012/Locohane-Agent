@@ -102,7 +102,7 @@ def _scan_layout(tmp_path, **overrides):
         "skills_dir": tmp_path / "skills",
         "agents_dir": tmp_path / "agents",
         "project_locohane_dirs": [tmp_path / ".locohane"],
-        "instance_locohane_dir": tmp_path / "instances" / "default" / "locohane",
+        "instance_locohane_dir": tmp_path / "instances" / "default",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -114,7 +114,7 @@ def test_draft_dir_outside_scan_roots_is_accepted(tmp_path):
 
 def test_draft_dir_inside_instance_locohane_dir_is_rejected(tmp_path):
     """インスタンス専用の置き場もスキル走査対象のため、ドラフト置き場と重ねられない。"""
-    layout = _scan_layout(tmp_path, skill_draft_dir=tmp_path / "instances" / "default" / "locohane" / "drafts")
+    layout = _scan_layout(tmp_path, skill_draft_dir=tmp_path / "instances" / "default" / "drafts")
     with pytest.raises(ValueError, match="instance_locohane_dir"):
         _validate_skill_draft_dir(layout)
 
@@ -124,7 +124,7 @@ def test_archive_dir_overlapping_is_rejected(tmp_path, where):
     """アーカイブは走査対象とも作成者のドラフト置き場とも重ねられない（一覧に戻ってしまうため）。"""
     archive = {
         "skills": tmp_path / "skills" / "archive",
-        "instance": tmp_path / "instances" / "default" / "locohane" / "archive",
+        "instance": tmp_path / "instances" / "default" / "archive",
         "draft": tmp_path / "data" / "skill_drafts" / "_archive",
     }[where]
     with pytest.raises(ValueError, match="archive_dir"):

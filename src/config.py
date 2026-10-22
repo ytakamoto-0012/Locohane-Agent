@@ -306,7 +306,7 @@ class Config:
             の代わりにこの Python で起動される（src/tools/_script_job.py の
             _script_python_for() 参照）。
         instance_locohane_dir: そのインスタンスだけが走査する拡張ディレクトリ
-            （[paths].instance_locohane_dir、既定 instances/<名前>/locohane）の絶対パス。
+            （[skill_lab].instance_locohane_dir、既定 instances/<名前>）の絶対パス。
             project_locohane_dirs の後ろ（最優先）として locohane_skills_dirs/
             locohane_agents_dirs/project_instructions_paths の末尾に必ず含まれる。
             スキル研究室で昇格したスキル・サブエージェントの置き場。
@@ -907,7 +907,7 @@ class Config:
     locohane_skills_dirs: list[Path]
     locohane_agents_dirs: list[Path]
     locohane_skills_pythons: dict[Path, str]
-    # [paths].instance_locohane_dir の解決結果（そのインスタンスだけが走査する拡張ディレクトリ）。
+    # [skill_lab].instance_locohane_dir の解決結果（そのインスタンスだけが走査する拡張ディレクトリ）。
     # locohane_skills_dirs/locohane_agents_dirs/project_instructions_paths の末尾（最優先）に
     # 必ず含まれる。スキル研究室の昇格先（admin/skill_lab/promotion.py）。
     instance_locohane_dir: Path
@@ -940,7 +940,7 @@ class Config:
     # 昇格したドラフトの退避先（スキル走査対象・skill_draft_dir と重ならないことを load_config() が保証する）。
     skill_archive_dir: Path
 
-    # --- スキル研究室（[skill_lab]、admin/skill_lab/） ---
+    # --- スキル調整ワーカー（[skill_lab_worker]、admin/skill_lab/worker.py） ---
     skill_lab_max_iterations: int
     skill_lab_max_hours: float
     skill_lab_poll_interval_seconds: float
@@ -1953,7 +1953,7 @@ def _validate_skill_draft_dir(cfg: "Config") -> None:
         ("[paths].skills_dir", cfg.skills_dir),
         ("[paths].agents_dir", cfg.agents_dir),
         *(("[paths].project_locohane_dir", d) for d in cfg.project_locohane_dirs),
-        ("[paths].instance_locohane_dir", cfg.instance_locohane_dir),
+        ("[skill_lab].instance_locohane_dir", cfg.instance_locohane_dir),
     )
     for key, target in (("draft_dir", cfg.skill_draft_dir), ("archive_dir", cfg.skill_archive_dir)):
         draft = target.resolve()
@@ -2420,6 +2420,7 @@ def load_config(
     default_workdir_section = parser["default_workdir"] if parser.has_section("default_workdir") else {}
     skill_creator_section = parser["skill_creator"] if parser.has_section("skill_creator") else {}
     skill_lab_section = parser["skill_lab"] if parser.has_section("skill_lab") else {}
+    skill_lab_worker_section = parser["skill_lab_worker"] if parser.has_section("skill_lab_worker") else {}
     path_memory = parser["path_memory"] if parser.has_section("path_memory") else {}
     log_section = parser["log"] if parser.has_section("log") else {}
     chat_log = parser["chat_log"] if parser.has_section("chat_log") else {}
@@ -2555,7 +2556,10 @@ def load_config(
         PROJECT_ROOT,
         _sub_common_data_dir(
             _sub_instance_dir(
-                os.getenv("INSTANCE_LOCOHANE_DIR", paths.get("instance_locohane_dir", "${instance_dir}/locohane")), instance_dir
+                os.getenv(
+                    "INSTANCE_LOCOHANE_DIR", skill_lab_section.get("instance_locohane_dir", "${instance_dir}")
+                ),
+                instance_dir,
             ),
             common_data_dir,
             resolved_instance_name,
@@ -2703,20 +2707,20 @@ def load_config(
             ),
         ),
         skill_lab_max_iterations=_positive_int(
-            os.getenv("SKILL_LAB_MAX_ITERATIONS", skill_lab_section.get("max_iterations", 8)), "[skill_lab].max_iterations"
+            os.getenv("SKILL_LAB_MAX_ITERATIONS", skill_lab_worker_section.get("max_iterations", 8)), "[skill_lab_worker].max_iterations"
         ),
-        skill_lab_max_hours=_positive_float(os.getenv("SKILL_LAB_MAX_HOURS", skill_lab_section.get("max_hours", 6)), "[skill_lab].max_hours"),
+        skill_lab_max_hours=_positive_float(os.getenv("SKILL_LAB_MAX_HOURS", skill_lab_worker_section.get("max_hours", 6)), "[skill_lab_worker].max_hours"),
         skill_lab_poll_interval_seconds=_positive_float(
-            os.getenv("SKILL_LAB_POLL_INTERVAL_SECONDS", skill_lab_section.get("poll_interval_seconds", 10)),
-            "[skill_lab].poll_interval_seconds",
+            os.getenv("SKILL_LAB_POLL_INTERVAL_SECONDS", skill_lab_worker_section.get("poll_interval_seconds", 10)),
+            "[skill_lab_worker].poll_interval_seconds",
         ),
         skill_lab_fixer_max_file_chars=_positive_int(
-            os.getenv("SKILL_LAB_FIXER_MAX_FILE_CHARS", skill_lab_section.get("fixer_max_file_chars", 20000)),
-            "[skill_lab].fixer_max_file_chars",
+            os.getenv("SKILL_LAB_FIXER_MAX_FILE_CHARS", skill_lab_worker_section.get("fixer_max_file_chars", 20000)),
+            "[skill_lab_worker].fixer_max_file_chars",
         ),
         skill_lab_transcript_excerpt_chars=_positive_int(
-            os.getenv("SKILL_LAB_TRANSCRIPT_EXCERPT_CHARS", skill_lab_section.get("transcript_excerpt_chars", 6000)),
-            "[skill_lab].transcript_excerpt_chars",
+            os.getenv("SKILL_LAB_TRANSCRIPT_EXCERPT_CHARS", skill_lab_worker_section.get("transcript_excerpt_chars", 6000)),
+            "[skill_lab_worker].transcript_excerpt_chars",
         ),
         chainlit_files_retention_days=int(os.getenv("CHAINLIT_FILES_RETENTION_DAYS", chainlit_files.get("retention_days", 7))),
         chainlit_files_cleanup_interval_hours=float(

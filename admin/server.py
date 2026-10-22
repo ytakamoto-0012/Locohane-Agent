@@ -389,7 +389,15 @@ def restart_instance(
 # ---------------------------------------------------------------------------
 
 
-def _config_key_view(name: str) -> dict[str, Any]:
+# スキル調整ワーカーの設定画面の先頭に出す説明（ワーカーに出すキーは inst.config_key_applies() 参照）。
+_SKILL_LAB_SCOPE_NOTE = (
+    "スキル調整ワーカーの設定は、LLM の接続先（[llm] main_url・sub_url・routing_strategy）、"
+    "ループの上限（[skill_lab_worker]）、ワーカー自身のログ（[log]）だけです。"
+    "評価・AI 修正・judge・下書きは、研究テーマの対象インスタンスの設定をそのまま使います。"
+)
+
+
+def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     catalog = parse_ini_file(CONFIG_INI_PATH)
     ov_path = inst.overrides_path(INSTANCES_ROOT, name)
     ov = overrides.read(ov_path)
@@ -405,6 +413,8 @@ def _config_key_view(name: str) -> dict[str, Any]:
     active_env = env_overrides.active_overrides(_env_var_mapping, effective_env)
     keys = []
     for info in catalog.keys:
+        if not inst.config_key_applies(kind, info.section, info.key):
+            continue
         override_value = ov.get(info.section, {}).get(info.key)
         keys.append(
             {
@@ -423,13 +433,17 @@ def _config_key_view(name: str) -> dict[str, Any]:
                 "is_admin_section": info.section == "admin",
             }
         )
-    return {"keys": keys, "mtime": overrides.mtime_or_none(ov_path)}
+    return {
+        "keys": keys,
+        "mtime": overrides.mtime_or_none(ov_path),
+        "scope_note": _SKILL_LAB_SCOPE_NOTE if kind == inst.KIND_SKILL_LAB else None,
+    }
 
 
 @app.get("/api/instances/{name}/config")
 def get_instance_config(name: str, user: str = Depends(require_login)):
-    _require_instance(name)
-    return _config_key_view(name)
+    meta = _require_instance(name)
+    return _config_key_view(name, meta.kind)
 
 
 class ConfigUpdateBody(BaseModel):
@@ -438,8 +452,14 @@ class ConfigUpdateBody(BaseModel):
     base_mtime: float | None = None
 
 
-def _flatten_updates(updates: dict[str, dict[str, str]]) -> dict[tuple[str, str], str]:
-    return {(section, key): value for section, kv in updates.items() for key, value in kv.items()}
+def _flatten_updates(updates: dict[str, dict[str, str]], kind: str) -> dict[tuple[str, str], str]:
+    flat = {(section, key): value for section, kv in updates.items() for key, value in kv.items()}
+    # 画面に出していないキー（その種類のインスタンスでは効かない設定）は、API を直接叩いても保存させない。
+    rejected = [f"[{section}].{key}" for section, key in flat if not inst.config_key_applies(kind, section, key)]
+    if rejected:
+        target = "スキル調整ワーカー" if kind == inst.KIND_SKILL_LAB else "本体のインスタンス"
+        raise HTTPException(status_code=400, detail=f"{target}では効かない設定のため変更できません: {', '.join(rejected)}")
+    return flat
 
 
 def _flatten_resets(resets: list[list[str]]) -> list[tuple[str, str]]:
@@ -453,12 +473,12 @@ def _flatten_resets(resets: list[list[str]]) -> list[tuple[str, str]]:
 
 @app.post("/api/instances/{name}/config/preview")
 def preview_instance_config(name: str, body: ConfigUpdateBody, user: str = Depends(require_login)):
-    _require_instance(name)
+    meta = _require_instance(name)
     catalog = parse_ini_file(CONFIG_INI_PATH)
     try:
         _new_data, changes = overrides.preview(
             path=inst.overrides_path(INSTANCES_ROOT, name),
-            updates=_flatten_updates(body.updates),
+            updates=_flatten_updates(body.updates, meta.kind),
             resets=_flatten_resets(body.resets),
             ini_catalog=catalog,
             config_ini_path=CONFIG_INI_PATH,
@@ -478,12 +498,12 @@ def put_instance_config(
     user: str = Depends(require_login),
     _csrf: None = Depends(require_csrf),
 ):
-    _require_instance(name)
+    meta = _require_instance(name)
     catalog = parse_ini_file(CONFIG_INI_PATH)
     try:
         result = overrides.save(
             path=inst.overrides_path(INSTANCES_ROOT, name),
-            updates=_flatten_updates(body.updates),
+            updates=_flatten_updates(body.updates, meta.kind),
             resets=_flatten_resets(body.resets),
             base_mtime=body.base_mtime,
             ini_catalog=catalog,

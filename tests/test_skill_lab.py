@@ -1,4 +1,4 @@
-"""スキル研究室（admin/skill_lab/）と、インスタンス専用の拡張ディレクトリ（[paths].instance_locohane_dir）の回帰テスト。
+"""スキル研究室（admin/skill_lab/）と、インスタンス専用の拡張ディレクトリ（[skill_lab].instance_locohane_dir）の回帰テスト。
 
 - インスタンス専用の置き場は最優先で走査され、他のインスタンスには出ない（組織別・役割別のインスタンスを汚染しない）
 - 評価は対象インスタンスの構成に、研究室の LLM 接続先・テーマの資産・設定パッチを重ねて行う
@@ -62,7 +62,7 @@ def test_instance_locohane_dir_is_scanned_last_and_only_by_its_instance(lab_env)
     from src.skills import scan_skills
 
     cfg_a = _cfg(lab_env, "org_a")
-    assert cfg_a.instance_locohane_dir == lab_env["root"] / "org_a" / "locohane"
+    assert cfg_a.instance_locohane_dir == lab_env["root"] / "org_a"
     assert cfg_a.locohane_skills_dirs[-1] == cfg_a.instance_locohane_dir / "skills"
     # 同梱スキルと同じ名前を置くと、そのインスタンスでだけ置き換わる
     (cfg_a.instance_locohane_dir / "skills" / "pdf-tools").mkdir(parents=True)
@@ -279,7 +279,7 @@ def _make_worker(monkeypatch, lab_env, outcomes, max_iterations=8):
         themes.update(directory, _apply)
         return {"iteration": it, "run": {"results": []}, "verdicts": [], "passed": passed}
 
-    def fake_fix(directory, outcome):
+    def fake_fix(instance, directory, outcome):
         calls["fix"] += 1
 
     monkeypatch.setattr(w, "_evaluate", fake_evaluate)
@@ -474,6 +474,66 @@ def test_extensions_summary_lists_promoted_assets(lab_env):
     (dest / "agents" / "b.md").write_text(_agent_md("b"), encoding="utf-8")
     summary = inst.instance_extensions_summary(lab_env["root"], Path("config.ini"), "org_a")
     assert summary["skills"] == ["a"] and summary["agents"] == ["b"] and summary["deleted_with_instance"]
+
+
+def test_copy_extensions_copies_only_scanned_entries(lab_env):
+    """既定の拡張ディレクトリはインスタンスの設定フォルダそのものなので、複製では skills/ 等だけを写す。"""
+    src = lab_env["root"] / "org_a"
+    (src / "skills" / "a").mkdir(parents=True)
+    (src / "skills" / "a" / "SKILL.md").write_text(_skill_md("a"), encoding="utf-8")
+    (src / "evals" / "t1").mkdir(parents=True)
+    (src / "LOCOHANE.md").write_text("org_a 専用", encoding="utf-8")
+    (src / "app_stdout.log").write_text("log", encoding="utf-8")
+    (src / "backups").mkdir()
+    inst.create_instance(
+        lab_env["root"], Path("config.ini"), name="org_c", app_port=18003, copy_from="org_a", copy_extensions=True
+    )
+    dst = lab_env["root"] / "org_c"
+    assert (dst / "skills" / "a" / "SKILL.md").is_file() and (dst / "evals" / "t1").is_dir()
+    assert (dst / "LOCOHANE.md").read_text(encoding="utf-8") == "org_a 専用"
+    assert not (dst / "app_stdout.log").exists() and not (dst / "backups").exists()
+    assert (dst / "instance.json").is_file()
+
+
+# --- スキル調整ワーカーの設定の範囲 -----------------------------------------------------
+
+
+def test_config_key_applies_by_kind():
+    """ワーカーは接続先・[skill_lab_worker]・[log] だけ、本体には [skill_lab_worker] を出さない。"""
+    lab, app = inst.KIND_SKILL_LAB, inst.KIND_APP
+    assert inst.config_key_applies(lab, "llm", "main_url") and inst.config_key_applies(lab, "llm", "sub_url")
+    assert inst.config_key_applies(lab, "skill_lab_worker", "max_iterations") and inst.config_key_applies(lab, "log", "level")
+    assert not inst.config_key_applies(lab, "llm", "reasoning_effort")
+    assert not inst.config_key_applies(lab, "graph", "token_guard_soft_threshold")
+    assert not inst.config_key_applies(lab, "skill_lab", "instance_locohane_dir")
+    assert not inst.config_key_applies(app, "skill_lab_worker", "max_iterations")
+    assert inst.config_key_applies(app, "skill_lab", "instance_locohane_dir") and inst.config_key_applies(app, "llm", "reasoning_effort")
+
+
+def test_worker_created_from_app_does_not_inherit_unused_settings(lab_env):
+    """本体を複製してワーカーを作っても、ワーカーで効かない設定は持ち込まない。"""
+    src = lab_env["root"] / "org_a" / "config_overrides.json"
+    data = json.loads(src.read_text(encoding="utf-8"))
+    url = '[{"base_url": "http://org-a:8080/v1", "api_key": "x", "model": "m", "provider": "llama_cpp"}]'
+    data.update({"llm": {"main_url": url, "reasoning_effort": "low"}, "graph": {"max_parallel": "2"}, "log": {"level": "debug"}})
+    src.write_text(json.dumps(data), encoding="utf-8")
+    inst.create_instance(lab_env["root"], Path("config.ini"), name="lab2", copy_from="org_a", kind=inst.KIND_SKILL_LAB)
+    copied = json.loads((lab_env["root"] / "lab2" / "config_overrides.json").read_text(encoding="utf-8"))
+    assert copied == {"llm": {"main_url": url}, "log": {"level": "debug"}}
+
+
+def test_worker_ai_uses_target_settings_with_lab_endpoints(lab_env):
+    """AI 修正・judge・下書きは、対象インスタンスの設定に研究室の接続先だけを重ねて呼ぶ。"""
+    path = lab_env["root"] / "org_a" / "config_overrides.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["skill_creator"] = {"tryout_repeats": "3"}
+    path.write_text(json.dumps(data), encoding="utf-8")
+    w = _lab_worker(lab_env)
+    w.config = _cfg(lab_env, "lab1")
+    llm_cfg = w._llm_config("org_a")
+    assert [e.base_url for e in llm_cfg.main_endpoints] == ["http://lab-host:9999/v1"]
+    assert llm_cfg.sub_endpoints == w.config.sub_endpoints
+    assert llm_cfg.skill_tryout_repeats == 3 and llm_cfg.common_data_dir == _cfg(lab_env, "org_a").common_data_dir
 
 
 # --- API（インスタンスごとの分離） ----------------------------------------------------------

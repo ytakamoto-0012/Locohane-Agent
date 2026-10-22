@@ -1,7 +1,7 @@
 """研究室の LLM 呼び出し（修正・judge・下書きで共有）。
 
-スキル調整ワーカーの設定（[llm] main_url 等。ワーカー起動時に apply_instance() 済み）で
-src.llm.build_model を使い、1回の chat completion を行う。モデルは本番と同じ想定。
+研究テーマの対象インスタンスの設定に、スキル調整ワーカーの LLM 接続先だけを重ねたもの
+（worker.py の _llm_config()）で src.llm.build_model を使い、1回の chat completion を行う。モデルは本番と同じ想定。
 ローカルの小さめのモデルは JSON を崩すことがあるため、JSON を求める呼び出しは
 本文から JSON を取り出し、読めなければ理由を添えて1回だけ出し直させる。
 """

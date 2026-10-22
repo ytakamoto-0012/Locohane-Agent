@@ -1,6 +1,6 @@
 ---
 name: promote-skill
-description: Locohane の利用者が skill-creator で作ったドラフトスキル（data/<インスタンス名>/skill_drafts/<ユーザー名>/<スキル名>/）を、スキル安定化トライアウト（同じ eval ケースを config.ini [skill_creator].tryout_repeats 回ずつ繰り返し、全回合格）に通したうえで、スキル開発者の承認を得て、そのインスタンス専用の正式スキル置き場（[paths].instance_locohane_dir の skills/、既定 instances/<インスタンス名>/locohane/skills/）へ昇格させ、ドラフトはアーカイブする。不合格なら理由を付けて作成者へ差し戻す。「ドラフトを昇格して」「ドラフトスキルを正式化して」「skill_draftsを見て」「/promote-skill」等で使う。ドラフトの修正はしない（合否の関門役）。正式スキルのチューニングは tune-prompt、ケースの新規作成は create-eval-case の担当。
+description: Locohane の利用者が skill-creator で作ったドラフトスキル（data/<インスタンス名>/skill_drafts/<ユーザー名>/<スキル名>/）を、スキル安定化トライアウト（同じ eval ケースを config.ini [skill_creator].tryout_repeats 回ずつ繰り返し、全回合格）に通したうえで、スキル開発者の承認を得て、そのインスタンス専用の正式スキル置き場（[skill_lab].instance_locohane_dir の skills/、既定 instances/<インスタンス名>/skills/）へ昇格させ、ドラフトはアーカイブする。不合格なら理由を付けて作成者へ差し戻す。「ドラフトを昇格して」「ドラフトスキルを正式化して」「skill_draftsを見て」「/promote-skill」等で使う。ドラフトの修正はしない（合否の関門役）。正式スキルのチューニングは tune-prompt、ケースの新規作成は create-eval-case の担当。
 ---
 
 # promote-skill: ドラフトスキルの昇格
@@ -83,7 +83,7 @@ Locohane はミスが許されない専門業務が前提のため、正式ス�
      `instances/admin_changes.log` への記録つき）。`<instance>` の `.env` に `PLAN_APPROVAL_EXEMPT_SCRIPTS` /
      `MAIN_AGENT_TOOL_GUARD_ALLOW_ENTRIES` があると登録が効かないため止まる（ユーザーに .env の見直しを頼む）。
    - 置き換える正式スキルは `evals/history/promote/` に退避してから上書きする。ケースは専用の置き場の
-     `evals/<スキル名>/`（既定 `instances/<instance>/locohane/evals/<スキル名>/`）へ写る（回帰テストには
+     `evals/<スキル名>/`（既定 `instances/<instance>/evals/<スキル名>/`）へ写る（回帰テストには
      `python evals/run_all.py --cases-dir <そこ> --instance <instance>`）。記録は `evals/promotion_log.md` に追記される。
    - 昇格したドラフトは `[skill_creator] archive_dir`（既定 `data/<instance>/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/`）へ
      `_workspace` ごと移り、作成者の一覧から消える。

@@ -39,6 +39,36 @@ KIND_APP = "app"
 KIND_SKILL_LAB = "skill_lab"
 INSTANCE_KINDS = (KIND_APP, KIND_SKILL_LAB)
 
+# スキル調整ワーカーが自分の設定として持つもの。それ以外（スキル・ガード・タイムアウト・[llm] の推論パラメータ等）は
+# 研究テーマの対象インスタンスの設定を引き継ぐ（admin/skill_lab/evaluation.py・worker.py の _llm_config()）ため、
+# ワーカーの設定画面には出さず、保存もさせない。LLM の接続先は evals/instance.py の _LLM_ENDPOINT_KEYS と揃える。
+SKILL_LAB_WORKER_KEYS = frozenset(
+    {("llm", "main_url"), ("llm", "sub_url"), ("llm", "main_routing_strategy"), ("llm", "sub_routing_strategy")}
+)
+SKILL_LAB_WORKER_SECTIONS = frozenset({"skill_lab_worker", "log"})
+
+
+def config_key_applies(kind: str, section: str, key: str) -> bool:
+    """config.ini のキーが、その種類のインスタンスの設定として意味を持つか（設定画面に出す・保存を許すか）。
+
+    スキル調整ワーカーは接続先・[skill_lab_worker]・[log] だけ。本体には [skill_lab_worker] を出さない。
+    """
+    if kind == KIND_SKILL_LAB:
+        return section in SKILL_LAB_WORKER_SECTIONS or (section, key) in SKILL_LAB_WORKER_KEYS
+    return section != "skill_lab_worker"
+
+
+def filter_overrides_for_kind(kind: str, data: dict) -> dict:
+    """config_overrides.json の内容から、その種類のインスタンスで意味を持つキーだけを残す（複製時用）。"""
+    result: dict = {}
+    for section, kv in data.items():
+        if not isinstance(kv, dict):
+            continue
+        kept = {k: v for k, v in kv.items() if config_key_applies(kind, section, k)}
+        if kept:
+            result[section] = kept
+    return result
+
 
 class InstanceError(Exception):
     """instances.py の操作失敗。"""
@@ -292,7 +322,7 @@ def create_instance(
 
     kind は KIND_APP（Locohane 本体）か KIND_SKILL_LAB（スキル研究室）。
     copy_extensions=True なら、複製元のインスタンス専用の拡張ディレクトリ
-    （[paths].instance_locohane_dir。研究室で昇格したスキル・サブエージェント）も写す。
+    （[skill_lab].instance_locohane_dir の skills/・agents/・evals/・LOCOHANE.md。研究室で昇格したスキル・サブエージェント）も写す。
 
     データの分離は config.ini 既定の common_data_dir = ./data/${instance} に
     任せる（上書きは書かない）。copy_from を指定した場合はそのインスタンスの
@@ -328,7 +358,8 @@ def create_instance(
         if copy_from:
             src_ov = overrides_path(instances_root, copy_from)
             if src_ov.is_file():
-                base_overrides = json.loads(src_ov.read_text(encoding="utf-8"))
+                # 種類が違うインスタンスから複製しても、効かない設定（本体の設定をワーカーへ等）は持ち込まない。
+                base_overrides = filter_overrides_for_kind(kind, json.loads(src_ov.read_text(encoding="utf-8")))
 
         paths_ov = base_overrides.get("paths")
         if isinstance(paths_ov, dict):
@@ -374,15 +405,27 @@ def _instance_locohane_dir(instances_root: Path, config_ini_path: Path, name: st
     return cfg.instance_locohane_dir
 
 
+# インスタンス専用の拡張ディレクトリのうち、複製で写すもの。既定ではインスタンスの設定フォルダそのものなので、
+# config_overrides.json・.env・ログ等まで写さないよう、走査対象と昇格先だけに絞る。
+_EXTENSION_ENTRIES = ("skills", "agents", "evals", "LOCOHANE.md")
+
+
 def _copy_instance_extensions(instances_root: Path, config_ini_path: Path, src_name: str, dst_name: str) -> None:
-    """複製元のインスタンス専用の拡張ディレクトリ（skills/・agents/・LOCOHANE.md 等）を写す。"""
+    """複製元のインスタンス専用の拡張ディレクトリの skills/・agents/・evals/・LOCOHANE.md を写す。"""
     src = _instance_locohane_dir(instances_root, config_ini_path, src_name)
     dst = _instance_locohane_dir(instances_root, config_ini_path, dst_name)
     if not src.is_dir() or src.resolve() == dst.resolve():
         return
-    if dst.exists() and any(dst.iterdir()):
-        raise InstanceError(f"複製先のインスタンス専用ディレクトリが空ではありません: {dst}")
-    shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+    entries = [n for n in _EXTENSION_ENTRIES if (src / n).exists()]
+    taken = [str(dst / n) for n in entries if (dst / n).exists()]
+    if taken:
+        raise InstanceError(f"複製先のインスタンス専用ディレクトリに既にあります: {', '.join(taken)}")
+    dst.mkdir(parents=True, exist_ok=True)
+    for n in entries:
+        if (src / n).is_dir():
+            shutil.copytree(src / n, dst / n, ignore=shutil.ignore_patterns("__pycache__"))
+        else:
+            shutil.copy2(src / n, dst / n)
 
 
 def instance_extensions_summary(instances_root: Path, config_ini_path: Path, name: str) -> dict:

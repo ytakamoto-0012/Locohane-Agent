@@ -171,6 +171,8 @@ h4 .hint { margin-left: 4px; font-weight: normal; }
 .config-main { flex: 1; min-width: 0; }
 .restart-banner { background: rgba(217,164,65,0.15); border: 1px solid var(--warn); color: var(--warn); padding: 10px 14px; border-radius: var(--radius); margin-bottom: 14px; display: flex; justify-content: space-between; align-items: center; }
 .restart-banner.hidden { display: none; }
+.config-scope-note { background: rgba(74,134,232,0.12); border: 1px solid var(--accent); padding: 10px 14px; border-radius: var(--radius); margin-bottom: 14px; line-height: 1.6; }
+.config-scope-note.hidden { display: none; }
 
 .key-row { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; margin-bottom: 10px; }
 .key-row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }

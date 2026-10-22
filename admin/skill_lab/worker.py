@@ -6,7 +6,8 @@
 1件ずつ処理する。
 
 - 評価は対象インスタンスの構成で行い、LLM の接続先だけを研究室のものにする（evaluation.py）。
-- AI（修正・judge・下書き）は研究室の設定（このプロセスで apply_instance(研究室) 済み）で呼ぶ。
+- AI（修正・judge・下書き）も対象インスタンスの設定で呼び、LLM の接続先だけを研究室のものにする
+  （_llm_config()。評価と同じ規則。研究室の設定で使うのは接続先・[skill_lab_worker]・[log] だけ）。
 - 停止（管理ツールの停止ボタン = CTRL_BREAK_EVENT）で、実行中のテーマは queued に戻す
   （次に起動したとき、記録済みの反復の続きから再開する）。
 """
@@ -14,6 +15,7 @@
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import logging
 import os
@@ -94,6 +96,20 @@ class Worker:
         from src.config import load_config
 
         return load_config(overrides_path=inst.overrides_path(self.instances_root, instance), instance_name=instance)
+
+    def _llm_config(self, instance: str, target_cfg=None):
+        """AI（修正・judge・下書き）に渡す設定: 対象インスタンスの設定に、研究室の LLM 接続先だけを重ねる。
+
+        評価（evaluation.py の --llm-from-instance）と同じ規則。推論パラメータ等は対象インスタンスのものを使う。
+        """
+        return dataclasses.replace(
+            target_cfg or self._target_config(instance),
+            main_endpoints=self.config.main_endpoints,
+            main_routing_strategy=self.config.main_routing_strategy,
+            sub_endpoints=self.config.sub_endpoints,
+            sub_endpoints_inherit_main=self.config.sub_endpoints_inherit_main,
+            sub_routing_strategy=self.config.sub_routing_strategy,
+        )
 
     # --- メインループ -----------------------------------------------------
 
@@ -180,14 +196,17 @@ class Worker:
         params = task.get("params") or {}
         cfg = self.config
         try:
+            if task["type"] != "trial":
+                target_cfg = self._target_config(instance)
+                llm_cfg = self._llm_config(instance, target_cfg)
             if task["type"] == "trial":
                 result = self._trial(instance, directory, params["case_id"], task["id"])
             elif task["type"] == "draft_spec":
-                drafting.draft_spec(cfg, directory, max_file_chars=cfg.skill_lab_fixer_max_file_chars, request=params.get("request", ""))
+                drafting.draft_spec(llm_cfg, directory, max_file_chars=cfg.skill_lab_fixer_max_file_chars, request=params.get("request", ""))
                 result = {"message": "spec.md を下書きしました。"}
             elif task["type"] == "draft_cases":
                 created = drafting.draft_cases(
-                    cfg,
+                    llm_cfg,
                     directory,
                     max_file_chars=cfg.skill_lab_fixer_max_file_chars,
                     count=min(max(int(params.get("count") or 3), 1), 10),
@@ -195,9 +214,8 @@ class Worker:
                 )
                 result = {"message": f"ケースを {len(created)} 件下書きしました。", "created": created}
             elif task["type"] == "draft_asset":
-                target_cfg = self._target_config(instance)
                 drafting.draft_asset(
-                    cfg,
+                    llm_cfg,
                     directory,
                     asset_type=params["asset_type"],
                     name=params["name"],
@@ -231,7 +249,7 @@ class Worker:
         )
         spec = (directory / themes.SPEC_FILENAME).read_text(encoding="utf-8")
         verdicts = judge.judge_results(
-            self.config, spec=spec, results=run["results"], excerpt_chars=self.config.skill_lab_transcript_excerpt_chars
+            self._llm_config(instance), spec=spec, results=run["results"], excerpt_chars=self.config.skill_lab_transcript_excerpt_chars
         )
         r = run["results"][0] if run["results"] else {}
         return {
@@ -356,7 +374,7 @@ class Worker:
         )
         spec = (directory / themes.SPEC_FILENAME).read_text(encoding="utf-8")
         verdicts = judge.judge_results(
-            self.config, spec=spec, results=run["results"], excerpt_chars=self.config.skill_lab_transcript_excerpt_chars
+            self._llm_config(instance), spec=spec, results=run["results"], excerpt_chars=self.config.skill_lab_transcript_excerpt_chars
         )
         passed = judge.all_passed(verdicts)
         per_case: dict[str, dict[str, int]] = {}
@@ -391,14 +409,14 @@ class Worker:
         themes.update(directory, _apply)
         return {"iteration": iteration, "run": run, "verdicts": verdicts, "passed": passed}
 
-    def _fix(self, directory: Path, outcome: dict) -> None:
+    def _fix(self, instance: str, directory: Path, outcome: dict) -> None:
         cfg = self.config
         data = themes.read(directory)
         failures = fixer.failures_text(outcome["run"]["results"], outcome["verdicts"], cfg.skill_lab_transcript_excerpt_chars)
         history = fixer.history_text(data.get("iterations") or [])
         fix: dict = {}
         try:
-            proposal = fixer.propose(cfg, directory, failures=failures, history=history, max_file_chars=cfg.skill_lab_fixer_max_file_chars)
+            proposal = fixer.propose(self._llm_config(instance), directory, failures=failures, history=history, max_file_chars=cfg.skill_lab_fixer_max_file_chars)
             applied, errors = fixer.apply_edits(directory, proposal["edits"], known_tools=list(sources.subagent_tool_names()))
             fix = {"analysis": proposal["analysis"], "applied": applied, "errors": errors, "edits": len(proposal["edits"])}
         except LabLLMError as e:
@@ -432,7 +450,7 @@ class Worker:
             if self._stop_for_infra(directory, outcome):
                 return
             if not outcome["passed"]:
-                self._fix(directory, outcome)
+                self._fix(instance, directory, outcome)
                 continue
             if self._stop_requested(directory):
                 raise _Stop()
@@ -442,7 +460,7 @@ class Worker:
             if outcome["passed"]:
                 self._finish(directory, themes.STATUS_REVIEW, f"トライアウト（各ケース{tryout_repeats}回）に全回合格しました")
                 return
-            self._fix(directory, outcome)
+            self._fix(instance, directory, outcome)
 
     def _stop_for_infra(self, directory: Path, outcome: dict) -> bool:
         """研究対象を直しても解決しない失敗なら、AI 修正に回さずエラーで止める。"""

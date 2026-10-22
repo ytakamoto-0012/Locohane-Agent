@@ -329,7 +329,7 @@ Locohane/
 │   │   └── promotion.py       # 昇格（インスタンス専用の置き場へ）・差し戻し・ドラフトのアーカイブ
 │   └── static/                # フロントエンド（ビルド不要の素のHTML/JS。研究室の画面は skill_lab.js）
 ├── instances/               # 管理ツールが管理するインスタンス別ディレクトリ（.gitignore済み、実行時生成）
-│   └── <name>/locohane/      # インスタンス専用の拡張ディレクトリ（[paths] instance_locohane_dir。研究室で昇格した skills/・agents/・回帰テスト用の evals/）
+│   └── <name>/               # インスタンス別の設定フォルダ。既定ではインスタンス専用の拡張ディレクトリ（[skill_lab] instance_locohane_dir。研究室で昇格した skills/・agents/・回帰テスト用の evals/）も兼ねる
 ├── Locohane.lnk            # 起動用ショートカット（admin.batへリンク）
 ├── chainlit.md             # Chainlit ウェルカム画面
 ├── CLAUDE.md               # プロジェクト固有の追加指示（Claude Code 形式）
@@ -546,14 +546,14 @@ Locohane/
 | `data/memory/` | 永続メモリー（`user`/`feedback`/`project`/`reference` サブフォルダ＋`MEMORY.md`索引） | 蓄積した記憶が不要になったとき | フォルダ内を削除（`MEMORY.md`は次回保存時に再生成される） |
 | `data/plans/` | `create_plan` が `detail_markdown` 引数を渡した場合の詳細計画Markdown（`[paths] plans_dir`） | 古い計画が不要になったとき | フォルダ内を削除 |
 | `data/skill_drafts/<ユーザー名>/` | skill-creator が作ったユーザー別ドラフトスキル（`<スキル名>/`）と、その評価結果（`_workspace/`）。`[skill_creator] draft_dir`。不採用のドラフトも記録として残る（一覧には出ない） | 不要なドラフトがあるとき | ドラフトのフォルダを削除（作成者は skill-creator の `delete_draft.py` でも消せる）。自動削除はされない |
-| `data/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
+| `data/<インスタンス名>/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
 | `data/skill_lab/themes/<テーマID>/` | スキル研究室の研究テーマ（仕様・開発中の資産・ケース・入力ファイル・評価と AI 修正の記録 `runs/`）。対象インスタンスごとに分かれる | テーマが終わり、記録が不要になったとき | テーマのフォルダを削除（実行中でないこと） |
 | `data/temp/_tmp_<作成時刻>_<短縮ID>/` | `execute_python_code`/`run_script` の中間生成物・`write_scratch_note`/`write_thread_note` の書き出し先。チャットでアップロードしたファイル（`uploads/<送信日時>/`。作業フォルダを指定していてもここ）。自セッション専用（`[default_workdir]` 参照）。フォルダ名先頭の作成時刻（`YYMMDDHHMMSS`）はファイラー上で作成順に並べるためのもの。短縮IDは thread_id の SHA-1 先頭10桁（パス長上限 260文字を超えにくくするため、thread_id をそのまま使わない。旧形式 `_tmp_<作成時刻>_<thread_id>` のフォルダも再開時にそのまま使われる） | セッション終了後、不要になったとき | フォルダ内を削除（`[default_workdir] retention_days`/`cleanup_interval_hours` により自動削除もされる） |
 | `data/elements/<thread_id>/` | 添付ファイル（`provide_download`/`analyze_image`の`show_in_chat=True`等）・回答本文への画像埋め込みの永続化先。スレッド再開・プロセス再起動後も表示できるようここへ実体をコピー保存する（`[elements]`参照、`src/thread_store.py`） | 添付ファイルが不要になったとき | フォルダ内を削除 |
 | `.files/` | Chainlit自身のセッションファイル配信ディレクトリ（送信直後のライブ表示にのみ使う一時配信。プロジェクト直下、`data/`配下ではない） | いつでも | フォルダ内を削除 |
 | `data/app.lock` | 同一データディレクトリへの多重起動を防ぐプロセス排他ロック（`src/instance_lock.py`）。空ファイルにOSのファイルロックをかけるだけで中身は使わない | アプリ停止中、削除しても実害はない | ファイルを削除（アプリ起動中は削除不可） |
 | `data/runtime_status.json` | 接続中セッション・生成中スレッドのスナップショット（設定ダッシュボードのモニター表示用、`src/runtime_status.py`）。本体が数秒ごとに更新し、正常終了時に削除する | 異常終了で残った場合 | ファイルを削除（次回起動時に作り直される） |
-| `instances/<name>/` | 設定ダッシュボード（管理ツール）が管理するインスタンス別ディレクトリ（`config_overrides.json`・`.env`・`settings/`・`backups/`・`app_stdout.log`・スキル研究室で昇格したそのインスタンス専用のスキル・サブエージェント `locohane/`。データ本体は`data/<name>/`） | インスタンス自体が不要になったとき | 管理ツールの削除機能を使う（稼働中・`default`は不可。ログ・スレッド・default_workdir 等の永続データは、削除ダイアログで選択したものだけ一緒に削除される。詳細は「設定ダッシュボード」節） |
+| `instances/<name>/` | 設定ダッシュボード（管理ツール）が管理するインスタンス別ディレクトリ（`config_overrides.json`・`.env`・`settings/`・`backups/`・`app_stdout.log`・スキル研究室で昇格したそのインスタンス専用のスキル・サブエージェント `skills/`・`agents/`・回帰テスト用の `evals/`。データ本体は`data/<name>/`） | インスタンス自体が不要になったとき | 管理ツールの削除機能を使う（稼働中・`default`は不可。ログ・スレッド・default_workdir 等の永続データは、削除ダイアログで選択したものだけ一緒に削除される。詳細は「設定ダッシュボード」節） |
 
 `data/temp/_tmp_*/` は `config.ini` の `[default_workdir] retention_days`（既定7日）を過ぎたフォルダを
 アップロードしたファイルごと `cleanup_interval_hours`（既定1時間）おきに自動削除する。`retention_days` を0以下にすると
@@ -845,7 +845,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 365 ^
 
 `.locohane/skills/` はユーザー独自スキルの置き場（`skills/` とマージ走査、同名は優先）で、現状は使い方を示す `README.md` のみを含む。
 `.locohane/` は全インスタンス共通のため、組織・役割ごとに分けたいスキル・サブエージェントは、インスタンス専用の
-`instances/<インスタンス名>/locohane/skills/`・`agents/`（`[paths] instance_locohane_dir`、最優先で走査）に置く。
+`instances/<インスタンス名>/skills/`・`agents/`（`[skill_lab] instance_locohane_dir`、最優先で走査）に置く。
 管理ツールのスキル研究室で昇格したものは、ここへ置かれる。
 
 スキル開発の詳細な手順・規約は [`skills/SKILLS_README.md`](skills/SKILLS_README.md) を参照。
@@ -904,7 +904,7 @@ LLM側の共通変換ルール（`system_prompt/system_prompt.md`・`system_prom
   開発者はドラフトを研究テーマに取り込み（取り込んだ時点の複製で作業するため、作成者は引き続き編集できる）、
   仕様とケースを整え、研究室の AI に不具合を自己修正させて、トライアウト（`[skill_creator] tryout_repeats` 回、既定10回）に
   全回合格させる。人は確認・軽い手修正・承認／否認をする。承認すると、ドラフトを作ったインスタンス専用の置き場
-  （`[paths] instance_locohane_dir`、既定 `instances/<インスタンス名>/locohane/skills/`）へ昇格し、元のドラフトは
+  （`[skill_lab] instance_locohane_dir`、既定 `instances/<インスタンス名>/skills/`）へ昇格し、元のドラフトは
   `[skill_creator] archive_dir`（既定 `data/<インスタンス名>/skill_drafts_archive/`）へ `_workspace` ごと移る。
   差し戻すと、理由が作成者の skill-creator（`list_drafts.py` の `returned_reason`）に出る（研究室での修正をドラフトへ写すこともできる）。
 - **昇格先はインスタンス専用の置き場だけ**: 同梱の `skills/`・`agents/` や、全インスタンス共通の `project_locohane_dir`
@@ -1126,7 +1126,6 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[paths]` | `skills_dir` | スキルフォルダ | `SKILLS_DIR` |
 | `[paths]` | `agents_dir` | エージェント種別定義フォルダ（`dispatch_agent` の `agent_type`） | `AGENTS_DIR` |
 | `[paths]` | `project_locohane_dir` | プロジェクト固有の拡張ディレクトリ（ClaudeCode の `.claude/` 相当）。配下の `skills/`（`skills_dir` にマージ走査、同名は優先）・`agents/`（`agents_dir` にマージ走査、同名は優先）・`LOCOHANE.md`（プロジェクト固有指示、存在しなくてもエラーにならない）を自動検知する。`nudge_messages` と同じリスト形式で複数ディレクトリ指定可。要素を `{"dir": ..., "python": ...}` の辞書で書くと、そのディレクトリの `skills/` 配下の `.py` スクリプトだけを専用のPython環境で起動する（`[scripts].python` より優先） | `PROJECT_LOCOHANE_DIR` |
-| `[paths]` | `instance_locohane_dir` | インスタンス専用の拡張ディレクトリ（既定 `${instance_dir}/locohane` = `instances/<インスタンス名>/locohane`）。`project_locohane_dir` と同じく `skills/`・`agents/`・`LOCOHANE.md` を検知し、そのどれよりも後方（最優先）で常に走査する（`project_locohane_dir` を上書きしても外れない）。スキル研究室の昇格先 | `INSTANCE_LOCOHANE_DIR` |
 | `[paths]` | `system_prompt_path` | メインエージェント用システムプロンプトのテンプレート | `SYSTEM_PROMPT_PATH` |
 | `[paths]` | `bin_path` | 外部バイナリ実行ファイルの配置先ディレクトリ一覧（`project_locohane_dir`と同じリスト形式）。コマンド名を素の状態で叩くスキルがOS側PATH未登録でも呼び出せるようにする（`src/tools/_subprocess_env.py`参照） | `BIN_PATH` |
 | `[paths]` | `checkpoint_db` | 会話状態 SQLite | `CHECKPOINT_DB` |
@@ -1197,11 +1196,12 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[skill_creator]` | `tryout_repeats` | スキル安定化トライアウトの既定回数（昇格時に各ケースをこの回数だけ繰り返し、全回合格で合格。既定10） | `SKILL_TRYOUT_REPEATS` |
 | `[skill_creator]` | `other_users_drafts` | 他ユーザーのドラフトの扱い。`hidden`（既定）／`listed`／`readable`／`full`（「ドラフトスキル（ユーザー別）と昇格」参照） | `SKILL_OTHER_USERS_DRAFTS` |
 | `[skill_creator]` | `archive_dir` | 昇格したドラフトの退避先（既定 `${common_data_dir}/skill_drafts_archive`）。スキル走査対象・`draft_dir` と重なると起動時エラー | `SKILL_ARCHIVE_DIR` |
-| `[skill_lab]` | `max_iterations` | スキル研究室の スキル調整ループの最大反復回数（既定8）。スキル調整ワーカーで上書きする | `SKILL_LAB_MAX_ITERATIONS` |
-| `[skill_lab]` | `max_hours` | 1テーマのループに使ってよい最大時間（既定6時間） | `SKILL_LAB_MAX_HOURS` |
-| `[skill_lab]` | `poll_interval_seconds` | ワーカーが処理待ちのテーマを探す間隔（既定10秒） | `SKILL_LAB_POLL_INTERVAL_SECONDS` |
-| `[skill_lab]` | `fixer_max_file_chars` | AI に渡す資産ファイル1つあたりの最大文字数（既定20000） | `SKILL_LAB_FIXER_MAX_FILE_CHARS` |
-| `[skill_lab]` | `transcript_excerpt_chars` | AI に渡す実行の記録の抜粋の最大文字数（1回分、既定6000） | `SKILL_LAB_TRANSCRIPT_EXCERPT_CHARS` |
+| `[skill_lab]` | `instance_locohane_dir` | インスタンス専用の拡張ディレクトリで、スキル研究室・promote-skill の昇格先（既定 `${instance_dir}` = `instances/<インスタンス名>`。`skills/`・`agents/`・回帰テスト用の `evals/<テーマID>/` を置く）。昇格先（対象）のインスタンスの値が使われる。本体も `project_locohane_dir` と同じく `skills/`・`agents/`・`LOCOHANE.md` を検知し、そのどれよりも後方（最優先）で常に走査する（`project_locohane_dir` を上書きしても外れない） | `INSTANCE_LOCOHANE_DIR` |
+| `[skill_lab_worker]` | `max_iterations` | スキル調整ワーカーの スキル調整ループの最大反復回数（既定8）。このセクションはスキル調整ワーカーの設定画面にだけ出る（本体には出ない） | `SKILL_LAB_MAX_ITERATIONS` |
+| `[skill_lab_worker]` | `max_hours` | 1テーマのループに使ってよい最大時間（既定6時間） | `SKILL_LAB_MAX_HOURS` |
+| `[skill_lab_worker]` | `poll_interval_seconds` | ワーカーが処理待ちのテーマを探す間隔（既定10秒） | `SKILL_LAB_POLL_INTERVAL_SECONDS` |
+| `[skill_lab_worker]` | `fixer_max_file_chars` | AI に渡す資産ファイル1つあたりの最大文字数（既定20000） | `SKILL_LAB_FIXER_MAX_FILE_CHARS` |
+| `[skill_lab_worker]` | `transcript_excerpt_chars` | AI に渡す実行の記録の抜粋の最大文字数（1回分、既定6000） | `SKILL_LAB_TRANSCRIPT_EXCERPT_CHARS` |
 | `[default_workdir]` | `cleanup_interval_hours` | default_workdir 自動削除チェック間隔（時間） | `DEFAULT_WORKDIR_CLEANUP_INTERVAL_HOURS` |
 | `[log]` | `dir` | ログ出力先 | `LOG_DIR` |
 | `[log]` | `level` | ログの詳細度。`info`（現行仕様、ツール呼び出しの概要のみ）／`debug`（ツール呼び出しの全引数・全結果・LLM応答本文・thinkingまで記録）／`none`（ログを一切生成しない） | `LOG_LEVEL` |
@@ -1421,8 +1421,9 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
-- **スキル関係**: `[paths] project_locohane_dir`・`[paths] instance_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー
-- **スキル研究室**: `[llm] main_url`・`sub_url`（スキル調整ワーカーの LLM 接続先）・`[skill_lab]` の各キー
+- **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
+
+その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 
 ### 起動方法
 
@@ -1644,9 +1645,16 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 
 **スキル調整ワーカー**: 「＋ インスタンス追加」で種類「スキル調整ワーカー」を選んで作る（`instance.json` の `kind: skill_lab`）。
 チャット画面・ポートを持たず、「起動」でワーカーのプロセス（`python -m admin.skill_lab.worker --lab <名前>`）が動く。ログは詳細画面の「ログ」タブで見られる。
-AI（修正・judge・下書き）と評価の LLM 接続先は、スキル調整ワーカーの config.ini 画面で `[llm] main_url`/`sub_url` に
-設定する（モデルは本番と同じものを想定。本番と別の接続先にすれば、研究室の処理が本番の利用者を待たせない）。
-反復回数・時間の上限等は `[skill_lab]`（スキル調整ワーカーで上書き）。ワーカーが複数あるときは、テーマごとに担当を選ぶ。
+評価・AI 修正・judge・下書きは、研究テーマの対象インスタンスの設定（スキル・ガード・タイムアウト・`[llm]` の推論パラメータ等）を
+そのまま引き継ぐ。スキル調整ワーカーが独自に持つ設定は次の3つだけで、ワーカーの config.ini 画面にもこれだけが出る
+（ほかのキーは API からも保存できない。逆に `[skill_lab_worker]` は本体インスタンスの画面には出ない。判定は `admin/instances.py` の `config_key_applies()`）。
+
+- LLM の接続先: `[llm] main_url`・`sub_url`・`main_routing_strategy`・`sub_routing_strategy`（モデルは本番と同じものを想定。
+  本番と別の接続先にすれば、研究室の処理が本番の利用者を待たせない）
+- ループの上限等: `[skill_lab_worker]`（反復回数・時間の上限・待ち間隔・AI に渡す文字数）
+- ワーカー自身のログ: `[log]`
+
+本体インスタンスを複製してワーカーを作った場合も、複製元の設定のうち上の3つ以外は持ち込まない。ワーカーが複数あるときは、テーマごとに担当を選ぶ。
 
 **研究テーマはインスタンスごと**: 組織別・役割別のインスタンスごとに、画面左の一覧でインスタンスを選ぶと、そのインスタンスの
 ドラフト・テーマだけが出る（インスタンス詳細の「スキル研究室」サブタブ、カードの「研究テーマ」ボタンからも開ける）。
@@ -1673,7 +1681,7 @@ AI（修正・judge・下書き）と評価の LLM 接続先は、スキル調�
    （SKILL.md・エージェント定義）の削除、研究対象に無いスキル・サブエージェントの新規作成はできない。
    評価で使う LLM に接続できない（`llm_unreachable`）ときは、AI 修正に回さず「エラー」で止める。
 2. 全ケースに合格したら、対象インスタンスの `tryout_repeats` 回ずつのトライアウトを行い、全回合格で「レビュー待ち」にする。
-3. `[skill_lab] max_iterations`・`max_hours` に達したら「上限到達」で止まる（手で直して再開できる）。研究室を停止した場合は、
+3. `[skill_lab_worker] max_iterations`・`max_hours` に達したら「上限到達」で止まる（手で直して再開できる）。研究室を停止した場合は、
    次に起動したときに続きから再開する（異常終了で「実行中」のまま残った AI への依頼も、起動時に待ちへ戻す）。
    テーマの「停止」は、担当のワーカーが動いていなければその場で停止になり、ワーカーが止まっている間に押した停止が
    再起動時に打ち消されることはない。
@@ -1688,17 +1696,17 @@ AI（修正・judge・下書き）と評価の LLM 接続先は、スキル調�
 
 **昇格**（「承認して昇格する」）: 事前確認（トライアウトが今の内容を規定回数で評価して全回合格したものか、複製元の正式資産が
 変わっていないか、取り込み元のドラフトが作成者によって変わっていないか、配置先の同名資産、設定の登録が環境変数に邪魔されないか）を
-通ったテーマ全体を、対象インスタンス専用の置き場（`instances/<名前>/locohane/skills/`・`agents/`）へ置く。
+通ったテーマ全体を、対象インスタンス専用の置き場（`instances/<名前>/skills/`・`agents/`）へ置く。
 
 - スキルのスクリプトの免除設定と設定パッチを、そのインスタンスの `config_overrides.json` へ登録する（評価で足したのと同じ値）。
-- ケース一式（仕様・設定パッチ・入力ファイルを含む）は `instances/<名前>/locohane/evals/<テーマID>/` に残る
+- ケース一式（仕様・設定パッチ・入力ファイルを含む）は `instances/<名前>/evals/<テーマID>/` に残る
   （回帰テストは `python evals/run_all.py --cases-dir <そこ> --instance <名前>`）。
 - 取り込み元のドラフトはアーカイブへ移り、作成者の一覧から消える。
 - 置き換えたものは `evals/history/promote/` に退避し、記録は `evals/promotion_log.md` と変更履歴に残る。
 - 任意で「他のインスタンスにも配布する」を選ぶと、選んだインスタンスごとに、それぞれの専用置き場へ複製して設定も登録する。
 - 設定の保存に失敗した場合は、置いたファイルを元に戻す。昇格したものが使えるのは、配置先のインスタンスの再起動後。
 
-インスタンスを削除すると `instances/<名前>/locohane/` も消えるため、削除ダイアログに専用のスキル・サブエージェントの一覧を出して警告する。
+インスタンスを削除すると `instances/<名前>/` 配下の `skills/`・`agents/` も消えるため、削除ダイアログに専用のスキル・サブエージェントの一覧を出して警告する。
 インスタンスを複製して作るときは、専用の置き場も複製するかを選べる。
 
 ### 変更履歴（監査ログ）

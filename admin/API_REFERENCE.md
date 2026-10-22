@@ -234,6 +234,11 @@ $C $BASE/api/instances/default/config
 `env_override_active`（環境変数で上書き中か）等が入る。
 `mtime` は保存時の競合チェックに使う（下記）。
 
+`keys` に入るのは、そのインスタンスの種類で効くキーだけ。スキル調整ワーカーは `[llm]` の接続先
+（`main_url`・`sub_url`・`main_routing_strategy`・`sub_routing_strategy`）・`[skill_lab_worker]`・`[log]` だけで、
+本体のインスタンスには `[skill_lab_worker]` が入らない。`scope_note` はワーカーのときだけ説明文が入る（本体は null）。
+出していないキーを `updates` に入れると、事前確認・保存とも `400`。
+
 ### 変更内容の事前確認（保存しない）
 
 ```bash
