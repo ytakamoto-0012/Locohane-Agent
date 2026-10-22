@@ -77,6 +77,8 @@ _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("main_agent_tool_guard", "visibility_mode"): ("strict", "hint", "all"),
     ("skill_creator", "other_users_drafts"): ("hidden", "listed", "readable", "full"),
     ("log", "level"): ("info", "debug", "none"),
+    # src/config.py の VECTOR_DB_BACKENDS と同じ値・順序。
+    ("vector_db", "backend"): ("sqlite_vec", "qdrant"),
     ("thinking_loop_guard", "target"): ("all", "content_only", "thinking_only"),
     ("thinking_control", "default_level"): _THINKING_LEVEL_CHOICES,
     # rule_* は false＝ルール無効。
@@ -137,9 +139,23 @@ _LLM_URL = {
         ],
     },
 }
+# [vector_db].embedding_url。接続先ごとにベクターが変わらないよう start/end・provider は持たない
+# （src/config.py の _as_embedding_endpoints 参照）。
+_EMBEDDING_URL = {
+    "type": "list",
+    "item": {
+        "type": "dict",
+        "fields": [
+            {"name": "base_url", "schema": _str("例: http://localhost:12440/v1")},
+            {"name": "api_key", "schema": {**_str("dummy-not-used"), "default": "dummy-not-used"}},
+            {"name": "model", "schema": _str("埋め込みモデル名（全接続先で同じにする）")},
+        ],
+    },
+}
 _KEY_SCHEMAS: dict[tuple[str, str], dict[str, Any]] = {
     ("llm", "main_url"): _LLM_URL,
     ("llm", "sub_url"): _LLM_URL,
+    ("vector_db", "embedding_url"): _EMBEDDING_URL,
     ("plan", "plan_approval_exempt_scripts"): {"type": "list", "item": _SKILL_SCRIPT},
     ("subagent", "agent_type_run_script_allowlist"): {
         "type": "grouped",

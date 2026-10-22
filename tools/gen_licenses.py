@@ -38,6 +38,7 @@ TOP = [
     "xlrd",
     "python-docx",
     "python-pptx",
+    "sqlite-vec",
 ]
 # 告知に含めない実行環境ツール。
 EXCLUDE = {"pip", "setuptools", "wheel"}

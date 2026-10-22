@@ -227,6 +227,9 @@ async function refreshInstanceCards() {
     const btnLab = card.querySelector(".btn-lab");
     btnLab.classList.toggle("hidden", isLab);
     btnLab.addEventListener("click", () => renderInstanceDetail(inst.name, "skill-lab"));
+    const btnKnowledge = card.querySelector(".btn-knowledge");
+    btnKnowledge.classList.toggle("hidden", isLab);
+    btnKnowledge.addEventListener("click", () => renderInstanceDetail(inst.name, "knowledge"));
     card.querySelector(".btn-monitor").addEventListener("click", () => renderInstanceDetail(inst.name, "monitor"));
     card.dataset.instance = inst.name;
 
@@ -710,7 +713,7 @@ async function renderInstanceDetail(name, initialView) {
   const meta = instanceCache.find((i) => i.name === name);
   const isLab = meta && meta.kind === "skill_lab";
   $$(".subtab-btn").forEach((btn) => {
-    const hide = isLab ? ["monitor", "threads", "users", "display", "skill-lab"].includes(btn.dataset.subview) : false;
+    const hide = isLab ? ["monitor", "threads", "users", "display", "skill-lab", "knowledge"].includes(btn.dataset.subview) : false;
     btn.classList.toggle("hidden", hide);
   });
   await selectInstanceSubview(initialView || "config");
@@ -734,6 +737,7 @@ function renderInstanceSubview(view, opts) {
   if (view === "display") return renderSettingsPanel(container, currentInstanceName);
   if (view === "backups") return renderBackups(container);
   if (view === "skill-lab") return renderSkillLabPanel(container, currentInstanceName);
+  if (view === "knowledge") return renderKnowledgePanel(container, currentInstanceName);
 }
 
 /* --- config.ini 編集 --- */
@@ -804,6 +808,22 @@ const CONFIG_PRESETS = [
       "skill_creator.other_users_drafts",
       "skill_creator.archive_dir",
       "skill_lab.instance_locohane_dir",
+    ],
+  },
+  {
+    name: "ベクターDB",
+    keys: [
+      "vector_db.enabled",
+      "vector_db.backend",
+      "vector_db.qdrant_url",
+      "vector_db.embedding_url",
+      "vector_db.query_prefix",
+      "vector_db.document_prefix",
+      "vector_db.chunk_size",
+      "vector_db.chunk_overlap",
+      "vector_db.top_k",
+      "vector_db.max_result_chars",
+      "vector_db.min_score",
     ],
   },
 ];

@@ -517,6 +517,41 @@ $C -X POST $BASE/api/instances/default/skill-lab/themes/<テーマID>/return -H 
   -d '{"reason": "金額の丸め方が仕様と違う", "apply_fixes": true, "reject": false}'
 ```
 
+## ナレッジ（ベクターDB のコレクションと取り込み）
+
+インスタンスの社内文書コレクション（`[vector_db]`、README_DETAIL.md「ベクターDB（社内文書の意味検索）」）を操作する。
+取り込みは管理ツール内のバックグラウンドジョブで行い、`.../job` で進捗・結果を確認する。
+スキル調整ワーカーのインスタンスは対象外（400）。
+
+bash:
+
+```bash
+# 設定の要約とコレクション一覧（各コレクションの最新ジョブ付き）
+$C $BASE/api/instances/default/knowledge
+# コレクションを作成（取り込み元フォルダは管理ツールの PC から見える絶対パス）
+$C -X POST $BASE/api/instances/default/knowledge/collections -H "$H" -H "$J" \
+  -d '{"name":"manuals","description":"品質管理規程","source_folder":"D:/shared/manuals","recursive":true}'
+# 説明・フォルダ・サブフォルダ有無の変更（変える項目だけ）
+$C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"description":"品質規程"}'
+# 取り込み開始（差分）。rebuild=true で全ベクターを消して取り込み直す
+$C -X POST $BASE/api/instances/default/knowledge/collections/manuals/ingest -H "$H" -H "$J" -d '{"rebuild":false}'
+# 進捗・結果（state: running/done/error/stopped、done/total、result.failed）
+$C $BASE/api/instances/default/knowledge/collections/manuals/job
+# 取り込みの停止
+$C -X POST $BASE/api/instances/default/knowledge/collections/manuals/stop -H "$H"
+# コレクションの削除（ベクターも削除。取り込み元の文書は消えない）
+$C -X DELETE $BASE/api/instances/default/knowledge/collections/manuals -H "$H"
+```
+
+cmd:
+
+```bat
+%C% %BASE%/api/instances/default/knowledge
+%C% -X POST %BASE%/api/instances/default/knowledge/collections -H %H% -H %J% -d "{\"name\":\"manuals\",\"source_folder\":\"D:/shared/manuals\"}"
+%C% -X POST %BASE%/api/instances/default/knowledge/collections/manuals/ingest -H %H% -H %J% -d "{\"rebuild\":false}"
+%C% %BASE%/api/instances/default/knowledge/collections/manuals/job
+```
+
 ## 変更履歴
 
 新しい順に最大 `limit` 件（既定200）。`instance` で絞り込める。

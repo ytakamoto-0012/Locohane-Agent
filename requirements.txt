@@ -44,6 +44,10 @@ PyYAML==6.0.3
 # --- json_query ツール（JMESPath クエリ、src/file_tools.py） ---
 jmespath==1.1.0
 
+# --- ベクターDB（社内文書の意味検索、src/vector_db/）。Qdrant は httpx で REST を直接呼ぶため依存を足さない。
+#     文書の読み取りは下記の pypdf / python-docx / openpyxl / python-pptx を共用する ---
+sqlite-vec==0.1.9                    # [vector_db] backend=sqlite_vec（既定）のベクター保存・近傍検索（SQLite 拡張）。langgraph-checkpoint-sqlite の依存として導入済みだが、直接importするため明記
+
 # --- pdf-tools スキル（PDF読み込み: pypdf / PDFページ画像化: pypdfium2 /
 #     PDF生成: reportlab（platypus）で自前のセマンティックHTML断片パーサーから
 #     Flowableを組み立てる。日本語はWindows同梱のTTFフォント（Yu Gothic/

@@ -127,7 +127,7 @@
                  └───┬───────────────────────────┬──────────────┘
                      │ モデル呼び出し             │ ツール実行
        ┌─────────────▼───────────┐   ┌───────────▼──────────────────────┐
-       │ ChatOpenAI              │   │ src/tools/ (39ツール)               │
+       │ ChatOpenAI              │   │ src/tools/ (41ツール)               │
        │  → llama-server /v1     │   │  read_skill / read_skill_file /    │
        │  (OpenAI 互換)          │   │  run_script / execute_python_code /│
        └─────────────────────────┘   │  get_tool_source / check_work_dir_status /│
@@ -141,7 +141,8 @@
                                       │  create_memory / update_memory /   │
                                       │  delete_memory / read_memory /     │
                                       │  search_memory / list_memories /   │
-                                      │  help                              │
+                                      │  list_document_collections /       │
+                                      │  search_documents / help           │
                                       │  （skills/ ファイル操作は配下限定、 │
                                       │   Read/Glob/Grep は任意の絶対パス） │
                                       └───────┬───────────────┬──────────┘
@@ -249,7 +250,7 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 スキルの frontmatter（name/description）だけはこれとは別に、`src/skills.py` が
 起動時にシステムプロンプトへテキスト注入する（Discovery 段階、こちらはプロンプトベース）。
 
-上記3段階に加えて、スキルの読み込みとは独立したツールが以下の39個ある（いずれも `src/tools/` パッケージ配下、ツール1つにつき原則1ファイル）。
+上記3段階に加えて、スキルの読み込みとは独立したツールが以下の41個ある（いずれも `src/tools/` パッケージ配下、ツール1つにつき原則1ファイル）。
 
 | ツール | 役割 |
 |--------|------|
@@ -277,6 +278,7 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 | `get_plan_status` / `lock_plan_mode` | 現在 Plan Mode（書き込み系ツールがブロックされたロック状態）か Edit Automatically（承認済み計画を実行できる状態）かを確認し、後者から前者へユーザー承認なしに手動で戻す |
 | `AskUserQuestion` / `ask_user_choice` | 会話継続に必要な追加情報をユーザーへ質問（`AskUserQuestion` は自由記述。`labels` 省略時は単一入力、指定時は複数項目をまとめて提示。`ask_user_choice` は選択肢形式で、表示される選択肢には常に「✏️ その他（自由入力）」「❌ キャンセル」が自動で追加される） |
 | `create_memory` / `update_memory` / `delete_memory` / `read_memory` / `search_memory` / `list_memories` | スレッドをまたぐ永続メモリー（`src/memory.py`）の保存・更新・削除・全文読込・検索・一覧。主エージェントは全6ツールを持つ。`dispatch_agent` のサブエージェントには種別ごとに絞って委譲し、`explore` は読み込み系（`read_memory`/`search_memory`/`list_memories`）のみ、`worker` は全6ツール（フルアクセス）を持つ（`agents/*.md` の `tools:` 参照） |
+| `list_document_collections` / `search_documents` | ベクターDB（`src/vector_db/`）に取り込んだ社内文書のコレクション一覧と意味検索（読み取り専用）。検索結果には出典のパス（`@N`）・ページ等を添え、全体を `[vector_db] max_result_chars` で切り詰める。`[vector_db] enabled = false` の間は「無効です」を返す（「ベクターDB（社内文書の意味検索）」参照） |
 | `help` | ユーザー向けヘルプ本文（`system_prompt/help.md`）をそのまま返す |
 
 `run_script`（`run_script_background` 含む）と `execute_python_code`（`execute_python_code_background`
@@ -287,7 +289,7 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 （`execute_python_code_background` 含む）は `config.ini` の `[scripts] code_execution_enabled`
 でツール自体を無効化できる。
 
-上記の39ツール・スキルすべてがメインエージェントから直接呼べるわけではない。
+上記の41ツール・スキルすべてがメインエージェントから直接呼べるわけではない。
 `config.ini` の `[main_agent_tool_guard]`（既定 `mode = all`）が、メインエージェント
 自身によるビルトインツール・`run_script` 配下スキルスクリプトの直接呼び出しを
 `allow_entries` のホワイトリストで制限する（`dispatch_agent` 配下のサブエージェントは
@@ -319,6 +321,7 @@ Locohane/
 │   ├── settings_files.py     # 表示設定（public/settings/・instances/<name>/settings/）の読み書き
 │   ├── audit.py              # 変更履歴ログ（JSON Lines）
 │   ├── monitor.py            # モニター画面の読み取り処理（稼働状況・会話・トークン推移・ログ・LLM接続先）
+│   ├── knowledge.py          # ナレッジ画面の HTTP API（ベクターDB のコレクション管理・取り込みジョブ）
 │   ├── skill_lab/            # スキル研究室（「設定ダッシュボード」の「スキル研究室」節）
 │   │   ├── api.py             # 研究室の HTTP API（/api/instances/{name}/skill-lab/...）
 │   │   ├── themes.py          # 研究テーマの置き場・ファイル操作・状態（対象インスタンスの data/<名前>/skill_lab/themes/）
@@ -327,7 +330,7 @@ Locohane/
 │   │   ├── llm.py / fixer.py / judge.py / drafting.py  # 研究室の LLM による AI 修正・AI judge・下書き
 │   │   ├── worker.py          # スキル調整ワーカーとして起動されるワーカー（評価 → AI 修正 → 再評価 → トライアウト）
 │   │   └── promotion.py       # 昇格（インスタンス専用の置き場へ）・差し戻し・ドラフトのアーカイブ
-│   └── static/                # フロントエンド（ビルド不要の素のHTML/JS。研究室の画面は skill_lab.js）
+│   └── static/                # フロントエンド（ビルド不要の素のHTML/JS。研究室の画面は skill_lab.js、ナレッジ画面は knowledge.js）
 ├── instances/               # 管理ツールが管理するインスタンス別ディレクトリ（.gitignore済み、実行時生成）
 │   └── <name>/               # インスタンス別の設定フォルダ。既定ではインスタンス専用の拡張ディレクトリ（[skill_lab] instance_locohane_dir。研究室で昇格した skills/・agents/・回帰テスト用の evals/）も兼ねる
 ├── Locohane.lnk            # 起動用ショートカット（admin.batへリンク）
@@ -422,6 +425,12 @@ Locohane/
 │   │   └── （read_skill.py/run_script.py/dispatch_agent.py 等、ツールごとに1ファイル）
 │   ├── path_memory.py       # パスメモリー（@N）レジストリの読み書き
 │   ├── memory.py            # 永続メモリーの読み書き・索引再構築
+│   ├── vector_db/            # ベクターDB（社内文書の意味検索。「ベクターDB（社内文書の意味検索）」節）
+│   │   ├── extract.py / chunking.py # 文書からのテキスト抽出・チャンク分割
+│   │   ├── embeddings.py     # /v1/embeddings による埋め込み計算
+│   │   ├── catalog.py        # コレクション定義・取り込み済みファイルの記録（catalog.sqlite）
+│   │   ├── store.py / sqlite_vec_store.py / qdrant_store.py # ベクターの保存先（sqlite-vec / Qdrant）
+│   │   └── ingest.py / search.py # 差分取り込み（CLI: python -m src.vector_db.ingest）・検索
 │   ├── project_instructions.py # .locohane/LOCOHANE.md の読込
 │   ├── graph.py             # ReAct ループ（handwritten / prebuilt を切替）
 │   ├── llm/                  # ChatOpenAI（llama-server接続）の構築
@@ -547,6 +556,7 @@ Locohane/
 | `data/chat_threads.sqlite` | 会話スレッド一覧（画面左サイドバー）・再開用のメタデータ（スレッド名・所有者・Chainlitの Step 履歴）。`checkpoints.sqlite` とは別ファイル（`[thread_store]`参照） | 一覧・再開機能が不要になったとき | ファイルを削除（アプリ停止中に。`checkpoints.sqlite` 自体は消えないため会話状態は失われない） |
 | `data/logs/app.log` | アプリの動作ログ | いつでも | ファイルを削除 |
 | `data/memory/` | 永続メモリー（`user`/`feedback`/`project`/`reference` サブフォルダ＋`MEMORY.md`索引） | 蓄積した記憶が不要になったとき | フォルダ内を削除（`MEMORY.md`は次回保存時に再生成される） |
+| `data/vector_db/` | ベクターDB の `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`backend = sqlite_vec` 時のベクター `vectors.sqlite`（`[vector_db] dir`）。取り込み元の文書そのものは複製しない | コレクションが不要になったとき | 設定ダッシュボードのナレッジ画面でコレクションを削除する（フォルダごと消す場合はアプリと管理ツールの取り込みを止めてから。`backend = qdrant` のベクターは Qdrant 側に残る） |
 | `data/plans/` | `create_plan` が `detail_markdown` 引数を渡した場合の詳細計画Markdown（`[paths] plans_dir`） | 古い計画が不要になったとき | フォルダ内を削除 |
 | `data/skill_drafts/<ユーザー名>/` | skill-creator が作ったユーザー別ドラフトスキル（`<スキル名>/`）と、その評価結果（`_workspace/`）。`[skill_creator] draft_dir`。不採用のドラフトも記録として残る（一覧には出ない） | 不要なドラフトがあるとき | ドラフトのフォルダを削除（作成者は skill-creator の `delete_draft.py` でも消せる）。自動削除はされない |
 | `data/<インスタンス名>/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
@@ -1057,6 +1067,97 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
 
 ---
 
+## ベクターDB（社内文書の意味検索）
+
+規程・手順書・仕様書等の社内文書をインスタンス単位で取り込み、LLM が意味の近い箇所を検索して回答に使えるようにする機能
+（RAG）。既定では無効（`[vector_db] enabled = false`）。ロジックは `src/vector_db/` に集約し、LLM 向けには
+`src/tools/vector_db_tools.py` の2ツール（`list_document_collections`/`search_documents`、読み取り専用）を公開する。
+文書の取り込みは利用者ではなく管理者が設定ダッシュボードから行う。
+
+- **コレクション**: 取り込み元フォルダ1つに対応する文書群。インスタンス内の全ユーザーが検索できる。名前は半角英数字・`_`・`-`
+  （48文字以内）で、日本語の説明は「説明」欄に書く（`list_document_collections` で LLM にも見せる）。
+  定義と取り込み済みファイルの記録（サイズ・更新日時・SHA-256・チャンク数）は、保存先によらず
+  `[vector_db] dir`（既定 `data/<インスタンス名>/vector_db/`）の `catalog.sqlite` に置く（`src/vector_db/catalog.py`）。
+- **保存先**（`[vector_db] backend`）: `sqlite_vec`（既定。同じフォルダの `vectors.sqlite` に sqlite-vec の `vec0` 仮想テーブルで
+  保存、サーバー不要、`src/vector_db/sqlite_vec_store.py`）か `qdrant`（Qdrant サーバー、`src/vector_db/qdrant_store.py`）。
+  どちらもコサイン類似度で比べる。
+- **取り込み**（`src/vector_db/ingest.py`）: 対応形式は `.pdf`（ページ単位）・`.docx`・`.xlsx`/`.xlsm`（シート単位）・`.pptx`
+  （スライド単位、ノート含む）・`.md`/`.txt`/`.csv`（`[vector_db] include_extensions` で絞れる。Office の一時ファイル `~$*` は除く）。
+  本文を `chunk_size` 文字以内のチャンクに分け（段落・改行の切れ目を優先し、隣と `chunk_overlap` 文字重ねる）、
+  チャンクごとの埋め込みを保存する。2回目以降は**差分だけ**を処理する（サイズ・更新日時が同じファイルは読み直さず、
+  内容が同じなら埋め込み直さない。フォルダから消えたファイルのチャンクは削除する）。読めないファイル・本文が無いファイル
+  （画像だけの PDF 等）・`max_file_mb` を超えるファイルは失敗一覧に載せて続行する。
+- **埋め込みモデルの固定**: コレクションには作成時の埋め込みモデル名と次元を記録する。`embedding_url` のモデルを変えると
+  ベクターを比べられなくなるため、そのコレクションは検索対象から外れ（理由を LLM に返す）、取り込みも「再構築」
+  （全ベクターを消して取り込み直す）を求めるエラーになる。
+- **検索**（`search_documents`、`src/vector_db/search.py`）: `collection` 省略時は全コレクションを横断し、類似度が `min_score`
+  以上のチャンクを上位 `top_k` 件返す。各結果には出典のファイルパスをパスメモリー（`@N`）付きで添えるため、原文は
+  `@N` を `Read`（メインエージェントは `explore` への委譲）に渡して確認できる。結果全体は `max_result_chars` 文字で切り詰める。
+  結果が小さく抑えられるため、メインエージェント自身も直接呼べる（`[main_agent_tool_guard] allow_entries` に登録済み）。
+  サブエージェントは `explore`・`worker`・`verifier` が持つ。
+
+### 埋め込みサーバーの準備と設定
+
+埋め込みはチャット用とは別の埋め込みモデルを llama-server で起動し、OpenAI 互換の `/v1/embeddings` で計算する
+（`src/vector_db/embeddings.py`）。日本語を含む文書には多言語モデル（例: `bge-m3`・`multilingual-e5-large`）を使う。
+
+```cmd
+llama-server.exe -m D:\modelsge-m3-Q8_0.gguf --alias bge-m3 --embedding --pooling cls --port 12440 -c 8192 -b 8192 -ub 8192
+```
+
+- `--pooling` はモデルに合わせる（`bge-m3` は `cls`、`multilingual-e5` 系は `mean`）。`none` だとトークンごとのベクターが返り、
+  取り込み時に「--pooling を none 以外にして起動してください」というエラーになる。
+- 埋め込みは1チャンクを1回で処理するため、`-ub`（物理バッチ）を1チャンクのトークン数より大きくする。
+
+`config.ini`（またはダッシュボードの config.ini タブ。「ベクターDB」プリセットで関係キーだけを表示できる）で有効にする:
+
+```ini
+[vector_db]
+enabled = true
+embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3"},]
+```
+
+`embedding_url` は `[llm] main_url` と同じ形式で、複数書くと接続できなかったときだけ次へ切り替える。接続先ごとにベクターが
+変わらないよう、すべて同じ `model` にする必要があり、`start`/`end` は指定できない。`multilingual-e5` 系は
+`query_prefix = "query: "`・`document_prefix = "passage: "` も設定する（末尾の空白を残すためダブルクォートで囲む）。
+
+### 文書の取り込み（設定ダッシュボードの「ナレッジ」）
+
+インスタンスのカードの「ナレッジ」ボタン（またはインスタンス詳細の「ナレッジ」サブタブ）から操作する
+（`admin/knowledge.py`・`admin/static/knowledge.js`）。
+
+1. 「コレクションを追加」にコレクション名・説明・取り込み元フォルダ（管理ツールの PC から見える絶対パス。共有フォルダの
+   UNC パスも可）を入れて追加する。
+2. 「取り込み（差分）」を押すと、管理ツールのプロセス内で取り込みが始まり、進捗（処理済みファイル数・処理中のファイル）・
+   結果（追加・更新・変更なし・削除・失敗の件数と失敗理由）が表に出る。取り込み中は「停止」で中断できる
+   （未処理のファイルは次回の取り込みで処理され、削除扱いにはならない）。
+3. 文書を追加・更新したら、もう一度「取り込み（差分）」を押す（自動では取り込まない）。埋め込みモデルを変えたときは「再構築」。
+
+取り込みは対象インスタンスの設定（`config_overrides.json` を重ねたもの）で行う。本体インスタンスが起動中でも
+取り込みと検索は同時に行え、本体の再起動は不要。コレクションの作成・取り込み・削除は変更履歴（監査ログ）に残る。
+同じ操作はコマンドラインからも行える（コレクションの作成はダッシュボードで行っておく）:
+
+```cmd
+python -m src.vector_db.ingest --instance default --collection manuals
+python -m src.vector_db.ingest --instance default --collection manuals --rebuild
+```
+
+### Qdrant を使う
+
+`[vector_db] backend = qdrant`・`qdrant_url = http://localhost:6333` にすると、ベクターを Qdrant サーバーに保存する
+（REST API を httpx で直接呼ぶため、追加のパッケージは不要）。API キーが必要なサーバーは、そのインスタンスの `.env`
+（ダッシュボードの「環境変数」）に `QDRANT_API_KEY` を書く。
+
+- Qdrant 上のコレクション名は `qdrant_collection_prefix`（既定 `locohane_${instance}_`）＋コレクション名になる。
+  この接頭辞で始まらないコレクションには一切触れないため、他の用途と同じ Qdrant サーバーを共有できる。
+  インスタンスごとに接頭辞が変わるため、インスタンス同士の文書も混ざらない。
+- コレクションの定義と取り込み済みファイルの記録は Qdrant ではなく `[vector_db] dir` の `catalog.sqlite` に置く。
+  `backend` を切り替えた場合は、各コレクションを「再構築」して新しい保存先へ取り込み直す。
+- インスタンスを削除してもデータフォルダの `catalog.sqlite` が消えるだけで、Qdrant 上のコレクションは残る。
+  不要なら先にナレッジ画面でコレクションを削除するか、Qdrant 側で `locohane_<インスタンス名>_*` を削除する。
+
+---
+
 ## プロンプト資産の自動チューニングループ（evals/）
 
 `system_prompt.md`・`SKILL.md`・ツール docstring などの「LLM に渡すプロンプト資産」を、
@@ -1257,6 +1358,22 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[path_memory]` | `cleanup_interval_hours` | パスメモリーの自動削除チェック間隔（時間） | `PATH_MEMORY_CLEANUP_INTERVAL_HOURS` |
 | `[path_memory]` | `max_entries` | 1会話あたりのパスメモリー登録上限件数 | `PATH_MEMORY_MAX_ENTRIES` |
 | `[path_memory]` | `search_min_score` | パスメモリー類似検索（`search_path_memory`・「見つかりません」エラー時の候補提示）で結果に出す類似度（0.0〜1.0）の下限（既定0.3） | `PATH_MEMORY_SEARCH_MIN_SCORE` |
+| `[vector_db]` | `enabled` | ベクターDB（社内文書の意味検索）の有効/無効（既定 false）。false の間は `search_documents`/`list_document_collections` が「無効です」を返し、ダッシュボードからの取り込みもできない（「ベクターDB（社内文書の意味検索）」参照） | `VECTOR_DB_ENABLED` |
+| `[vector_db]` | `backend` | ベクターの保存先（`sqlite_vec` 既定 / `qdrant`） | `VECTOR_DB_BACKEND` |
+| `[vector_db]` | `dir` | `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`sqlite_vec` 時の `vectors.sqlite` の保存先（既定 `${common_data_dir}/vector_db`） | `VECTOR_DB_DIR` |
+| `[vector_db]` | `qdrant_url` | `backend = qdrant` 時の Qdrant サーバー URL（例 `http://localhost:6333`）。API キーは `.env` の `QDRANT_API_KEY` | `VECTOR_DB_QDRANT_URL` |
+| `[vector_db]` | `qdrant_collection_prefix` | Qdrant 上のコレクション名の接頭辞（既定 `locohane_${instance}_`）。この接頭辞以外のコレクションには触れない | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
+| `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定30） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
+| `[vector_db]` | `embedding_url` | 埋め込みを計算する接続先（`/v1/embeddings`）。`[llm] main_url` と同じ形式で、全要素同じ `model`・`start`/`end` 指定不可。`enabled = true` のとき必須（`[]` は未設定） | `VECTOR_DB_EMBEDDING_URL` |
+| `[vector_db]` | `embedding_batch_size` | 埋め込み1リクエストあたりのチャンク数（既定16） | `VECTOR_DB_EMBEDDING_BATCH_SIZE` |
+| `[vector_db]` | `embedding_timeout_seconds` | 埋め込み1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS` |
+| `[vector_db]` | `query_prefix` / `document_prefix` | 検索語・文書の先頭に付ける文字列（`multilingual-e5` 系は `"query: "`/`"passage: "`。末尾の空白を残すならダブルクォートで囲む） | `VECTOR_DB_QUERY_PREFIX` / `VECTOR_DB_DOCUMENT_PREFIX` |
+| `[vector_db]` | `chunk_size` / `chunk_overlap` | チャンク1つの最大文字数（既定800）と、隣り合うチャンクで重ねる文字数（既定100、`chunk_size` 未満） | `VECTOR_DB_CHUNK_SIZE` / `VECTOR_DB_CHUNK_OVERLAP` |
+| `[vector_db]` | `include_extensions` | 取り込む拡張子（カンマ区切り。対応形式は `.pdf .docx .xlsx .xlsm .pptx .md .txt .csv`） | `VECTOR_DB_INCLUDE_EXTENSIONS` |
+| `[vector_db]` | `max_file_mb` | 取り込む1ファイルの上限サイズ（MB、既定50。超えると失敗一覧に載る） | `VECTOR_DB_MAX_FILE_MB` |
+| `[vector_db]` | `top_k` | `search_documents` が既定で返す件数（既定5） | `VECTOR_DB_TOP_K` |
+| `[vector_db]` | `max_result_chars` | `search_documents` の結果全体の最大文字数（既定6000） | `VECTOR_DB_MAX_RESULT_CHARS` |
+| `[vector_db]` | `min_score` | 結果に出す類似度（0.0〜1.0、コサイン類似度）の下限（既定0.3） | `VECTOR_DB_MIN_SCORE` |
 | `[path_memory]` | `search_filename_weight` | 検索語がフルパスの場合に、類似度計算でファイル名部分を重視する割合（既定0.7、残りはフォルダ部分同士の類似度） | `PATH_MEMORY_SEARCH_FILENAME_WEIGHT` |
 | `[auth]` | `enabled` | ログイン認証機能のON/OFF（`false`＝現状通りログイン不要） | `AUTH_ENABLED` |
 | `[auth]` | `require_password` | 認証ON時、パスワード一致を必須にするか（`false`＝ユーザー名のみで通す） | `AUTH_REQUIRE_PASSWORD` |
@@ -1425,6 +1542,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`qdrant_url`・`embedding_url`・`query_prefix`・`document_prefix`・`chunk_size`・`chunk_overlap`・`top_k`・`max_result_chars`・`min_score`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 
@@ -1849,6 +1967,10 @@ MCPサーバー機能（`.locohane/settings.json`、上記「MCPサーバー接�
 オフライン保証は変わりません。ただし、ユーザー自身が追加したMCPサーバーが内部で
 ネットワーク通信を行うかどうかは各MCPサーバーの実装次第であり、本プロジェクトの
 管理範囲外です。
+
+ベクターDB（`[vector_db]`、既定は無効）を有効にした場合、埋め込みは `embedding_url` の推論サーバー、
+`backend = qdrant` 時のベクターは `qdrant_url` の Qdrant サーバーへ送る（取り込んだ文書のチャンク本文を含む）。
+どちらもローカルまたは LAN 内のサーバーを指定する前提で、既定の `backend = sqlite_vec` ではローカルファイルにだけ保存する。
 
 `web-search` スキル（Tavily APIによるWeb検索）は、スキル専用の
 `skills/web-search/scripts/.env` に `TAVILY_API_KEY` を設定した場合のみ、

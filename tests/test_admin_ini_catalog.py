@@ -150,6 +150,7 @@ def test_choices_match_src_config_constants():
         LLM_ROUTING_STRATEGIES,
         MAIN_AGENT_TOOL_GUARD_MODES,
         MAIN_AGENT_TOOL_GUARD_VISIBILITY_MODES,
+        VECTOR_DB_BACKENDS,
     )
 
     catalog = parse_file(CONFIG_INI_PATH)
@@ -162,6 +163,7 @@ def test_choices_match_src_config_constants():
         ("main_agent_tool_guard", "mode"): MAIN_AGENT_TOOL_GUARD_MODES,
         ("main_agent_tool_guard", "visibility_mode"): MAIN_AGENT_TOOL_GUARD_VISIBILITY_MODES,
         ("log", "level"): {"info", "debug", "none"},
+        ("vector_db", "backend"): set(VECTOR_DB_BACKENDS),
     }
     for pair, values in expected.items():
         info = by_pair[pair]

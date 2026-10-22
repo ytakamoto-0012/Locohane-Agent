@@ -171,7 +171,7 @@ python tools/gen_licenses.py
 | rpds-py | 2026.6.3 | MIT | https://github.com/crate-py/rpds |
 | simple-websocket | 1.1.0 | MIT License | https://github.com/miguelgrinberg/simple-websocket |
 | sniffio | 1.3.1 | MIT License; Apache Software License | https://github.com/python-trio/sniffio |
-| sqlite-vec | 0.1.9 | MIT License, Apache License, Version 2.0 | https://TODO.com |
+| sqlite-vec | 0.1.9 | MIT License, Apache License, Version 2.0 | https://github.com/asg017/sqlite-vec |
 | sse-starlette | 3.4.5 | BSD-3-Clause | https://github.com/sysid/sse-starlette |
 | starlette | 1.3.1 | BSD-3-Clause | https://github.com/Kludex/starlette |
 | syncer | 2.0.3 | MIT License | https://github.com/miyakogi/syncer |

@@ -493,6 +493,7 @@ DATA_PATH_FIELDS: tuple[tuple[str, str], ...] = (
     ("chat_log_dir", "[chat_log] dir（会話ログ）"),
     ("elements_dir", "[elements] dir（添付・埋め込み画像）"),
     ("path_memory_dir", "[path_memory] dir（パスメモリー）"),
+    ("vector_db_dir", "[vector_db] dir（ベクターDB。Qdrant 上のベクターは別途 Qdrant 側で削除）"),
     ("default_workdir", "[default_workdir] dir（既定の作業ディレクトリ）"),
 )
 
