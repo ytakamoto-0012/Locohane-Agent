@@ -718,6 +718,43 @@ app.bat
 `read_skill`（excel-read の本文読込）→ `run_script`（`read_excel.py` 実行）が
 **ステップとして可視化** され、結果がストリーミング表示される。
 
+### 5. HTTPS で待ち受ける（任意）
+
+LAN 上の他端末やスマホから使う場合など、通信を暗号化したいときは
+`config.ini` の `[admin]` にサーバー証明書と秘密鍵（どちらも PEM 形式）の
+パスを両方指定する（環境変数 `SSL_CERTFILE` / `SSL_KEYFILE` でも可）。
+
+```ini
+[admin]
+ssl_certfile = ./certs/server.crt
+ssl_keyfile = ./certs/server.key
+```
+
+- 管理ツール（uvicorn の `ssl_certfile`/`ssl_keyfile`）と、管理ツールから起動する
+  本体インスタンス・`app.bat`（`chainlit run` の `--ssl-cert`/`--ssl-key`）が、
+  同じ証明書で HTTPS 待ち受けになる（インスタンスごとの切り替えはできない）。
+  URL は `https://<ホスト>:<ポート>` になり、HTTP では接続できなくなる。
+- 片方だけの指定や、ファイルが見つからない場合は起動を拒否する
+  （HTTP へ黙ってフォールバックしない）。判定は `src/config.py` の `resolve_ssl_files()`。
+- 管理ツールのセッションクッキーには HTTPS 時に `Secure` 属性が付く。
+- 変更後は `admin.bat`（または `app.bat`）を起動し直す。管理画面からの
+  インスタンス再起動だけでは、管理ツール自身は HTTPS にならない。
+
+証明書は、社内 CA があればそこで発行したものを使うのが望ましい。検証用に
+自己署名証明書を作る場合の例（Git for Windows 同梱の openssl。接続に使う
+ホスト名・IP アドレスを `subjectAltName` に含めること）:
+
+```cmd
+openssl req -x509 -newkey rsa:2048 -nodes -days 365 ^
+  -keyout certs\server.key -out certs\server.crt -subj "/CN=locohane" ^
+  -addext "subjectAltName=DNS:localhost,IP:127.0.0.1,IP:192.168.1.10"
+```
+
+自己署名証明書ではブラウザに警告が出るため、利用する端末に証明書を
+信頼済みとして登録する（スマホの「ホーム画面に追加」等も、信頼されて
+いない証明書では正しく動かないことがある）。秘密鍵はリポジトリへ
+コミットしないこと（プロジェクト直下の `certs/` は `.gitignore` 対象）。
+
 ---
 
 ## 開発環境
@@ -1236,6 +1273,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[mcp]` | `call_timeout_seconds` | MCPツール（tools/call）1回あたりのタイムアウト秒数 | `MCP_CALL_TIMEOUT_SECONDS` |
 | `[admin]` | `host` | 設定ダッシュボード（管理ツール）自身の待受ホスト。`instances/<name>/config_overrides.json` の上書き対象外 | `ADMIN_HOST` |
 | `[admin]` | `port` | 管理ツール自身の待受ポート | `ADMIN_PORT` |
+| `[admin]` | `ssl_certfile` / `ssl_keyfile` | HTTPS 用のサーバー証明書・秘密鍵（PEM）のパス。両方指定すると管理ツールと本体インスタンスが HTTPS で待ち受ける。両方空なら HTTP（既定）。「5. HTTPS で待ち受ける（任意）」参照 | `SSL_CERTFILE` / `SSL_KEYFILE` |
 | `[admin]` | `session_timeout_minutes` | 管理ツールへのログインセッションの有効時間（分） | `ADMIN_SESSION_TIMEOUT_MINUTES` |
 | `[admin]` | `backup_keep` | インスタンスごとの設定バックアップの保持世代数 | `ADMIN_BACKUP_KEEP` |
 | `[admin]` | `stop_apps_on_exit` | 管理ツール終了時に、子プロセスとして起動した本体インスタンスも道連れで停止するか | `ADMIN_STOP_APPS_ON_EXIT` |
@@ -1682,9 +1720,11 @@ md を編集すれば管理ツールを再起動せずに反映される）。AP
 
 ### セキュリティ上の注意
 
-管理ツールはHTTPS化していない。`[admin].host` を `0.0.0.0` にしてLAN上に
-公開すると、ログインパスワードや設定値が平文でネットワークを流れる
-（社内LAN等、経路上の盗聴リスクを許容できる場合を除き変更しないこと）。
+既定では管理ツールはHTTPで待ち受ける。`[admin].host` を `0.0.0.0` にしてLAN上に
+公開する場合は、`[admin].ssl_certfile`/`ssl_keyfile` を設定してHTTPS化すること
+（「5. HTTPS で待ち受ける（任意）」参照）。HTTPのままだと、ログインパスワードや
+設定値が平文でネットワークを流れる（社内LAN等、経路上の盗聴リスクを許容できる
+場合を除きHTTPのまま公開しないこと）。
 また `[scripts].python` や `[llm]` の接続先を変更できることは、実質的に
 任意のコード実行・任意のLLMサーバーへの接続を許可することと同義であり、
 管理ツールへログインできる人（`ADMIN_USERS`）の範囲には注意すること。

@@ -6,8 +6,9 @@
 起動時にやること:
 1. [admin]セクション（管理ツール自身の設定）を config.ini から読む。
 2. プロジェクト直下 .env の ADMIN_USERS を読む（空なら起動を拒否する）。
-3. instances/default/ が無ければ 127.0.0.1:8000 で作る。
-4. autostart=true の全インスタンスを子プロセスとして起動する。
+3. [admin].ssl_certfile / ssl_keyfile があれば HTTPS で待ち受ける（本体インスタンスも同じ証明書で HTTPS 化する）。
+4. instances/default/ が無ければ 127.0.0.1:8000 で作る。
+5. autostart=true の全インスタンスを子プロセスとして起動する。
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.config import PROJECT_ROOT, load_config, resolve_instances_root
+from src.config import PROJECT_ROOT, load_config, resolve_instances_root, resolve_ssl_files
 
 from . import api_docs, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
 from . import instances as inst
@@ -58,7 +59,11 @@ if not _admin_users:
 
 _sessions = auth.SessionStore(timeout_minutes=_cfg.admin_session_timeout_minutes)
 _throttle = auth.LoginThrottle()
-_supervisor = supervisor.Supervisor(INSTANCES_ROOT, CONFIG_INI_PATH)
+# [admin].ssl_certfile / ssl_keyfile が両方あれば、管理ツールと、ここから起動する
+# 本体インスタンスの両方を HTTPS で待ち受ける（同じ証明書を共有する）。
+SSL_FILES = resolve_ssl_files(CONFIG_INI_PATH)
+_URL_SCHEME = "https" if SSL_FILES else "http"
+_supervisor = supervisor.Supervisor(INSTANCES_ROOT, CONFIG_INI_PATH, ssl_files=SSL_FILES)
 _env_var_mapping = env_overrides.build_mapping_from_file(CONFIG_PY_PATH)
 
 inst.ensure_default_instance(INSTANCES_ROOT)
@@ -99,6 +104,8 @@ def _set_session_cookie(response: Response, token: str) -> None:
         auth.SESSION_COOKIE_NAME,
         token,
         httponly=True,
+        # HTTPS 時は Secure を付け、HTTP の経路へセッションクッキーが流れないようにする。
+        secure=SSL_FILES is not None,
         samesite="strict",
         max_age=_cfg.admin_session_timeout_minutes * 60,
     )
@@ -183,7 +190,7 @@ def _instance_summary(name: str) -> dict[str, Any]:
         "exit_code": status.exit_code,
         # 「開く」リンク用。app_host が 0.0.0.0（全インターフェースで待受）だと
         # ブラウザから http://0.0.0.0:port は開けないため、ホストは 127.0.0.1 固定。
-        "url": f"http://127.0.0.1:{meta.app_port}",
+        "url": f"{_URL_SCHEME}://127.0.0.1:{meta.app_port}",
         "is_default": name == inst.DEFAULT_INSTANCE_NAME,
         "kind": meta.kind,
     }
@@ -1066,7 +1073,8 @@ if STATIC_DIR.is_dir():
 def main() -> None:
     import uvicorn
 
-    uvicorn.run(app, host=_cfg.admin_host, port=_cfg.admin_port, log_level="info")
+    ssl_kwargs = {"ssl_certfile": str(SSL_FILES[0]), "ssl_keyfile": str(SSL_FILES[1])} if SSL_FILES else {}
+    uvicorn.run(app, host=_cfg.admin_host, port=_cfg.admin_port, log_level="info", **ssl_kwargs)
 
 
 if __name__ == "__main__":

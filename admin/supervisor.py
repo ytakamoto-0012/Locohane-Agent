@@ -59,10 +59,18 @@ class Supervisor:
     呼ぶため。
     """
 
-    def __init__(self, instances_root: Path, config_ini_path: Path, project_root: Path = PROJECT_ROOT):
+    def __init__(
+        self,
+        instances_root: Path,
+        config_ini_path: Path,
+        project_root: Path = PROJECT_ROOT,
+        ssl_files: tuple[Path, Path] | None = None,
+    ):
         self._instances_root = instances_root
         self._config_ini_path = config_ini_path
         self._project_root = project_root
+        # HTTPS 用の (証明書, 秘密鍵)。None なら HTTP（src.config.resolve_ssl_files 参照）。
+        self._ssl_files = ssl_files
         self._processes: dict[str, subprocess.Popen] = {}
         self._crashed_exit_codes: dict[str, int] = {}
         self._lock = threading.RLock()
@@ -170,7 +178,7 @@ class Supervisor:
             # 場合はUIの「開く」リンクから明示的に開く）。
             # --watch(-w): ファイル変更検知での自動リロード。本番運用では非推奨のため
             # 既定False。開発時の動作確認用にインスタンスごとに有効化できる。
-            cmd = self._command_for(meta)
+            cmd = self._command_for(meta, self._ssl_files)
             try:
                 proc = subprocess.Popen(
                     cmd,
@@ -191,7 +199,7 @@ class Supervisor:
             return InstanceStatus(state=InstanceState.RUNNING, pid=proc.pid)
 
     @staticmethod
-    def _command_for(meta: inst.InstanceMeta) -> list[str]:
+    def _command_for(meta: inst.InstanceMeta, ssl_files: tuple[Path, Path] | None = None) -> list[str]:
         """インスタンスの種類に応じた起動コマンド。
 
         スキル調整ワーカー（kind=skill_lab）はチャット画面を持たず、研究テーマを処理する
@@ -211,6 +219,8 @@ class Supervisor:
             "--port",
             str(meta.app_port),
         ]
+        if ssl_files is not None:
+            cmd += ["--ssl-cert", str(ssl_files[0]), "--ssl-key", str(ssl_files[1])]
         if meta.headless:
             cmd.append("--headless")
         if meta.watch:

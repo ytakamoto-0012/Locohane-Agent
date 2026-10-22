@@ -1243,6 +1243,36 @@ def resolve_instances_root(config_path: Path | None = None) -> Path:
     return _resolve(PROJECT_ROOT, raw)
 
 
+def resolve_ssl_files(config_path: Path | None = None) -> tuple[Path, Path] | None:
+    """HTTPS 用の証明書・秘密鍵（[admin].ssl_certfile / ssl_keyfile）を絶対パスで返す。
+
+    環境変数 SSL_CERTFILE / SSL_KEYFILE > config.ini の [admin] の順で決める。
+    両方空なら None（HTTP で待ち受ける）。管理ツール（admin/server.py）と、
+    そこから起動する本体インスタンス（admin/supervisor.py）、app.bat が使う。
+    設定の誤りで本体以外（evals・MCPサーバー等）まで起動できなくなるのを避けるため、
+    load_config() には含めず、待ち受ける側だけがこれを呼ぶ。
+
+    Args:
+        config_path: 読み込む config.ini のパス。省略時は DEFAULT_CONFIG_PATH。
+
+    Raises:
+        ValueError: 片方だけ指定されている、または指定されたファイルが無い場合。
+    """
+    parser = configparser.ConfigParser(interpolation=None)
+    parser.read(config_path or DEFAULT_CONFIG_PATH, encoding="utf-8")
+    cert = os.getenv("SSL_CERTFILE", parser.get("admin", "ssl_certfile", fallback="")).strip()
+    key = os.getenv("SSL_KEYFILE", parser.get("admin", "ssl_keyfile", fallback="")).strip()
+    if not cert and not key:
+        return None
+    if not cert or not key:
+        raise ValueError("[admin].ssl_certfile と ssl_keyfile は両方指定してください（HTTPで待ち受けるなら両方空にする）。")
+    cert_path, key_path = _resolve(PROJECT_ROOT, cert), _resolve(PROJECT_ROOT, key)
+    for label, p in (("ssl_certfile", cert_path), ("ssl_keyfile", key_path)):
+        if not p.is_file():
+            raise ValueError(f"[admin].{label} のファイルが見つかりません: {p}")
+    return cert_path, key_path
+
+
 def default_overrides_path(config_path: Path | None = None) -> Path:
     """default インスタンスの config_overrides.json のパスを返す。"""
     return resolve_instances_root(config_path) / DEFAULT_INSTANCE_NAME / "config_overrides.json"

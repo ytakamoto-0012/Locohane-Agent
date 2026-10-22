@@ -15,5 +15,14 @@ for /f "usebackq tokens=1,2" %%A in (`python -c "import json; from src.config im
     set APP_PORT=%%B
 )
 
-chainlit run app.py --host %APP_HOST% --port %APP_PORT%
+rem HTTPS: if config.ini [admin] ssl_certfile/ssl_keyfile (or the SSL_CERTFILE/
+rem SSL_KEYFILE env vars) are both set, pass them to chainlit. Validate first so
+rem a bad path stops here instead of silently falling back to HTTP.
+python -c "from src.config import resolve_ssl_files; resolve_ssl_files()" || (pause & exit /b 1)
+set SSL_ARGS=
+for /f "usebackq delims=" %%A in (`python -c "import subprocess; from src.config import resolve_ssl_files; f = resolve_ssl_files(); print(subprocess.list2cmdline(['--ssl-cert', str(f[0]), '--ssl-key', str(f[1])]) if f else '')"`) do (
+    set SSL_ARGS=%%A
+)
+
+chainlit run app.py --host %APP_HOST% --port %APP_PORT% %SSL_ARGS%
 pause

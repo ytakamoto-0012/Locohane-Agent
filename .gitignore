@@ -254,3 +254,6 @@ state.json
 
 # Locohane プロジェクト固有指示（CLAUDE.md相当）。.example側のみコミット対象。
 .locohane/LOCOHANE.md
+
+# HTTPS 用の証明書・秘密鍵（[admin].ssl_certfile / ssl_keyfile）
+certs/
