@@ -105,6 +105,7 @@ h4 .hint { margin-left: 4px; font-weight: normal; }
   border-bottom: 1px solid var(--border);
 }
 .brand { font-weight: 600; }
+.app-version { font-weight: normal; font-size: 0.8em; color: var(--text-dim); }
 .tabs { display: flex; gap: 4px; flex: 1; }
 .tab-btn, .subtab-btn { background: none; border: none; padding: 8px 14px; color: var(--text-dim); border-radius: var(--radius); }
 .tab-btn.active, .subtab-btn.active { background: var(--panel-2); color: var(--text); }

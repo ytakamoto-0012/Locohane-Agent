@@ -74,7 +74,7 @@ bash:
 ```bash
 $C -X POST $BASE/api/login -H "$J" \
   -d '{"username":"admin","password":"パスワード"}'
-# => {"username":"admin"}
+# => {"username":"admin","version":"0.2.0"}
 ```
 
 cmd（パスワードがASCIIのみの場合）:
@@ -89,11 +89,11 @@ cmd（パスワードに日本語を含む場合は、UTF-8で保存した `logi
 %C% -X POST %BASE%/api/login -H %J% -d @login.json
 ```
 
-### ログイン中のユーザー確認
+### ログイン中のユーザー・バージョン確認
 
 ```bash
 $C $BASE/api/me
-# => {"username":"admin"}
+# => {"username":"admin","version":"0.2.0"}
 ```
 
 ```bat

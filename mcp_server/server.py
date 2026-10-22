@@ -26,8 +26,9 @@ from fastmcp.server.providers.skills import SkillsDirectoryProvider
 
 from mcp_server import config, skill_tools
 from mcp_server.publish import build_publish_dir
+from src.version import __version__
 
-mcp = FastMCP(config.SERVER_NAME)
+mcp = FastMCP(config.SERVER_NAME, version=__version__)
 mcp.add_provider(
     SkillsDirectoryProvider(
         roots=build_publish_dir(),

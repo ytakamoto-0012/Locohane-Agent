@@ -18,6 +18,7 @@ export function Header({
 }) {
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [iconExtIndex, setIconExtIndex] = useState(0);
+  const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`${BACKEND_URL}/public/settings/header.md`)
@@ -28,6 +29,13 @@ export function Header({
           .map((line) => line.replace(/^#+\s*/, '').trim())
           .find((line) => line.length > 0);
         if (firstLine) setTitle(firstLine);
+      })
+      .catch(() => {});
+    // タイトルは header.md で差し替えられるため、バージョンは常時表示せずツールチップに出す
+    fetch(`${BACKEND_URL}/locohane/version`)
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((data: { version?: string }) => {
+        if (data.version) setVersion(data.version);
       })
       .catch(() => {});
   }, []);
@@ -46,7 +54,7 @@ export function Header({
 
   return (
     <header className="app-header">
-      <div className="app-header-brand">
+      <div className="app-header-brand" title={version ? `Locohane v${version}` : undefined}>
         {mobile && onOpenThreads ? (
           <button type="button" className="header-icon-button" title="会話一覧を開く" onClick={onOpenThreads}>
             <Icon name="menu" size={16} />

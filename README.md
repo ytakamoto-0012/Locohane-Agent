@@ -253,6 +253,7 @@ AI が書き込めるのは、この作業フォルダの中だけです。
 | ドキュメント | 対象 | 内容 |
 |-------------|------|------|
 | [README_DETAIL.md](README_DETAIL.md) | 管理者・開発者 | 設計・ディレクトリ構成・設定リファレンス・運用の詳細 |
+| [CHANGELOG.md](CHANGELOG.md) | 全員 | バージョンごとの変更点と、更新時の移行手順 |
 | [skills/SKILLS_README.md](skills/SKILLS_README.md) | スキル開発者 | スキルの書き方・規約 |
 | [agents/README/AGENTS_README.md](agents/README/AGENTS_README.md) | 開発者 | サブエージェント種別の定義方法 |
 | [mcp_server/MCP_README.md](mcp_server/MCP_README.md) | 開発者 | Locohane-Agent のスキルを MCP サーバーとして配布する方法 |

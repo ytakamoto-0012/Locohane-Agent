@@ -118,6 +118,7 @@ from src.images import is_image_file, load_image_bytes
 from src import instance_lock
 from src import runtime_status
 from src import skill_drafts
+from src.version import __version__ as LOCOHANE_VERSION
 from src.llm import (
     LLM_CONNECTION_ERRORS,
     ThinkingLoopDetected,
@@ -1240,6 +1241,11 @@ def _register_instance_settings_route() -> None:
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
 
+    @_asgi_app.get("/locohane/version")
+    async def _serve_version():
+        # チャット画面のヘッダーのツールチップに出す（ログイン前でも見えてよい情報）。
+        return {"version": LOCOHANE_VERSION}
+
     @_asgi_app.get("/public/settings/{filename}")
     async def _serve_settings_file(filename: str):
         path = _resolve_settings_file(filename)
@@ -1248,6 +1254,7 @@ def _register_instance_settings_route() -> None:
         return FileResponse(path)
 
     routes = _asgi_app.router.routes
+    routes.insert(0, routes.pop())
     routes.insert(0, routes.pop())
 
 
@@ -1738,6 +1745,7 @@ async def _setup() -> None:
     # 読み込まれホットリロードされないため、「config.iniを編集したのに挙動が
     # 変わらない」＝実は編集後に再起動していない、という原因を特定できる
     # ようにするため。詳細な選択過程は _select_endpoint() のログを参照）。
+    logging.getLogger(__name__).info("Locohane v%s を起動しました。", LOCOHANE_VERSION)
     logging.getLogger(__name__).info(
         "LLM接続先設定（起動時読込み）: main_routing_strategy=%s main_endpoints=%s",
         _config.main_routing_strategy,

@@ -334,6 +334,8 @@ Locohane/
 ├── chainlit.md             # Chainlit ウェルカム画面
 ├── CLAUDE.md               # プロジェクト固有の追加指示（Claude Code 形式）
 ├── QWEN.md                 # プロジェクト固有の追加指示（Qwen Code 形式、内容はCLAUDE.md参照の1行）
+├── VERSION                 # バージョン番号の正本（1行。「バージョン管理とリリース手順」節）
+├── CHANGELOG.md            # 変更履歴（Keep a Changelog 形式）
 ├── LICENSE                 # 本プロジェクトのライセンス（MIT）
 ├── THIRD_PARTY_LICENSES.md # 依存OSSライセンス一覧（tools/gen_licenses.pyで再生成）
 ├── memo.md                 # 開発者向けメモ
@@ -409,6 +411,7 @@ Locohane/
 │   └── results/             # 実行結果（再生成可能、.gitignore済み）
 ├── src/
 │   ├── config.py            # config.ini ローダー（frozen dataclass）
+│   ├── version.py           # VERSION ファイルからバージョン番号を読む（__version__）
 │   ├── skills.py            # スキル発見ミドルウェア（第1段階 Discovery）
 │   ├── agent_types.py       # エージェント種別発見（agents/*.md）
 │   ├── tools/                # LangGraph ツール39種（第2・第3段階＋独立ツール）。ツール1つにつき原則1ファイル
@@ -1736,6 +1739,60 @@ md を編集すれば管理ツールを再起動せずに反映される）。AP
 また `[scripts].python` や `[llm]` の接続先を変更できることは、実質的に
 任意のコード実行・任意のLLMサーバーへの接続を許可することと同義であり、
 管理ツールへログインできる人（`ADMIN_USERS`）の範囲には注意すること。
+
+---
+
+## バージョン管理とリリース手順
+
+バージョン番号は [セマンティックバージョニング](https://semver.org/lang/ja/)（`MAJOR.MINOR.PATCH`）で付け、
+正本はプロジェクト直下の `VERSION` ファイル（1 行）の 1 か所だけに置く。
+`src/version.py` の `__version__` がこれを読み、次の場所に表示される（手で書き換える箇所は他に無い）。
+
+| 表示先 | 内容 |
+| --- | --- |
+| チャット画面 | ヘッダーのタイトルにマウスを乗せたときのツールチップ（`GET /locohane/version`） |
+| 設定ダッシュボード | 上部バーのタイトル横（`GET /api/me`・`POST /api/login` の `version`） |
+| MCP サーバー | `initialize` 応答の `serverInfo.version` |
+| ログ | 本体起動時の `app_*.log` に `Locohane vX.Y.Z を起動しました。` |
+
+### 番号の上げ方
+
+- **1.0.0 になるまで（0.x）**: `config.ini` のキーの移動・改名、データ配置の変更、ツール・スキル・
+  サブエージェントの廃止など、既存の設定やデータのままでは動かなくなる変更を含む場合は **MINOR** を上げる。
+  機能追加も MINOR。不具合修正と互換性を保った小さな改善だけなら **PATCH** を上げる。
+- **1.0.0 以降**: 互換性のない変更で MAJOR、互換性のある機能追加で MINOR、不具合修正で PATCH を上げる。
+- `system_prompt/`・`agents/`・`skills/` のプロンプトのチューニングだけの変更は PATCH とする。
+
+### 変更履歴（CHANGELOG.md）
+
+日々のコミットでは、利用者・運用者に関係する変更を `CHANGELOG.md` の `## [Unreleased]` に
+「追加」「変更」「廃止」「修正」「移行時の注意」の見出しで追記しておく。
+設定キーの移動・改名やデータ配置の変更は、旧キー → 新キーが分かるように必ず「移行時の注意」に書く。
+
+### リリース手順
+
+`main` ブランチで、作業ツリーがクリーンかつテストが通る状態から行う。
+
+1. `CHANGELOG.md` の `## [Unreleased]` の内容を `## [X.Y.Z] - YYYY-MM-DD` へ移し、空の `## [Unreleased]` を残す。
+   末尾の比較リンク（`[Unreleased]`・`[X.Y.Z]`）も追加・更新する。
+2. `VERSION` を `X.Y.Z` に書き換える。
+3. フロントエンドを変更していれば `frontend/` で `npm run build` し、`public/build/` を更新する。
+4. `pytest` を実行して全件成功を確認する。
+5. 「Release vX.Y.Z」の 1 コミットにまとめ、注釈付きタグを付けて push する。
+
+   ```bash
+   git commit -am "Release vX.Y.Z"
+   git tag -a vX.Y.Z -m "Locohane vX.Y.Z"
+   git push origin main vX.Y.Z
+   ```
+
+6. GitHub Release を作成する（本文は `CHANGELOG.md` の該当版の節）。
+
+   ```bash
+   gh release create vX.Y.Z --title "Locohane vX.Y.Z" --notes-file <該当版の節を書き出したファイル>
+   ```
+
+Claude Code からは `/release` スキル（`.claude/skills/release/`）でこの手順を対話的に実行できる。
 
 ---
 

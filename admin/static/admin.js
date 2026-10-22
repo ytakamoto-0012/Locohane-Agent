@@ -55,7 +55,7 @@ const app = $("#app");
 async function boot() {
   try {
     const me = await api("/api/me");
-    showShell(me.username);
+    showShell(me.username, me.version);
   } catch (e) {
     showLogin();
   }
@@ -74,7 +74,7 @@ function showLogin(message) {
         method: "POST",
         body: { username: form.get("username"), password: form.get("password") },
       });
-      showShell(result.username);
+      showShell(result.username, result.version);
     } catch (e) {
       $("#login-error").textContent = e.message || "ログインに失敗しました。";
     }
@@ -116,10 +116,11 @@ function promptRelogin() {
   return reloginPromise;
 }
 
-function showShell(username) {
+function showShell(username, version) {
   app.innerHTML = "";
   app.appendChild(clone("tpl-shell"));
   $("#me-username").textContent = username;
+  if (version) $("#app-version").textContent = `v${version}`;
   mainEl = $("#main");
   $("#logout-btn").addEventListener("click", async () => {
     await api("/api/logout", { method: "POST" }).catch(() => {});

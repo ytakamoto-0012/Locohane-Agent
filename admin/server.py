@@ -26,6 +26,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from src.config import PROJECT_ROOT, load_config, resolve_instances_root, resolve_ssl_files
+from src.version import __version__
 
 from . import api_docs, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
 from . import instances as inst
@@ -87,7 +88,7 @@ async def _lifespan(_app: FastAPI):
         _supervisor.stop_all()
 
 
-app = FastAPI(title="Locohane 設定ダッシュボード", lifespan=_lifespan)
+app = FastAPI(title="Locohane 設定ダッシュボード", version=__version__, lifespan=_lifespan)
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +154,7 @@ def login(body: LoginBody, request: Request, response: Response):
     _throttle.record_success(ip)
     token = _sessions.create(body.username)
     _set_session_cookie(response, token)
-    return {"username": body.username}
+    return {"username": body.username, "version": __version__}
 
 
 @app.post("/api/logout")
@@ -166,7 +167,7 @@ def logout(response: Response, locohane_admin_session: str | None = Cookie(defau
 
 @app.get("/api/me")
 def me(user: str = Depends(require_login)):
-    return {"username": user}
+    return {"username": user, "version": __version__}
 
 
 # ---------------------------------------------------------------------------
