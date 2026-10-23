@@ -181,6 +181,8 @@ def build_router(
             "qdrant_collection_prefix": cfg.vector_db_qdrant_collection_prefix,
             "distance": cfg.vector_db_distance,
             "embedding_model": endpoints[0].model if endpoints else None,
+            "query_prefix": cfg.vector_db_query_prefix,
+            "document_prefix": cfg.vector_db_document_prefix,
             "include_extensions": list(effective_extensions(cfg.vector_db_include_extensions, cfg.vector_db_image_input)),
             "image_input": cfg.vector_db_image_input,
             "max_file_mb": cfg.vector_db_max_file_mb,

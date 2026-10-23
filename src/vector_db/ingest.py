@@ -23,7 +23,7 @@ import httpx
 from ..config import Config
 from .catalog import Catalog, CatalogError, FileRecord, open_catalog
 from .chunking import split_text
-from .embeddings import embed_images, embed_texts, embedding_model
+from .embeddings import embed_images, embed_texts, embedding_model, open_client
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
 from .keyword_index import KeywordIndex, open_keyword_index
 from .render import IMAGE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, PageImage, render_pages
@@ -168,14 +168,14 @@ def ingest_collection(
         cfg: 対象インスタンスの設定。
         name: コレクション名。
         rebuild: True なら既存のベクター・記録を消して全ファイルを取り込み直す
-            （埋め込みモデルを変えたときに必要）。
+            （埋め込みモデル・document_prefix を変えたときに必要）。
         progress: ファイルの処理を始めるごとに呼ぶ進捗通知（並列のときは最後に始めたファイル）。
         should_stop: True を返したら残りのファイルを処理せずに終える。
         embedding_transport / store_transport: テスト用の httpx トランスポート。
 
     Raises:
         IngestError: コレクションが無い、取り込み元フォルダが無い、または
-            埋め込みモデルが前回と違うのに rebuild=False の場合。
+            埋め込みモデル・document_prefix が前回と違うのに rebuild=False の場合。
         EmbeddingError / StoreError: 埋め込みサーバー・保存先を使えない場合。
     """
     model = embedding_model(cfg)
@@ -193,8 +193,16 @@ def ingest_collection(
                 f"コレクション {name} は埋め込みモデル {collection.model} で作られています（今の設定は {model}）。"
                 "モデルが違うと検索できないため、再構築してください。"
             )
+        prefix = cfg.vector_db_document_prefix
+        if collection.model and collection.document_prefix is not None and collection.document_prefix != prefix and not rebuild:
+            raise IngestError(
+                f"コレクション {name} は document_prefix {collection.document_prefix!r} で取り込まれています（今の設定は {prefix!r}）。"
+                "接頭辞が混ざると検索の精度が落ちるため、再構築してください。"
+            )
         store = open_store(cfg, transport=store_transport)
         keywords = open_keyword_index(cfg.vector_db_dir)
+        # 埋め込みサーバーへの接続は取り込み全体で使い回す（embeddings.open_client 参照）。
+        embedding_client = open_client(cfg, transport=embedding_transport)
         try:
             if rebuild:
                 store.drop_collection(name)
@@ -205,9 +213,10 @@ def ingest_collection(
                 collection = catalog.get(name)
             _ingest(
                 cfg, catalog, store, keywords, name, collection.dim, model, folder, collection.recursive,
-                result, progress, should_stop, embedding_transport,
+                result, progress, should_stop, embedding_client,
             )
         finally:
+            embedding_client.close()
             keywords.close()
             store.close()
         catalog.mark_ingested(name)
@@ -252,7 +261,7 @@ def _keyword_chunks(cfg: Config, path: Path, needs_keywords: bool) -> list[Chunk
 
 
 def _prepare(
-    cfg: Config, path: Path, record: FileRecord | None, needs_keywords: bool, max_bytes: int, embedding_transport
+    cfg: Config, path: Path, record: FileRecord | None, needs_keywords: bool, max_bytes: int, embedding_client: httpx.Client
 ) -> _Prepared:
     """path を読み、必要なら本文の抽出・ページの画像化・埋め込みまで行う（DB には触れない。ワーカースレッドで動く）。
 
@@ -281,8 +290,8 @@ def _prepare(
         else:
             reason = "本文を取り出せませんでした（画像だけの PDF 等。[vector_db] image_input = true なら画像として取り込めます）"
         return _Prepared(path, record, mode, "failed", reason=reason)
-    vectors = embed_texts(cfg, [c.text for c in chunks], kind="document", transport=embedding_transport) if chunks else []
-    image_vectors = embed_images(cfg, [p.png for p in pages], transport=embedding_transport) if pages else []
+    vectors = embed_texts(cfg, [c.text for c in chunks], kind="document", client=embedding_client) if chunks else []
+    image_vectors = embed_images(cfg, [p.png for p in pages], client=embedding_client) if pages else []
     return _Prepared(
         path, record, mode, "embed", stat=st, sha=sha, chunks=chunks, pages=pages, vectors=vectors, image_vectors=image_vectors
     )
@@ -317,7 +326,7 @@ class _Writer:
         if self.dim is None:
             self.dim = len((vectors or image_vectors)[0])
             store.ensure_collection(name, self.dim)
-            catalog.set_model(name, self.model, self.dim)
+            catalog.set_model(name, self.model, self.dim, self.cfg.vector_db_document_prefix)
         # 本文と画像は別のコレクションに入れる（store.image_collection_name 参照）。
         # 画像の無いファイルも、image_input を切り替える前の画像のベクターが残らないよう消す。
         if chunks:
@@ -344,7 +353,7 @@ class _Writer:
 
 
 def _ingest(
-    cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folder, recursive, result, progress, should_stop, embedding_transport
+    cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folder, recursive, result, progress, should_stop, embedding_client
 ) -> None:
     """取り込み元のファイルを [vector_db].ingest_workers 個のスレッドで並列に処理する。
 
@@ -378,7 +387,7 @@ def _ingest(
                     if progress is not None:
                         progress(completed, len(files), source)
                     needs_keywords = not keywords.has_source(name, source)
-                    in_flight.add(pool.submit(_prepare, cfg, path, known.get(source), needs_keywords, max_bytes, embedding_transport))
+                    in_flight.add(pool.submit(_prepare, cfg, path, known.get(source), needs_keywords, max_bytes, embedding_client))
                 if not in_flight:
                     break
                 done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)

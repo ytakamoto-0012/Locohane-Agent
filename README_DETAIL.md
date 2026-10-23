@@ -1094,7 +1094,8 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   （「ページを画像として取り込む（image_input）」参照）。
 - **埋め込みモデルの固定**: コレクションには作成時の埋め込みモデル名と次元を記録する。`embedding_url` のモデルを変えると
   ベクターを比べられなくなるため、そのコレクションは検索対象から外れ（理由を LLM に返す）、取り込みも「再構築」
-  （全ベクターを消して取り込み直す）を求めるエラーになる。
+  （全ベクターを消して取り込み直す）を求めるエラーになる。取り込みに使った `document_prefix` も同じく記録し、設定と違えば
+  同じ扱いにする（記録の無い旧版のコレクションは確かめない）。
 - **検索**（`search_documents`、`src/vector_db/search.py`）: `collection` 省略時は全コレクションを横断する。次の検索を
   コレクションごとに別々に行い、点数ではなく順位で統合して上位 `top_k` 件返す（Reciprocal Rank Fusion。各一覧での順位 r に
   `重み / (60 + r)` を足した合計の高い順。重みは `rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`、0 で無効）。
@@ -1135,8 +1136,23 @@ embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not
 ```
 
 `embedding_url` は `[llm] main_url` と同じ形式で、複数書くと接続できなかったときだけ次へ切り替える。接続先ごとにベクターが
-変わらないよう、すべて同じ `model` にする必要があり、`start`/`end` は指定できない。`multilingual-e5` 系は
-`query_prefix = "query: "`・`document_prefix = "passage: "` も設定する（末尾の空白を残すためダブルクォートで囲む）。
+変わらないよう、すべて同じ `model` にする必要があり、`start`/`end` は指定できない。
+
+一部の埋め込みモデルは、検索語と文書の先頭に決まった目印（接頭辞）を付けないと精度が落ちる。`query_prefix`・`document_prefix` が
+既定の `auto` なら `model` の名前から自動で決める（`src/config.py` の `auto_embedding_prefixes()`）。実際に付ける値はナレッジ画面に出る。
+
+| `model` の名前 | 検索語（`query_prefix`） | 文書（`document_prefix`） |
+| --- | --- | --- |
+| `multilingual-e5` 系（`e5` を含む） | `query: ` | `passage: ` |
+| `multilingual-e5-*-instruct` | `Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ` | なし |
+| `ruri-v3` 系 | `検索クエリ: ` | `検索文書: ` |
+| `ruri`（v1・v2）系 | `クエリ: ` | `文章: ` |
+| `nomic-embed` 系 | `search_query: ` | `search_document: ` |
+| それ以外（`bge-m3` 等） | なし | なし |
+
+表に無いモデル、または `model` に別名を付けていて自動判定が当たらない場合は、値を直接書く（空欄なら付けない。
+末尾の空白を残すにはダブルクォートで囲む。例: `query_prefix = "query: "`）。`document_prefix` が変わると、既存の
+コレクションは検索対象から外れて「再構築」を求める（`query_prefix` だけなら再構築は要らない）。
 
 ベクター同士の近さの測り方（距離関数）は `distance` で選ぶ（`Cosine` 既定 / `Euclid` / `Manhattan` / `Dot`）。
 sqlite-vec では `Euclid` が vec0 の `l2`、`Manhattan` が `l1` に当たり、`Dot` は対応していない（`Qdrant` のみ）。
@@ -1197,7 +1213,7 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
 2. 「取り込み（差分）」を押すと、管理ツールのプロセス内で取り込みが始まり、進捗（処理済みファイル数・処理中のファイル）・
    結果（追加・更新・変更なし・削除・失敗の件数と失敗理由）が表に出る。取り込み中は「停止」で中断できる
    （未処理のファイルは次回の取り込みで処理され、削除扱いにはならない）。
-3. 文書を追加・更新したら、もう一度「取り込み（差分）」を押す（自動では取り込まない）。埋め込みモデルを変えたときは「再構築」。
+3. 文書を追加・更新したら、もう一度「取り込み（差分）」を押す（自動では取り込まない）。埋め込みモデル・`document_prefix` を変えたときは「再構築」。
 
 `[vector_db] ingest_workers`（既定1）を2以上にすると、複数のファイルを並列に処理する。並列にするのはファイルの読み取り・
 本文の抽出・画像化・埋め込みの計算で、カタログ・ベクター・キーワード索引への書き込みはメインスレッドで1件ずつ行う
@@ -1443,7 +1459,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedding_url` | 埋め込みを計算する接続先（`/v1/embeddings`）。`[llm] main_url` と同じ形式で、全要素同じ `model`・`start`/`end` 指定不可。`enabled = true` のとき必須（`[]` は未設定） | `VECTOR_DB_EMBEDDING_URL` |
 | `[vector_db]` | `embedding_batch_size` | 埋め込み1リクエストあたりのチャンク数（既定16） | `VECTOR_DB_EMBEDDING_BATCH_SIZE` |
 | `[vector_db]` | `embedding_timeout_seconds` | 埋め込み1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS` |
-| `[vector_db]` | `query_prefix` / `document_prefix` | 検索語・文書の先頭に付ける文字列（`multilingual-e5` 系は `"query: "`/`"passage: "`。末尾の空白を残すならダブルクォートで囲む） | `VECTOR_DB_QUERY_PREFIX` / `VECTOR_DB_DOCUMENT_PREFIX` |
+| `[vector_db]` | `query_prefix` / `document_prefix` | 検索語・文書の先頭に付ける文字列（既定 `auto` で `model` の名前から決める。空欄で付けない、それ以外はその値。末尾の空白を残すならダブルクォートで囲む。`document_prefix` を変えたら再構築が必要。「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_QUERY_PREFIX` / `VECTOR_DB_DOCUMENT_PREFIX` |
 | `[vector_db]` | `chunk_size` / `chunk_overlap` | チャンク1つの最大文字数（既定800）と、隣り合うチャンクで重ねる文字数（既定100、`chunk_size` 未満） | `VECTOR_DB_CHUNK_SIZE` / `VECTOR_DB_CHUNK_OVERLAP` |
 | `[vector_db]` | `include_extensions` | 取り込む拡張子（カンマ区切り。対応形式は `.pdf .docx .xlsx .xlsm .pptx .md .txt .csv`、`image_input = true` のときは画像ファイル `.png .jpg .jpeg .gif .bmp .webp .tif .tiff .heic .heif` も） | `VECTOR_DB_INCLUDE_EXTENSIONS` |
 | `[vector_db]` | `max_file_mb` | 取り込む1ファイルの上限サイズ（MB、既定50。超えると失敗一覧に載る） | `VECTOR_DB_MAX_FILE_MB` |

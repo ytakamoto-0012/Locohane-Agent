@@ -8,7 +8,7 @@ import httpx
 
 from ..config import Config
 from .catalog import Collection, catalog_exists, open_catalog
-from .embeddings import embed_texts, embedding_model
+from .embeddings import embed_texts, embedding_model, shared_client
 from .keyword_index import KEYWORDS_FILENAME, open_keyword_index
 from .store import Hit, image_collection_name, open_store
 
@@ -82,17 +82,27 @@ def search(
             result.skipped.append((c.name, "まだ文書が取り込まれていません"))
         elif c.model != model:
             result.skipped.append((c.name, f"埋め込みモデル {c.model} で作られています（今の設定は {model}。管理者が再構築する必要があります）"))
+        elif c.document_prefix is not None and c.document_prefix != cfg.vector_db_document_prefix:
+            result.skipped.append(
+                (
+                    c.name,
+                    f"document_prefix {c.document_prefix!r} で取り込まれています"
+                    f"（今の設定は {cfg.vector_db_document_prefix!r}。管理者が再構築する必要があります）",
+                )
+            )
         else:
             targets.append(c)
     if not targets:
         reasons = "、".join(f"{n}: {r}" for n, r in result.skipped) or "コレクションがありません"
         raise SearchError(f"検索できるコレクションがありません（{reasons}）。")
 
-    vector = embed_texts(cfg, [query], kind="query", transport=embedding_transport)[0]
+    # 検索のたびに接続し直さないよう、テスト用の transport が無ければプロセス内で共有するクライアントを使う。
+    client = shared_client(cfg) if embedding_transport is None else None
+    vector = embed_texts(cfg, [query], kind="query", transport=embedding_transport, client=client)[0]
     # 同じページのチャンクを1件にまとめると件数が減るため、各一覧は top_k より多めに取る。
     candidates = limit * _CANDIDATE_FACTOR
     lists: list[tuple[str, float, list[Hit]]] = []
-    store = open_store(cfg, transport=store_transport)
+    store = open_store(cfg, transport=store_transport, shared=True)
     try:
         for c in targets:
             texts = store.search(c.name, vector, candidates)

@@ -12,7 +12,7 @@ from src.config import LLMEndpoint
 from src.vector_db import catalog as vcat
 from src.vector_db import ingest, search
 from src.vector_db.chunking import split_text
-from src.vector_db.embeddings import EmbeddingError, embed_texts
+from src.vector_db.embeddings import EmbeddingError, embed_texts, open_client, shared_client
 from src.vector_db.extract import ExtractError, extract_segments
 from src.vector_db.qdrant_store import QdrantStore
 from src.vector_db.sqlite_vec_store import SqliteVecStore
@@ -352,6 +352,57 @@ def test_ingest_is_incremental(env):
     assert (collection.file_count, collection.model, collection.dim) == (1, "fake-embed", DIM)
 
 
+def test_ingest_reuses_one_embedding_client(env, monkeypatch):
+    # ファイルごとに接続し直すと、Windows の localhost では毎回約2秒かかるため、取り込み全体で1つを使い回す。
+    cfg, kwargs = env["cfg"], env["kwargs"]
+    opened, closed = [], []
+    real_open = ingest.open_client
+
+    def counting_open(*args, **kw):
+        client = real_open(*args, **kw)
+        opened.append(client)
+        real_close = client.close
+        client.close = lambda: (closed.append(client), real_close())[1]
+        return client
+
+    monkeypatch.setattr(ingest, "open_client", counting_open)
+    result = ingest.ingest_collection(cfg, "docs", **kwargs)
+    assert result.added == 2 and len(env["embed"].requests) == 2
+    assert len(opened) == 1 and closed == opened
+
+
+def test_embed_texts_does_not_close_given_client(tmp_path):
+    server = FakeEmbeddingServer()
+    cfg = make_config(tmp_path)
+    with open_client(cfg, transport=server.transport) as client:
+        embed_texts(cfg, ["a"], kind="document", client=client)
+        embed_texts(cfg, ["b"], kind="document", client=client)
+        assert not client.is_closed
+    assert len(server.requests) == 2
+
+
+def test_shared_client_is_reused_until_closed(tmp_path):
+    cfg = make_config(tmp_path)
+    client = shared_client(cfg)
+    assert shared_client(cfg) is client
+    client.close()
+    reopened = shared_client(cfg)
+    assert reopened is not client and not reopened.is_closed
+
+
+def test_qdrant_shared_store_keeps_client_open(monkeypatch):
+    from src.vector_db import qdrant_store
+
+    monkeypatch.setattr(qdrant_store, "_shared_clients", {})
+    first = QdrantStore("http://qdrant:6333/", prefix="p_", shared=True)
+    first.close()
+    second = QdrantStore("http://qdrant:6333", prefix="p_", shared=True)
+    assert second._client is first._client and not first._client.is_closed
+    own = QdrantStore("http://qdrant:6333", prefix="p_")
+    own.close()
+    assert own._client.is_closed and not first._client.is_closed
+
+
 def test_ingest_skips_files_over_size_limit_and_non_recursive(env):
     cfg = make_config(env["cfg"].vector_db_dir.parent, vector_db_backend=env["cfg"].vector_db_backend, vector_db_max_file_mb=0.00001)
     result = ingest.ingest_collection(cfg, "docs", **env["kwargs"])
@@ -379,6 +430,39 @@ def test_ingest_requires_rebuild_when_embedding_model_changes(env):
     rebuilt = ingest.ingest_collection(other, "docs", rebuild=True, **kwargs)
     assert rebuilt.added == 2
     assert search.list_collections(other)[0].model == "other-embed"
+
+
+def test_ingest_requires_rebuild_when_document_prefix_changes(env):
+    cfg, kwargs = env["cfg"], env["kwargs"]
+    ingest.ingest_collection(cfg, "docs", **kwargs)
+    assert search.list_collections(cfg)[0].document_prefix == cfg.vector_db_document_prefix
+    other = make_config(cfg.vector_db_dir.parent, vector_db_backend=cfg.vector_db_backend, vector_db_document_prefix="passage: ")
+    with pytest.raises(ingest.IngestError, match="document_prefix"):
+        ingest.ingest_collection(other, "docs", **kwargs)
+    with pytest.raises(search.SearchError, match="document_prefix"):
+        search.search(other, "溶接", **kwargs)
+    # query_prefix だけの違いは再構築不要
+    query_only = make_config(cfg.vector_db_dir.parent, vector_db_backend=cfg.vector_db_backend, vector_db_query_prefix="query: ")
+    assert search.search(query_only, "溶接", **kwargs).hits
+    ingest.ingest_collection(other, "docs", rebuild=True, **kwargs)
+    assert search.list_collections(other)[0].document_prefix == "passage: "
+    assert search.search(other, "溶接", **kwargs).hits
+
+
+def test_catalog_adds_document_prefix_column_to_old_db(tmp_path):
+    import sqlite3
+
+    conn = sqlite3.connect(str(tmp_path / vcat.CATALOG_FILENAME))
+    conn.executescript(
+        """
+        CREATE TABLE collections (name TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', source_folder TEXT NOT NULL,
+            recursive INTEGER NOT NULL DEFAULT 1, model TEXT, dim INTEGER, created_at TEXT NOT NULL, last_ingested_at TEXT);
+        INSERT INTO collections (name, source_folder, model, dim, created_at) VALUES ('old', 'C:/docs', 'fake-embed', 8, '2026-01-01');
+        """
+    )
+    conn.close()
+    with vcat.open_catalog(tmp_path) as catalog:
+        assert catalog.get("old").document_prefix is None
 
 
 def test_ingest_stops_without_deleting_unprocessed_files(env):

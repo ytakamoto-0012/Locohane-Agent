@@ -87,12 +87,14 @@ class VectorStore(Protocol):
     def close(self) -> None: ...
 
 
-def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None) -> VectorStore:
+def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None, shared: bool = False) -> VectorStore:
     """[vector_db].backend に応じた保存先を開く。使い終わったら close() すること。
 
     Args:
         cfg: 設定。
         transport: backend=qdrant のとき、テスト用に差し替える httpx のトランスポート。
+        shared: backend=qdrant のとき、Qdrant への接続をプロセス内で使い回す（検索用。
+            qdrant_store.shared_client 参照）。transport を渡したときは使わない。
     """
     if cfg.vector_db_backend == "qdrant":
         from .qdrant_store import QdrantStore
@@ -104,6 +106,7 @@ def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None) -> 
             timeout=cfg.vector_db_qdrant_timeout_seconds,
             distance=cfg.vector_db_distance,
             transport=transport,
+            shared=shared and transport is None,
         )
     from .sqlite_vec_store import SqliteVecStore
 

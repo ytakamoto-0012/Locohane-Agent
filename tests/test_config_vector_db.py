@@ -14,7 +14,7 @@ from src.config import load_config
 def isolated_data_dir(tmp_path, monkeypatch):
     """実プロジェクトの data/ にテスト用ディレクトリを作らないよう、データ保存先を tmp へ逃がす。"""
     monkeypatch.setenv("COMMON_DATA_DIR", str(tmp_path / "data" / "${instance}"))
-    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "VECTOR_DB_DISTANCE", "QDRANT_API_KEY"):
+    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "VECTOR_DB_DISTANCE", "VECTOR_DB_QUERY_PREFIX", "VECTOR_DB_DOCUMENT_PREFIX", "QDRANT_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -59,6 +59,34 @@ def test_enabled_with_overrides(tmp_path, monkeypatch):
     assert cfg.vector_db_include_extensions == (".pdf", ".md")
     assert cfg.vector_db_qdrant_api_key == "secret"
     assert cfg.vector_db_dir.is_dir()
+
+
+@pytest.mark.parametrize(
+    "model, query_prefix, document_prefix",
+    [
+        ("bge-m3", "", ""),
+        ("multilingual-e5-large", "query: ", "passage: "),
+        ("intfloat/multilingual-e5-base-Q8_0.gguf", "query: ", "passage: "),
+        ("multilingual-e5-large-instruct", "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ", ""),
+        ("ruri-v3-310m", "検索クエリ: ", "検索文書: "),
+        ("ruri-base-v2", "クエリ: ", "文章: "),
+        ("nomic-embed-text-v1.5", "search_query: ", "search_document: "),
+        ("qwen3-embedding", "", ""),
+    ],
+)
+def test_prefix_auto_follows_embedding_model(tmp_path, model, query_prefix, document_prefix):
+    embed = f'[{{"base_url": "http://localhost:12440/v1", "api_key": "x", "model": "{model}"}},]'
+    cfg = _load(tmp_path, {"enabled": "true", "embedding_url": embed})
+    assert (cfg.vector_db_query_prefix, cfg.vector_db_document_prefix) == (query_prefix, document_prefix)
+
+
+def test_prefix_explicit_value_and_blank_override_auto(tmp_path):
+    embed = '[{"base_url": "http://localhost:12440/v1", "api_key": "x", "model": "multilingual-e5-large"},]'
+    cfg = _load(tmp_path, {"enabled": "true", "embedding_url": embed, "query_prefix": '"q: "', "document_prefix": ""})
+    assert (cfg.vector_db_query_prefix, cfg.vector_db_document_prefix) == ("q: ", "")
+    # embedding_url 未設定なら auto は空
+    (tmp_path / "none").mkdir()
+    assert _load(tmp_path / "none", {}).vector_db_query_prefix == ""
 
 
 @pytest.mark.parametrize(

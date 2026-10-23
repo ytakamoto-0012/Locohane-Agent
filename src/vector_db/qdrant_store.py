@@ -7,6 +7,7 @@ Qdrant 上のコレクション名は [vector_db].qdrant_collection_prefix + Loc
 
 from __future__ import annotations
 
+import threading
 import uuid
 
 import httpx
@@ -16,6 +17,29 @@ from .store import DISTANCE_METRICS, ChunkRecord, Hit, StoreError, distance_to_s
 # ポイント ID（UUID）を source_path とチャンク番号から決めるための名前空間。
 _POINT_NAMESPACE = uuid.UUID("6b7f2f0e-3c1d-4f5a-9a51-1f0c2d7e8b90")
 _UPSERT_BATCH = 256
+
+# shared_client() のクライアント（接続先・API キー・タイムアウトごと）。プロセスが終わるまで閉じない。
+_shared_clients: dict[tuple[str, str, float], httpx.Client] = {}
+_shared_lock = threading.Lock()
+
+
+def _new_client(url: str, api_key: str, timeout: float, transport: httpx.BaseTransport | None = None) -> httpx.Client:
+    headers = {"api-key": api_key} if api_key else {}
+    return httpx.Client(base_url=url.rstrip("/"), headers=headers, timeout=timeout, transport=transport)
+
+
+def shared_client(url: str, api_key: str, timeout: float) -> httpx.Client:
+    """プロセス内で使い回す Qdrant 用のクライアント（検索のように何度も開く用。close しない）。
+
+    検索のたびに作り直すと、Windows で接続先が localhost だと毎回 IPv6（::1）を試してから
+    IPv4 へ戻るため約 2 秒かかる（embeddings.open_client と同じ）。
+    """
+    key = (url.rstrip("/"), api_key, timeout)
+    with _shared_lock:
+        client = _shared_clients.get(key)
+        if client is None or client.is_closed:
+            client = _shared_clients[key] = _new_client(url, api_key, timeout)
+        return client
 
 
 def _collection_distance(info: dict) -> str | None:
@@ -33,18 +57,21 @@ class QdrantStore:
         timeout: float = 30,
         distance: str = "Cosine",
         transport: httpx.BaseTransport | None = None,
+        shared: bool = False,
     ):
+        """shared=True なら shared_client() を使い、close() でも閉じない（transport は使わない）。"""
         if not url:
             raise StoreError("[vector_db].qdrant_url が設定されていません。")
-        headers = {"api-key": api_key} if api_key else {}
-        self._client = httpx.Client(base_url=url.rstrip("/"), headers=headers, timeout=timeout, transport=transport)
+        self._owns_client = not shared
+        self._client = shared_client(url, api_key, timeout) if shared else _new_client(url, api_key, timeout, transport)
         self._prefix = prefix
         self._distance = distance
         # 検索したコレクションの距離関数（作ったときの設定。今の [vector_db].distance と違うことがある）。
         self._distances: dict[str, str | None] = {}
 
     def close(self) -> None:
-        self._client.close()
+        if self._owns_client:
+            self._client.close()
 
     def _name(self, name: str) -> str:
         return self._prefix + name

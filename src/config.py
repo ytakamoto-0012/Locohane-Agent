@@ -475,7 +475,8 @@ class Config:
         vector_db_embedding_batch_size: 埋め込み1リクエストあたりのチャンク数。
         vector_db_embedding_timeout_seconds: 埋め込み1リクエストのタイムアウト秒数。
         vector_db_query_prefix / vector_db_document_prefix: 検索語・文書の先頭に
-            付ける文字列（e5 系モデルの "query: " / "passage: " 等）。
+            付ける文字列（e5 系モデルの "query: " / "passage: " 等）。設定値が auto なら
+            埋め込みモデル名から決めた値（auto_embedding_prefixes()）が入る。
         vector_db_chunk_size / vector_db_chunk_overlap: チャンク分割の目安文字数と
             隣り合うチャンクの重複文字数。
         vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。画像ファイルの
@@ -1874,6 +1875,47 @@ def _unquote(value: str | None) -> str:
     return stripped
 
 
+# [vector_db] query_prefix / document_prefix = auto のときの、埋め込みモデル名から決める接頭辞。
+# (モデル名の正規表現, 検索語の接頭辞, 文書の接頭辞) を上から順に試し、最初に当たったものを使う。
+# どれにも当たらないモデル（bge-m3 等）は接頭辞なし。各モデルカードの推奨どおり。
+_EMBEDDING_PREFIX_RULES: tuple[tuple[re.Pattern[str], str, str], ...] = (
+    # multilingual-e5-large-instruct 等: 検索語だけに指示文を付け、文書には付けない
+    (
+        re.compile(r"(^|[^a-z0-9])e5([^a-z0-9]|$).*instruct"),
+        "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ",
+        "",
+    ),
+    (re.compile(r"(^|[^a-z0-9])e5([^a-z0-9]|$)"), "query: ", "passage: "),
+    (re.compile(r"ruri-v3"), "検索クエリ: ", "検索文書: "),
+    (re.compile(r"ruri"), "クエリ: ", "文章: "),
+    (re.compile(r"nomic-embed"), "search_query: ", "search_document: "),
+)
+
+
+def auto_embedding_prefixes(model: str) -> tuple[str, str]:
+    """埋め込みモデル名から (検索語の接頭辞, 文書の接頭辞) を決める（_EMBEDDING_PREFIX_RULES 参照）。"""
+    name = (model or "").lower()
+    for pattern, query_prefix, document_prefix in _EMBEDDING_PREFIX_RULES:
+        if pattern.search(name):
+            return query_prefix, document_prefix
+    return "", ""
+
+
+def _as_embedding_prefix(value: str | None, endpoints: tuple[LLMEndpoint, ...], kind: str) -> str:
+    """[vector_db].query_prefix / document_prefix の値を、実際に付ける文字列にする。
+
+    auto（大文字小文字は問わない）なら embedding_url の model から決める
+    （auto_embedding_prefixes()）。それ以外は _unquote() した値をそのまま使う（空なら付けない）。
+    """
+    text = _unquote(value)
+    if text.lower() != "auto":
+        return text
+    if not endpoints:
+        return ""
+    query_prefix, document_prefix = auto_embedding_prefixes(endpoints[0].model)
+    return query_prefix if kind == "query" else document_prefix
+
+
 def _validate_vector_db(cfg: "Config") -> None:
     """[vector_db] のキー同士の組み合わせを検証する。
 
@@ -2756,6 +2798,8 @@ def load_config(
     sub_endpoints_inherit_main = not str(sub_url_configured_raw or "").strip()
     sub_url_raw = main_url_raw if sub_endpoints_inherit_main else sub_url_configured_raw
 
+    vector_db_embedding_endpoints = _as_embedding_endpoints(os.getenv("VECTOR_DB_EMBEDDING_URL", vector_db.get("embedding_url", "")))
+
     cfg = Config(
         main_endpoints=_as_llm_endpoints(
             main_url_raw,
@@ -2952,7 +2996,7 @@ def load_config(
             os.getenv("VECTOR_DB_QDRANT_TIMEOUT_SECONDS", vector_db.get("qdrant_timeout_seconds", 30)), "[vector_db].qdrant_timeout_seconds"
         ),
         vector_db_distance=_as_vector_db_distance(os.getenv("VECTOR_DB_DISTANCE", vector_db.get("distance", "Cosine"))),
-        vector_db_embedding_endpoints=_as_embedding_endpoints(os.getenv("VECTOR_DB_EMBEDDING_URL", vector_db.get("embedding_url", ""))),
+        vector_db_embedding_endpoints=vector_db_embedding_endpoints,
         vector_db_embedding_batch_size=_positive_int(
             os.getenv("VECTOR_DB_EMBEDDING_BATCH_SIZE", vector_db.get("embedding_batch_size", 16)), "[vector_db].embedding_batch_size"
         ),
@@ -2960,8 +3004,12 @@ def load_config(
             os.getenv("VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS", vector_db.get("embedding_timeout_seconds", 120)),
             "[vector_db].embedding_timeout_seconds",
         ),
-        vector_db_query_prefix=_unquote(os.getenv("VECTOR_DB_QUERY_PREFIX", vector_db.get("query_prefix", ""))),
-        vector_db_document_prefix=_unquote(os.getenv("VECTOR_DB_DOCUMENT_PREFIX", vector_db.get("document_prefix", ""))),
+        vector_db_query_prefix=_as_embedding_prefix(
+            os.getenv("VECTOR_DB_QUERY_PREFIX", vector_db.get("query_prefix", "auto")), vector_db_embedding_endpoints, "query"
+        ),
+        vector_db_document_prefix=_as_embedding_prefix(
+            os.getenv("VECTOR_DB_DOCUMENT_PREFIX", vector_db.get("document_prefix", "auto")), vector_db_embedding_endpoints, "document"
+        ),
         vector_db_chunk_size=_positive_int(os.getenv("VECTOR_DB_CHUNK_SIZE", vector_db.get("chunk_size", 800)), "[vector_db].chunk_size"),
         vector_db_chunk_overlap=int(os.getenv("VECTOR_DB_CHUNK_OVERLAP", vector_db.get("chunk_overlap", 100))),
         vector_db_include_extensions=_as_extension_list(

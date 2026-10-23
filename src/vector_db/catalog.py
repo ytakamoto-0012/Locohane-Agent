@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS collections (
     recursive INTEGER NOT NULL DEFAULT 1,
     model TEXT,
     dim INTEGER,
+    document_prefix TEXT,
     created_at TEXT NOT NULL,
     last_ingested_at TEXT
 );
@@ -57,6 +58,8 @@ class Collection:
     last_ingested_at: str | None
     file_count: int = 0
     chunk_count: int = 0
+    # 取り込みに使った [vector_db].document_prefix（None は記録の無い旧版で作ったもの）。
+    document_prefix: str | None = None
 
 
 @dataclass(frozen=True)
@@ -96,6 +99,11 @@ class Catalog:
         if "mode" not in columns:
             with self._conn:
                 self._conn.execute("ALTER TABLE files ADD COLUMN mode TEXT NOT NULL DEFAULT 'text'")
+        # document_prefix 列の無い旧版の catalog.sqlite に列を足す（既存のコレクションは NULL ＝ 不明）。
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(collections)")}
+        if "document_prefix" not in columns:
+            with self._conn:
+                self._conn.execute("ALTER TABLE collections ADD COLUMN document_prefix TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -156,9 +164,11 @@ class Catalog:
             self._conn.execute("DELETE FROM files WHERE collection = ?", (name,))
             self._conn.execute("DELETE FROM collections WHERE name = ?", (name,))
 
-    def set_model(self, name: str, model: str | None, dim: int | None) -> None:
+    def set_model(self, name: str, model: str | None, dim: int | None, document_prefix: str | None = None) -> None:
         with self._conn:
-            self._conn.execute("UPDATE collections SET model = ?, dim = ? WHERE name = ?", (model, dim, name))
+            self._conn.execute(
+                "UPDATE collections SET model = ?, dim = ?, document_prefix = ? WHERE name = ?", (model, dim, document_prefix, name)
+            )
 
     def mark_ingested(self, name: str) -> None:
         with self._conn:
@@ -205,6 +215,7 @@ def _to_collection(row: sqlite3.Row) -> Collection:
         last_ingested_at=row["last_ingested_at"],
         file_count=row["file_count"],
         chunk_count=row["chunk_count"],
+        document_prefix=row["document_prefix"],
     )
 
 
