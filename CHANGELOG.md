@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-23
+
 ### 変更
 
 - `ask_user_choice`（選択肢・複数選択）と `AskUserQuestion`（複数項目フォーム）で送信した内容を、
@@ -114,7 +116,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/ytakamoto-0012/Locohane-Agent/releases/tag/v0.1.0
