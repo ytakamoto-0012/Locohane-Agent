@@ -6,6 +6,7 @@ tests/ 配下のテストから `import _vector_db_fakes` で使える。
 
 from __future__ import annotations
 
+import base64
 import dataclasses
 import json
 import math
@@ -28,6 +29,19 @@ def fake_vector(text: str) -> list[float]:
     return [x / n for x in v]
 
 
+def _input_text(item) -> str:
+    """入力1件を、ベクターを作る元の文字列にする。
+
+    画像入力（{"content": [{"type": "image_url", ...}]}）は、データ URL の中身を UTF-8 として読む
+    （テストでは「画像」の代わりに文字列のバイト列を渡し、画像の内容に応じたベクターにする）。
+    """
+    if isinstance(item, str):
+        return item
+    url = item["content"][0]["image_url"]["url"]
+    assert url.startswith("data:image/png;base64,")
+    return base64.b64decode(url.split(",", 1)[1]).decode("utf-8", errors="ignore")
+
+
 class FakeEmbeddingServer:
     """/v1/embeddings の偽物。受け取った入力を requests に記録する。"""
 
@@ -42,8 +56,8 @@ class FakeEmbeddingServer:
         body = json.loads(request.content)
         self.requests.append({"url": str(request.url), **body})
         data = []
-        for i, text in enumerate(body["input"]):
-            vec = fake_vector(text)
+        for i, item in enumerate(body["input"]):
+            vec = fake_vector(_input_text(item))
             data.append({"index": i, "embedding": [vec, vec] if self.two_dimensional else vec})
         return httpx.Response(200, json={"data": data, "model": body["model"]})
 

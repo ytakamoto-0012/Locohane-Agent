@@ -19,6 +19,9 @@
   保存先は sqlite-vec（既定、サーバー不要）か Qdrant サーバーを選べます。埋め込みは別に起動した llama-server の
   `/v1/embeddings` で計算します。文書の取り込み（差分取り込み・再構築・停止）は設定ダッシュボードのインスタンスの
   「ナレッジ」画面で管理者が行います。新しい設定は `config.ini` の `[vector_db]` で、既定は無効です。
+  `[vector_db] image_input = true` にすると、PDF・Word・Excel・PowerPoint をページごとの画像にして埋め込み
+  （画像入力に対応した埋め込みモデルが必要。Office ファイルには Windows と Microsoft Office が必要）、図・表やスキャンした
+  PDF も検索できます。検索結果にはページ画像のパスも付き、AI が画像で中身を確かめられます。
 
 ## [0.2.0] - 2026-10-23
 

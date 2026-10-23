@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS files (
     mtime REAL NOT NULL,
     sha256 TEXT NOT NULL,
     chunk_count INTEGER NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'text',
     PRIMARY KEY (collection, source_path)
 );
 """
@@ -60,11 +61,14 @@ class Collection:
 
 @dataclass(frozen=True)
 class FileRecord:
+    """取り込み済みファイルの記録。mode は埋め込み方（"text" または "image"、ingest.file_mode()）。"""
+
     source_path: str
     size: int
     mtime: float
     sha256: str
     chunk_count: int
+    mode: str = "text"
 
 
 def validate_name(name: str) -> str:
@@ -87,6 +91,11 @@ class Catalog:
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        # mode 列の無い旧版の catalog.sqlite に列を足す（既存の記録はテキストとして取り込んだもの）。
+        columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)")}
+        if "mode" not in columns:
+            with self._conn:
+                self._conn.execute("ALTER TABLE files ADD COLUMN mode TEXT NOT NULL DEFAULT 'text'")
 
     def close(self) -> None:
         self._conn.close()
@@ -159,7 +168,7 @@ class Catalog:
 
     def files(self, name: str) -> dict[str, FileRecord]:
         rows = self._conn.execute(
-            "SELECT source_path, size, mtime, sha256, chunk_count FROM files WHERE collection = ?", (name,)
+            "SELECT source_path, size, mtime, sha256, chunk_count, mode FROM files WHERE collection = ?", (name,)
         ).fetchall()
         return {r["source_path"]: FileRecord(**dict(r)) for r in rows}
 
@@ -167,11 +176,12 @@ class Catalog:
         with self._conn:
             self._conn.execute(
                 """
-                INSERT INTO files (collection, source_path, size, mtime, sha256, chunk_count) VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO files (collection, source_path, size, mtime, sha256, chunk_count, mode) VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (collection, source_path) DO UPDATE SET
-                    size = excluded.size, mtime = excluded.mtime, sha256 = excluded.sha256, chunk_count = excluded.chunk_count
+                    size = excluded.size, mtime = excluded.mtime, sha256 = excluded.sha256, chunk_count = excluded.chunk_count,
+                    mode = excluded.mode
                 """,
-                (name, record.source_path, record.size, record.mtime, record.sha256, record.chunk_count),
+                (name, record.source_path, record.size, record.mtime, record.sha256, record.chunk_count, record.mode),
             )
 
     def delete_file(self, name: str, source_path: str) -> None:

@@ -526,7 +526,7 @@ $C -X POST $BASE/api/instances/default/skill-lab/themes/<テーマID>/return -H 
 bash:
 
 ```bash
-# 設定の要約とコレクション一覧（各コレクションの最新ジョブ付き）
+# 設定の要約（埋め込みモデル・対象の拡張子・image_input 等）とコレクション一覧（各コレクションの最新ジョブ付き）
 $C $BASE/api/instances/default/knowledge
 # コレクションを作成（取り込み元フォルダは管理ツールの PC から見える絶対パス）
 $C -X POST $BASE/api/instances/default/knowledge/collections -H "$H" -H "$J" \

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import logging
 from typing import Literal
 
@@ -62,7 +63,31 @@ def embed_texts(
     return vectors
 
 
-def _embed_batch(client: httpx.Client, endpoints: tuple[LLMEndpoint, ...], batch: list[str]) -> list[list[float]]:
+def embed_images(cfg: Config, pngs: list[bytes], *, transport: httpx.BaseTransport | None = None) -> list[list[float]]:
+    """PNG 画像の埋め込みベクターを入力と同じ順で返す（[vector_db].image_input = true の取り込み用）。
+
+    llama-server の /v1/embeddings の画像入力（--mmproj 付きで起動したマルチモーダルの
+    埋め込みモデル）の形式 {"content": [{"type": "image_url", ...}]} で送る。
+    画像はデータが大きく、llama-server では同じリクエスト内の画像入力の結果が
+    揺れる不具合も報告されているため、embedding_batch_size によらず1枚ずつ送る。
+    document_prefix はテキスト用のため付けない。
+
+    Raises:
+        EmbeddingError: どの接続先からも埋め込みを得られなかった場合
+            （埋め込みモデルが画像入力に対応していない場合を含む）。
+    """
+    endpoints = cfg.vector_db_embedding_endpoints
+    if not endpoints:
+        raise EmbeddingError("[vector_db].embedding_url が設定されていません。")
+    vectors: list[list[float]] = []
+    with httpx.Client(timeout=httpx.Timeout(cfg.vector_db_embedding_timeout_seconds, connect=10.0), transport=transport) as client:
+        for png in pngs:
+            url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
+            vectors.extend(_embed_batch(client, endpoints, [{"content": [{"type": "image_url", "image_url": {"url": url}}]}]))
+    return vectors
+
+
+def _embed_batch(client: httpx.Client, endpoints: tuple[LLMEndpoint, ...], batch: list[str | dict]) -> list[list[float]]:
     last_error: Exception | None = None
     for endpoint in endpoints:
         url = endpoint.base_url.rstrip("/") + "/embeddings"

@@ -21,8 +21,10 @@ import httpx
 from ..config import Config
 from .catalog import Catalog, CatalogError, FileRecord, open_catalog
 from .chunking import split_text
-from .embeddings import embed_texts, embedding_model
+from .embeddings import embed_images, embed_texts, embedding_model
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
+from .page_images import delete_page_images, drop_collection_images, save_page_images
+from .render import IMAGE_EXTENSIONS, PageImage, render_pages
 from .store import ChunkRecord, open_store
 
 logger = logging.getLogger(__name__)
@@ -69,6 +71,19 @@ def _sha256(path: Path) -> str:
         for block in iter(lambda: f.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def file_mode(cfg: Config, path: Path) -> str:
+    """path の埋め込み方。[vector_db].image_input = true で画像化に対応した形式なら "image"、それ以外は "text"。"""
+    return "image" if cfg.vector_db_image_input and path.suffix.lower() in IMAGE_EXTENSIONS else "text"
+
+
+def _page_chunk_text(cfg: Config, page: PageImage) -> str:
+    """画像として埋め込むページのチャンク本文（検索結果の抜粋）。ページの文字を chunk_size 文字までにする。"""
+    text = page.text.strip()
+    if not text:
+        return "（文字情報の無いページです。内容はページ画像で確認してください）"
+    return text if len(text) <= cfg.vector_db_chunk_size else text[: cfg.vector_db_chunk_size] + "…"
 
 
 def _chunk_file(cfg: Config, path: Path) -> list[ChunkRecord]:
@@ -129,6 +144,7 @@ def ingest_collection(
         try:
             if rebuild:
                 store.drop_collection(name)
+                drop_collection_images(cfg.vector_db_dir, name)
                 catalog.clear_files(name)
                 catalog.set_model(name, None, None)
                 collection = catalog.get(name)
@@ -156,34 +172,49 @@ def _ingest(cfg, catalog: Catalog, store, name, dim, model, folder, recursive, r
         seen.add(source)
         if progress is not None:
             progress(done - 1, len(files), source)
+        # image_input を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
+        mode = file_mode(cfg, path)
         try:
             stat = path.stat()
             record = known.get(source)
-            if record is not None and record.size == stat.st_size and record.mtime == stat.st_mtime:
+            same_mode = record is not None and record.mode == mode
+            if same_mode and record.size == stat.st_size and record.mtime == stat.st_mtime:
                 result.unchanged += 1
                 continue
             if stat.st_size > max_bytes:
                 result.failed.append((source, f"ファイルサイズが上限（{cfg.vector_db_max_file_mb}MB）を超えています"))
                 continue
             sha = _sha256(path)
-            if record is not None and record.sha256 == sha:
-                catalog.upsert_file(name, FileRecord(source, stat.st_size, stat.st_mtime, sha, record.chunk_count))
+            if same_mode and record.sha256 == sha:
+                catalog.upsert_file(name, FileRecord(source, stat.st_size, stat.st_mtime, sha, record.chunk_count, mode))
                 result.unchanged += 1
                 continue
-            chunks = _chunk_file(cfg, path)
+            if mode == "image":
+                pages = render_pages(path, cfg.vector_db_image_dpi)
+            else:
+                chunks = _chunk_file(cfg, path)
         except (OSError, ExtractError) as e:
             result.failed.append((source, str(e)))
             continue
-        if not chunks:
-            result.failed.append((source, "本文を取り出せませんでした（画像だけの PDF 等）"))
-            continue
-        vectors = embed_texts(cfg, [c.text for c in chunks], kind="document", transport=embedding_transport)
+        if mode == "image":
+            if not pages:
+                result.failed.append((source, "画像にできるページがありませんでした"))
+                continue
+            vectors = embed_images(cfg, [p.png for p in pages], transport=embedding_transport)
+            image_paths = save_page_images(cfg.vector_db_dir, name, source, [p.png for p in pages])
+            chunks = [ChunkRecord(p.locator, _page_chunk_text(cfg, p), image) for p, image in zip(pages, image_paths, strict=True)]
+        else:
+            if not chunks:
+                result.failed.append((source, "本文を取り出せませんでした（画像だけの PDF 等。[vector_db] image_input = true なら画像として取り込めます）"))
+                continue
+            vectors = embed_texts(cfg, [c.text for c in chunks], kind="document", transport=embedding_transport)
+            delete_page_images(cfg.vector_db_dir, name, source)
         if dim is None:
             dim = len(vectors[0])
             store.ensure_collection(name, dim)
             catalog.set_model(name, model, dim)
         store.replace_source(name, source, chunks, vectors)
-        catalog.upsert_file(name, FileRecord(source, stat.st_size, stat.st_mtime, sha, len(chunks)))
+        catalog.upsert_file(name, FileRecord(source, stat.st_size, stat.st_mtime, sha, len(chunks), mode))
         result.chunks += len(chunks)
         if record is None:
             result.added += 1
@@ -191,6 +222,7 @@ def _ingest(cfg, catalog: Catalog, store, name, dim, model, folder, recursive, r
             result.updated += 1
     for source in sorted(set(known) - seen):
         store.delete_source(name, source)
+        delete_page_images(cfg.vector_db_dir, name, source)
         catalog.delete_file(name, source)
         result.removed += 1
     if progress is not None:

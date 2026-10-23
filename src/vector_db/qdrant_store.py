@@ -73,7 +73,7 @@ class QdrantStore:
             {
                 "id": str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")),
                 "vector": vector,
-                "payload": {"source_path": source_path, "locator": chunk.locator, "text": chunk.text},
+                "payload": {"source_path": source_path, "locator": chunk.locator, "text": chunk.text, "image_path": chunk.image_path},
             }
             for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True))
         ]
@@ -104,6 +104,7 @@ class QdrantStore:
                     source_path=str(payload.get("source_path", "")),
                     locator=str(payload.get("locator", "")),
                     text=str(payload.get("text", "")),
+                    image_path=str(payload.get("image_path", "")),
                 )
             )
         return hits

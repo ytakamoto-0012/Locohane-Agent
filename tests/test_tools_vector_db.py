@@ -92,3 +92,21 @@ def test_tools_are_registered_for_main_and_subagents():
         assert {"search_documents", "list_document_collections"} <= resolved, agent
     allowed = {entry for entry, _ in cfg.main_agent_tool_guard_allow_entries}
     assert {"search_documents", "list_document_collections"} <= allowed
+
+
+def test_search_documents_shows_page_image_refs(env, monkeypatch, tmp_path):
+    from reportlab.pdfgen import canvas
+
+    from src.vector_db.render import PageImage
+
+    c = canvas.Canvas(str(env["docs"] / "drawing.pdf"))
+    c.showPage()
+    c.save()
+    monkeypatch.setattr(ingest, "render_pages", lambda path, dpi: [PageImage("p.1", "", "配管の図面".encode())])
+    cfg = dataclasses.replace(env["cfg"], vector_db_image_input=True)
+    embed = FakeEmbeddingServer()
+    ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport)
+    monkeypatch.setattr(tools._state, "_LLM_CONFIG", cfg)
+    text = tools.search_documents.func(query="配管の図面", top_k=1)
+    assert str(env["docs"] / "drawing.pdf") + " p.1" in text
+    assert "ページ画像: @2 " in text and ".png" in text

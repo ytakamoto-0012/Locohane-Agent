@@ -16,10 +16,15 @@ class StoreError(Exception):
 
 @dataclass(frozen=True)
 class ChunkRecord:
-    """保存する1チャンク。locator はファイル内の位置（extract.Segment.locator）。"""
+    """保存する1チャンク。locator はファイル内の位置（extract.Segment.locator）。
+
+    image_path はページを画像として埋め込んだ（[vector_db].image_input）チャンクの
+    ページ画像のパス。テキストとして埋め込んだチャンクは空文字。
+    """
 
     locator: str
     text: str
+    image_path: str = ""
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,7 @@ class Hit:
     source_path: str
     locator: str
     text: str
+    image_path: str = ""
 
 
 class VectorStore(Protocol):

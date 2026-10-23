@@ -474,6 +474,9 @@ class Config:
             隣り合うチャンクの重複文字数。
         vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。
         vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。
+        vector_db_image_input: True なら .pdf/.docx/.pptx/.xlsx/.xlsm をページごとの
+            画像にして埋め込む（マルチモーダルの埋め込みモデルが必要）。
+        vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
         vector_db_top_k: search_documents の既定の返却件数。
         vector_db_max_result_chars: search_documents の結果全体の最大文字数。
         vector_db_min_score: search_documents の結果に出す類似度の下限。
@@ -1020,6 +1023,8 @@ class Config:
     vector_db_chunk_overlap: int
     vector_db_include_extensions: tuple[str, ...]
     vector_db_max_file_mb: float
+    vector_db_image_input: bool
+    vector_db_image_dpi: int
     vector_db_top_k: int
     vector_db_max_result_chars: int
     vector_db_min_score: float
@@ -2922,6 +2927,8 @@ def load_config(
             os.getenv("VECTOR_DB_INCLUDE_EXTENSIONS", vector_db.get("include_extensions", ".pdf, .docx, .xlsx, .xlsm, .pptx, .md, .txt, .csv"))
         ),
         vector_db_max_file_mb=_positive_float(os.getenv("VECTOR_DB_MAX_FILE_MB", vector_db.get("max_file_mb", 50)), "[vector_db].max_file_mb"),
+        vector_db_image_input=_as_bool(os.getenv("VECTOR_DB_IMAGE_INPUT", vector_db.get("image_input", False))),
+        vector_db_image_dpi=_positive_int(os.getenv("VECTOR_DB_IMAGE_DPI", vector_db.get("image_dpi", 100)), "[vector_db].image_dpi"),
         vector_db_top_k=_positive_int(os.getenv("VECTOR_DB_TOP_K", vector_db.get("top_k", 5)), "[vector_db].top_k"),
         vector_db_max_result_chars=_positive_int(
             os.getenv("VECTOR_DB_MAX_RESULT_CHARS", vector_db.get("max_result_chars", 6000)), "[vector_db].max_result_chars"

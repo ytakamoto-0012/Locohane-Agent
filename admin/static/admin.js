@@ -819,6 +819,8 @@ const CONFIG_PRESETS = [
       "vector_db.embedding_url",
       "vector_db.query_prefix",
       "vector_db.document_prefix",
+      "vector_db.image_input",
+      "vector_db.image_dpi",
       "vector_db.chunk_size",
       "vector_db.chunk_overlap",
       "vector_db.top_k",

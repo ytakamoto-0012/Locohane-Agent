@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS chunks (
     collection_id INTEGER NOT NULL,
     source_path TEXT NOT NULL,
     locator TEXT NOT NULL,
-    text TEXT NOT NULL
+    text TEXT NOT NULL,
+    image_path TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS chunks_source ON chunks (collection_id, source_path);
 """
@@ -47,6 +48,11 @@ class SqliteVecStore:
             raise StoreError(f"sqlite-vec を読み込めません（この Python の sqlite3 は拡張の読み込みに対応していない可能性があります）: {e}") from e
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_SCHEMA)
+        # image_path 列の無い旧版の vectors.sqlite に列を足す。
+        columns = {r[1] for r in self._conn.execute("PRAGMA table_info(chunks)")}
+        if "image_path" not in columns:
+            with self._conn:
+                self._conn.execute("ALTER TABLE chunks ADD COLUMN image_path TEXT NOT NULL DEFAULT ''")
 
     def close(self) -> None:
         self._conn.close()
@@ -99,8 +105,8 @@ class SqliteVecStore:
                 if len(vector) != dim:
                     raise StoreError(f"埋め込みの次元（{len(vector)}）がコレクション {name} の次元（{dim}）と違います。")
                 cur = self._conn.execute(
-                    "INSERT INTO chunks (collection_id, source_path, locator, text) VALUES (?, ?, ?, ?)",
-                    (cid, source_path, chunk.locator, chunk.text),
+                    "INSERT INTO chunks (collection_id, source_path, locator, text, image_path) VALUES (?, ?, ?, ?, ?)",
+                    (cid, source_path, chunk.locator, chunk.text, chunk.image_path),
                 )
                 self._conn.execute(
                     f"INSERT INTO vec_c{cid} (rowid, embedding) VALUES (?, ?)",
@@ -116,11 +122,13 @@ class SqliteVecStore:
             raise StoreError(f"検索語の埋め込みの次元（{len(vector)}）がコレクション {name} の次元（{dim}）と違います。")
         rows = self._conn.execute(
             f"""
-            SELECT c.source_path, c.locator, c.text, v.distance
+            SELECT c.source_path, c.locator, c.text, c.image_path, v.distance
             FROM (SELECT rowid, distance FROM vec_c{cid} WHERE embedding MATCH ? AND k = ?) v
             JOIN chunks c ON c.id = v.rowid
             ORDER BY v.distance
             """,
             (sqlite_vec.serialize_float32(vector), int(top_k)),
         ).fetchall()
-        return [Hit(collection=name, score=1.0 - float(d), source_path=p, locator=loc, text=t) for p, loc, t, d in rows]
+        return [
+            Hit(collection=name, score=1.0 - float(d), source_path=p, locator=loc, text=t, image_path=img) for p, loc, t, img, d in rows
+        ]

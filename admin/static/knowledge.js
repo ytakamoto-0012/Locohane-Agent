@@ -30,6 +30,7 @@ async function renderKnowledgePanel(container, name) {
     `保存先: ${data.backend === "qdrant" ? `Qdrant（${data.qdrant_url || "URL 未設定"}、接頭辞 ${data.qdrant_collection_prefix}）` : `sqlite-vec（${data.dir}）`}`,
     `埋め込みモデル: ${data.embedding_model || "未設定"}`,
     `対象の拡張子: ${data.include_extensions.join(" ")}`,
+    `埋め込み方: ${data.image_input ? "PDF・Office はページ画像（image_input = true）" : "テキスト"}`,
   ];
   container.append(el("h3", { text: "ナレッジ（社内文書の意味検索）" }));
   container.append(el("p", { class: "hint", text: settings.join(" / ") }));

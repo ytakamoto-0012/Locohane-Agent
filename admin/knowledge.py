@@ -21,6 +21,7 @@ from src.config import Config, load_config
 from src.vector_db import catalog as vcat
 from src.vector_db.embeddings import EmbeddingError
 from src.vector_db.ingest import IngestError, ingest_collection
+from src.vector_db.page_images import drop_collection_images
 from src.vector_db.store import StoreError, open_store
 
 from . import audit
@@ -180,6 +181,7 @@ def build_router(
             "qdrant_collection_prefix": cfg.vector_db_qdrant_collection_prefix,
             "embedding_model": endpoints[0].model if endpoints else None,
             "include_extensions": list(cfg.vector_db_include_extensions),
+            "image_input": cfg.vector_db_image_input,
             "collections": [_collection_dict(c, running.get(c.name)) for c in collections],
         }
 
@@ -228,6 +230,7 @@ def build_router(
                     store.close()
             except StoreError as exc:
                 raise HTTPException(status_code=502, detail=f"ベクターを削除できませんでした: {exc}") from exc
+            drop_collection_images(cfg.vector_db_dir, collection)
             catalog.delete(collection)
         jobs.forget(name, collection)
         _audit(request, user, name, "knowledge_collection_delete", collection=collection)
