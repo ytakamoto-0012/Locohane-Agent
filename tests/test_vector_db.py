@@ -14,7 +14,7 @@ from src.vector_db import ingest, search
 from src.vector_db.chunking import split_text
 from src.vector_db.embeddings import EmbeddingError, embed_texts, open_client, shared_client
 from src.vector_db.extract import ExtractError, extract_segments
-from src.vector_db.qdrant_store import QdrantStore
+from src.vector_db.qdrant_store import QDRANT_PRESETS, QdrantStore
 from src.vector_db.sqlite_vec_store import SqliteVecStore
 from src.vector_db.store import ChunkRecord, StoreError
 
@@ -270,6 +270,91 @@ def test_qdrant_store_creates_collection_with_distance_and_rejects_mismatch():
         assert other.search("docs", fake_vector("溶接の基準"), 1)[0].score == pytest.approx(1.0)
     finally:
         other.close()
+
+
+def test_qdrant_store_without_preset_keeps_qdrant_defaults():
+    fake = FakeQdrant()
+    store = QdrantStore("http://qdrant:6333", prefix="p_", transport=fake.transport)
+    try:
+        store.ensure_collection("docs", DIM)
+        store.apply_preset("docs")
+        store.search("docs", fake_vector("溶接"), 1)
+    finally:
+        store.close()
+    config = fake.collections["p_docs"]["config"]
+    assert config["quantization_config"] is None and "on_disk" not in config["params"]["vectors"]
+    assert fake.patches == [] and "params" not in fake.queries[0]
+
+
+@pytest.mark.parametrize("preset", ["1m", "2m", "3m", "4m"])
+def test_qdrant_store_creates_collection_with_preset(preset):
+    fake = FakeQdrant()
+    store = QdrantStore("http://qdrant:6333", prefix="p_", preset=preset, transport=fake.transport)
+    expected = QDRANT_PRESETS[preset]
+    try:
+        _exercise_store(store)
+        # 作ったときに設定したので、もう一度 ensure・apply しても PATCH しない
+        store.ensure_collection("docs", DIM)
+        store.apply_preset("docs")
+    finally:
+        store.close()
+    config = fake.collections["p_docs"]["config"]
+    assert config["hnsw_config"]["m"] == expected.m and config["hnsw_config"]["ef_construct"] == expected.ef_construct
+    assert config["params"]["vectors"]["on_disk"] is expected.vectors_on_disk and config["params"]["on_disk_payload"] is True
+    assert config["optimizer_config"]["default_segment_number"] == expected.segments
+    assert config["quantization_config"]["scalar"]["type"] == "int8"
+    assert fake.patches == []
+    assert fake.queries[-1]["params"] == {"hnsw_ef": expected.hnsw_ef, "quantization": {"rescore": True, "oversampling": expected.oversampling}}
+
+
+def test_qdrant_presets_grow_with_scale_and_match_config_choices():
+    from src.config import VECTOR_DB_QDRANT_PRESETS
+
+    assert tuple(QDRANT_PRESETS) == VECTOR_DB_QDRANT_PRESETS[1:] and VECTOR_DB_QDRANT_PRESETS[0] == "none"
+    presets = list(QDRANT_PRESETS.values())
+    for smaller, larger in zip(presets, presets[1:]):
+        assert larger.m >= smaller.m and larger.ef_construct >= smaller.ef_construct and larger.hnsw_ef > smaller.hnsw_ef
+
+
+def test_qdrant_store_applies_preset_to_existing_collection():
+    fake = FakeQdrant()
+    old = QdrantStore("http://qdrant:6333", prefix="p_", transport=fake.transport)
+    try:
+        old.ensure_collection("docs", DIM)
+        old.replace_source("docs", "/a.md", [ChunkRecord("", "溶接の基準")], [fake_vector("溶接の基準")])
+    finally:
+        old.close()
+    store = QdrantStore("http://qdrant:6333", prefix="p_", preset="3m", transport=fake.transport)
+    try:
+        # 無いコレクションは何もしない
+        store.apply_preset("missing")
+        store.apply_preset("docs")
+        store.apply_preset("docs")
+        assert store.search("docs", fake_vector("溶接の基準"), 1)[0].text == "溶接の基準"
+    finally:
+        store.close()
+    # 設定が違うときだけ1回 PATCH し、ベクターは消さない（埋め込み直し不要）
+    assert [name for name, _ in fake.patches] == ["p_docs"]
+    body = fake.patches[0][1]
+    assert body["vectors"] == {"": {"on_disk": True}} and body["hnsw_config"]["m"] == QDRANT_PRESETS["3m"].m
+    assert body["params"] == {"on_disk_payload": True}
+    assert len(fake.collections["p_docs"]["points"]) == 1
+
+
+def test_ingest_applies_qdrant_preset_without_changed_files(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("溶接の基準は JIS に従う。", encoding="utf-8")
+    embed, qdrant = FakeEmbeddingServer(), FakeQdrant()
+    cfg = make_config(tmp_path, vector_db_backend="qdrant")
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        catalog.create("docs", str(docs))
+    ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport, store_transport=qdrant.transport)
+    assert qdrant.patches == []
+    tuned = make_config(tmp_path, vector_db_backend="qdrant", vector_db_qdrant_preset="2m")
+    result = ingest.ingest_collection(tuned, "docs", embedding_transport=embed.transport, store_transport=qdrant.transport)
+    assert result.unchanged == 1
+    assert [name for name, _ in qdrant.patches] == ["locohane_test_docs"]
 
 
 def test_qdrant_store_sends_api_key_and_reports_connection_error():

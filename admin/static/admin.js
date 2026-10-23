@@ -816,6 +816,7 @@ const CONFIG_PRESETS = [
       "vector_db.enabled",
       "vector_db.backend",
       "vector_db.qdrant_url",
+      "vector_db.qdrant_preset",
       "vector_db.distance",
       "vector_db.embedding_url",
       "vector_db.query_prefix",

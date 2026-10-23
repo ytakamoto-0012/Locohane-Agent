@@ -72,6 +72,9 @@ class FakeQdrant:
     def __init__(self):
         self.collections: dict[str, dict] = {}
         self.calls: list[tuple[str, str]] = []
+        # PATCH /collections/{name} と POST .../points/query で受け取った本文。
+        self.patches: list[tuple[str, dict]] = []
+        self.queries: list[dict] = []
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -87,9 +90,28 @@ class FakeQdrant:
             if request.method == "GET":
                 if coll is None:
                     return httpx.Response(404, json={"status": {"error": "Not found"}})
-                return httpx.Response(200, json={"result": {"config": {"params": {"vectors": {"size": coll["size"], "distance": coll["distance"]}}}}})
+                return httpx.Response(200, json={"result": {"config": coll["config"]}})
             if request.method == "PUT":
-                self.collections[name] = {"size": body["vectors"]["size"], "distance": body["vectors"]["distance"], "points": {}}
+                # GET で返す形（実際の Qdrant と同じく、作成時の optimizers_config は optimizer_config で返す）。
+                config = {
+                    "params": {"vectors": dict(body["vectors"]), "on_disk_payload": body.get("on_disk_payload", True)},
+                    "hnsw_config": {"m": 16, "ef_construct": 100, "on_disk": False, **body.get("hnsw_config", {})},
+                    "optimizer_config": {"default_segment_number": 0, **body.get("optimizers_config", {})},
+                    "quantization_config": body.get("quantization_config"),
+                }
+                self.collections[name] = {"size": body["vectors"]["size"], "distance": body["vectors"]["distance"], "points": {}, "config": config}
+                return httpx.Response(200, json={"result": True})
+            if request.method == "PATCH":
+                if coll is None:
+                    return httpx.Response(404, json={"status": {"error": "Not found"}})
+                self.patches.append((name, body))
+                config = coll["config"]
+                config["params"]["vectors"].update(body.get("vectors", {}).get("", {}))
+                config["params"].update(body.get("params", {}))
+                config["hnsw_config"].update(body.get("hnsw_config", {}))
+                config["optimizer_config"].update(body.get("optimizers_config", {}))
+                if "quantization_config" in body:
+                    config["quantization_config"] = body["quantization_config"]
                 return httpx.Response(200, json={"result": True})
             if request.method == "DELETE":
                 self.collections.pop(name, None)
@@ -108,6 +130,7 @@ class FakeQdrant:
             coll["points"] = {k: p for k, p in coll["points"].items() if p["payload"]["source_path"] != value}
             return httpx.Response(200, json={"result": {}})
         if rest == ["points", "query"]:
+            self.queries.append(body)
             q = body["query"]
             # Euclid・Manhattan は距離（小さいほど近い）を返し、昇順に並べる（実際の Qdrant と同じ）。
             metric = {

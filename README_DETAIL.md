@@ -1082,6 +1082,10 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   `[vector_db] dir`（既定 `data/<インスタンス名>/vector_db/`）の `catalog.sqlite` に置く（`src/vector_db/catalog.py`）。
 - **保存先**（`[vector_db] backend`）: `sqlite_vec`（既定。同じフォルダの `vectors.sqlite` に sqlite-vec の `vec0` 仮想テーブルで
   保存、サーバー不要、`src/vector_db/sqlite_vec_store.py`）か `qdrant`（Qdrant サーバー、`src/vector_db/qdrant_store.py`）。
+  対応できるチャンク件数の目安（インスタンス内の合計、1024 次元の bge-m3 の場合）は、sqlite-vec が **〜10万件で快適・
+  〜30万件が実用の上限**（索引を持たず検索のたびに全件と比べるため、30万件で検索1回が1秒前後）、Qdrant が
+  `qdrant_preset = none` で **〜100万件**、`1m`〜`4m` で **100万〜400万件**（「Qdrant を使う」参照）。チャンクは
+  `chunk_size = 800` なら文字の詰まった A4 1ページあたり 1〜2件で、`image_input = true` のページ画像は1ページ1件が別に加わる。
   どちらもコサイン類似度で比べる。本文のチャンクは保存先によらず、同じフォルダの `keywords.sqlite`（SQLite FTS5）にも
   キーワード検索用に入れる（`src/vector_db/keyword_index.py`）。
 - **取り込み**（`src/vector_db/ingest.py`）: 対応形式は `.pdf`（ページ単位）・`.docx`・`.xlsx`/`.xlsm`（シート単位）・`.pptx`
@@ -1259,6 +1263,24 @@ python -m src.vector_db.ingest --instance default --collection manuals --rebuild
   `backend` を切り替えた場合は、各コレクションを「再構築」して新しい保存先へ取り込み直す。
 - `[vector_db] distance = Dot`（内積）は Qdrant でだけ使える（sqlite-vec は未対応）。距離関数の選び方は
   距離関数の選び方は「埋め込みサーバーの準備と設定」を参照。
+- `[vector_db] qdrant_preset` で、想定するチャンク件数（1コレクションの本文または画像）の規模に合わせたコレクションの設定を選べる
+  （中身は `src/vector_db/qdrant_store.py` の `QDRANT_PRESETS`）。既定の `none` は何も指定しない（Qdrant の既定。ベクターを
+  すべて RAM に置く）。`1m`〜`4m` はどれもベクターを int8 にスカラー量子化した複製を RAM に置いて探し、上位の候補を元の
+  ベクターで再採点する（チャンク本文の payload はディスク）。RAM の目安は 1024 次元の場合で、次元に比例して増える。
+  ディスクは 100万件あたり約 8GB（SSD 推奨）。
+
+  | `qdrant_preset` | 想定件数 | HNSW `m` / `ef_construct` | 検索時 `hnsw_ef` | 元のベクター | セグメント数 | 再採点の oversampling | RAM の目安（サーバーの推奨） |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | `none` | 〜100万件 | Qdrant の既定（16 / 100） | Qdrant の既定 | RAM | Qdrant の既定 | なし（量子化しない） | 100万件あたり約 4GB＋索引 |
+  | `1m` | 〜100万件 | 16 / 128 | 128 | RAM | 4 | 1.5 | 約 6GB（8GB 以上） |
+  | `2m` | 〜200万件 | 16 / 200 | 160 | ディスク（mmap） | 6 | 2.0 | 約 3GB＋ディスクキャッシュ（8GB 以上） |
+  | `3m` | 〜300万件 | 24 / 256 | 200 | ディスク（mmap） | 8 | 2.0 | 約 4GB＋ディスクキャッシュ（16GB 以上） |
+  | `4m` | 〜400万件 | 32 / 256 | 256 | ディスク（mmap） | 8 | 2.5 | 約 5GB＋ディスクキャッシュ（16GB 以上） |
+
+  新しく作るコレクションには作るときに、既存のコレクションには次の「取り込み（差分）」の開始時に（変わったファイルが
+  無くても）設定を更新する（`PATCH /collections/{name}`。埋め込み直しは要らず、Qdrant が裏で索引・量子化を作り直す間も
+  検索できる）。`none` に戻しても既存のコレクションの設定は戻らない（戻すには再構築する）。400万件を超える場合は
+  Qdrant のクラスター（シャーディング）を検討する（Locohane 側の設定は無い）。
 - インスタンスを削除してもデータフォルダの `catalog.sqlite` が消えるだけで、Qdrant 上のコレクションは残る。
   不要なら先にナレッジ画面でコレクションを削除するか、Qdrant 側で `locohane_<インスタンス名>_*` を削除する。
 
@@ -1471,6 +1493,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `qdrant_url` | `backend = qdrant` 時の Qdrant サーバー URL（例 `http://localhost:6333`）。API キーは `.env` の `QDRANT_API_KEY` | `VECTOR_DB_QDRANT_URL` |
 | `[vector_db]` | `qdrant_collection_prefix` | Qdrant 上のコレクション名の接頭辞（既定 `locohane_${instance}_`）。この接頭辞以外のコレクションには触れない | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
 | `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定30） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
+| `[vector_db]` | `qdrant_preset` | Qdrant のコレクションのチャンク件数の規模別の設定（`none` 既定＝Qdrant の既定 / `1m` / `2m` / `3m` / `4m`＝〜100万〜400万件向け。HNSW・int8 量子化・ベクターのディスク配置・セグメント数・検索時の `hnsw_ef`）。既存のコレクションには次の取り込み時に反映（再構築不要）。「Qdrant を使う」参照 | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | 埋め込みを計算する接続先（`/v1/embeddings`）。`[llm] main_url` と同じ形式で、全要素同じ `model`・`start`/`end` 指定不可。`enabled = true` のとき必須（`[]` は未設定） | `VECTOR_DB_EMBEDDING_URL` |
 | `[vector_db]` | `embedding_batch_size` | 埋め込み1リクエストあたりのチャンク数（既定16） | `VECTOR_DB_EMBEDDING_BATCH_SIZE` |
 | `[vector_db]` | `embedding_timeout_seconds` | 埋め込み1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS` |
@@ -1656,7 +1679,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`embedding_url`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 

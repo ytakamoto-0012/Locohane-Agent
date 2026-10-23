@@ -84,6 +84,9 @@ class SqliteVecStore:
                 f"CREATE VIRTUAL TABLE vec_c{int(cur.lastrowid)} USING vec0(embedding float[{int(dim)}] distance_metric={_METRICS[self._distance]})"
             )
 
+    def apply_preset(self, name: str) -> None:
+        """[vector_db].qdrant_preset は Qdrant 用のため何もしない（vec0 は全件と比べるため索引の設定が無い）。"""
+
     def drop_collection(self, name: str) -> None:
         existing = self._collection(name)
         if existing is None:

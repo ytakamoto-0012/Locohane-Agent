@@ -337,6 +337,7 @@ def build_router(
             "dir": str(cfg.vector_db_dir),
             "qdrant_url": cfg.vector_db_qdrant_url,
             "qdrant_collection_prefix": cfg.vector_db_qdrant_collection_prefix,
+            "qdrant_preset": cfg.vector_db_qdrant_preset,
             "distance": cfg.vector_db_distance,
             "embedding_model": endpoints[0].model if endpoints else None,
             "query_prefix": cfg.vector_db_query_prefix,

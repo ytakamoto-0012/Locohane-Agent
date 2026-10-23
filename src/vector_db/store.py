@@ -72,6 +72,9 @@ class VectorStore(Protocol):
     def ensure_collection(self, name: str, dim: int) -> None:
         """コレクションが無ければ [vector_db].distance の距離関数で作る。あって次元・距離関数が違えば StoreError（再構築が必要）。"""
 
+    def apply_preset(self, name: str) -> None:
+        """既存のコレクションの設定を [vector_db].qdrant_preset に合わせる（Qdrant のみ。sqlite-vec では何もしない）。"""
+
     def drop_collection(self, name: str) -> None:
         """コレクションのベクターをすべて消す（無ければ何もしない）。"""
 
@@ -105,6 +108,7 @@ def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None, sha
             api_key=cfg.vector_db_qdrant_api_key,
             timeout=cfg.vector_db_qdrant_timeout_seconds,
             distance=cfg.vector_db_distance,
+            preset=cfg.vector_db_qdrant_preset,
             transport=transport,
             shared=shared and transport is None,
         )

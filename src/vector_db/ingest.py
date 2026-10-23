@@ -211,6 +211,10 @@ def ingest_collection(
                 catalog.clear_files(name)
                 catalog.set_model(name, None, None)
                 collection = catalog.get(name)
+            else:
+                # qdrant_preset を変えた後は、変わったファイルが無くても既存のコレクションへ反映する。
+                store.apply_preset(name)
+                store.apply_preset(image_collection_name(name))
             _ingest(
                 cfg, catalog, store, keywords, name, collection.dim, model, folder, collection.recursive,
                 result, progress, should_stop, embedding_client,

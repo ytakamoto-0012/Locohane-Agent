@@ -56,6 +56,9 @@ VECTOR_DB_BACKENDS = ("sqlite_vec", "qdrant")
 # sqlite-vec（vec0）は Dot に対応していない（VECTOR_DB_SQLITE_VEC_DISTANCES）。
 VECTOR_DB_DISTANCES = ("Cosine", "Euclid", "Dot", "Manhattan")
 VECTOR_DB_SQLITE_VEC_DISTANCES = ("Cosine", "Euclid", "Manhattan")
+# [vector_db].qdrant_preset の選択肢（中身は src/vector_db/qdrant_store.py の QDRANT_PRESETS。
+# admin/ini_catalog.py の _KEY_CHOICES と一致させる）。none は Qdrant の既定のまま。
+VECTOR_DB_QDRANT_PRESETS = ("none", "1m", "2m", "3m", "4m")
 
 # reasoning_format が取りうる値（llama-server の --reasoning-format と同じ）。
 LLM_REASONING_FORMATS = frozenset({"none", "deepseek", "deepseek-legacy"})
@@ -468,6 +471,8 @@ class Config:
         vector_db_qdrant_collection_prefix: Qdrant のコレクション名の接頭辞
             （${instance} 展開済み）。
         vector_db_qdrant_timeout_seconds: Qdrant への1リクエストのタイムアウト秒数。
+        vector_db_qdrant_preset: Qdrant のコレクションの規模別の設定（VECTOR_DB_QDRANT_PRESETS
+            のいずれか。none は Qdrant の既定のまま）。
         vector_db_distance: コレクションを作るときの距離関数（VECTOR_DB_DISTANCES の
             いずれか。backend=sqlite_vec では VECTOR_DB_SQLITE_VEC_DISTANCES のいずれか）。
         vector_db_embedding_endpoints: 埋め込みを計算する接続先（/v1/embeddings）。
@@ -1029,6 +1034,7 @@ class Config:
     vector_db_qdrant_api_key: str
     vector_db_qdrant_collection_prefix: str
     vector_db_qdrant_timeout_seconds: float
+    vector_db_qdrant_preset: str
     vector_db_distance: str
     vector_db_embedding_endpoints: tuple[LLMEndpoint, ...]
     vector_db_embedding_batch_size: int
@@ -1837,6 +1843,14 @@ def _as_vector_db_backend(value: str | None) -> str:
     text = str(value or "").strip().lower()
     if text not in VECTOR_DB_BACKENDS:
         raise ValueError(f"[vector_db].backend は {'/'.join(VECTOR_DB_BACKENDS)} のいずれかにしてください: {value!r}")
+    return text
+
+
+def _as_vector_db_qdrant_preset(value: str | None) -> str:
+    """[vector_db].qdrant_preset の値を検証する（VECTOR_DB_QDRANT_PRESETS のいずれか、大文字小文字は問わない）。"""
+    text = str(value or "").strip().lower()
+    if text not in VECTOR_DB_QDRANT_PRESETS:
+        raise ValueError(f"[vector_db].qdrant_preset は {'/'.join(VECTOR_DB_QDRANT_PRESETS)} のいずれかにしてください: {value!r}")
     return text
 
 
@@ -2995,6 +3009,7 @@ def load_config(
         vector_db_qdrant_timeout_seconds=_positive_float(
             os.getenv("VECTOR_DB_QDRANT_TIMEOUT_SECONDS", vector_db.get("qdrant_timeout_seconds", 30)), "[vector_db].qdrant_timeout_seconds"
         ),
+        vector_db_qdrant_preset=_as_vector_db_qdrant_preset(os.getenv("VECTOR_DB_QDRANT_PRESET", vector_db.get("qdrant_preset", "none"))),
         vector_db_distance=_as_vector_db_distance(os.getenv("VECTOR_DB_DISTANCE", vector_db.get("distance", "Cosine"))),
         vector_db_embedding_endpoints=vector_db_embedding_endpoints,
         vector_db_embedding_batch_size=_positive_int(

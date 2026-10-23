@@ -29,7 +29,7 @@ async function renderKnowledgePanel(container, name) {
 
   const settings = [
     `機能: ${data.enabled ? "有効" : "無効"}`,
-    `保存先: ${data.backend === "qdrant" ? `Qdrant（${data.qdrant_url || "URL 未設定"}、接頭辞 ${data.qdrant_collection_prefix}）` : `sqlite-vec（${data.dir}）`}、距離関数 ${data.distance}`,
+    `保存先: ${data.backend === "qdrant" ? `Qdrant（${data.qdrant_url || "URL 未設定"}、接頭辞 ${data.qdrant_collection_prefix}、プリセット ${data.qdrant_preset}）` : `sqlite-vec（${data.dir}）`}、距離関数 ${data.distance}`,
     `埋め込みモデル: ${data.embedding_model || "未設定"}`,
     `接頭辞: 検索語 ${JSON.stringify(data.query_prefix)}・文書 ${JSON.stringify(data.document_prefix)}`,
     `対象の拡張子: ${data.include_extensions.join(" ")}`,

@@ -14,7 +14,7 @@ from src.config import load_config
 def isolated_data_dir(tmp_path, monkeypatch):
     """実プロジェクトの data/ にテスト用ディレクトリを作らないよう、データ保存先を tmp へ逃がす。"""
     monkeypatch.setenv("COMMON_DATA_DIR", str(tmp_path / "data" / "${instance}"))
-    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "VECTOR_DB_DISTANCE", "VECTOR_DB_QUERY_PREFIX", "VECTOR_DB_DOCUMENT_PREFIX", "QDRANT_API_KEY"):
+    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "VECTOR_DB_DISTANCE", "VECTOR_DB_QDRANT_PRESET", "VECTOR_DB_QUERY_PREFIX", "VECTOR_DB_DOCUMENT_PREFIX", "QDRANT_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -133,6 +133,22 @@ def test_distance_rejects_unknown_value(tmp_path):
 def test_sqlite_vec_rejects_dot(tmp_path):
     with pytest.raises(ValueError, match="sqlite-vec は Dot"):
         _load(tmp_path, {"backend": "sqlite_vec", "distance": "dot"})
+
+
+def test_qdrant_preset_default_and_validation(tmp_path):
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_qdrant_preset == "none"
+    assert _load(tmp_path, {"backend": "qdrant", "qdrant_preset": " 3M "}).vector_db_qdrant_preset == "3m"
+    with pytest.raises(ValueError, match="qdrant_preset"):
+        _load(tmp_path, {"qdrant_preset": "5m"})
+
+
+def test_admin_catalog_offers_qdrant_preset_choices():
+    from admin.ini_catalog import parse_file
+    from src.config import VECTOR_DB_QDRANT_PRESETS
+
+    catalog = parse_file(Path(__file__).resolve().parent.parent / "config.ini")
+    info = {(k.section, k.key): k for k in catalog.keys}[("vector_db", "qdrant_preset")]
+    assert tuple(info.choices) == VECTOR_DB_QDRANT_PRESETS
 
 
 def test_ingest_workers_default_and_validation(tmp_path):
