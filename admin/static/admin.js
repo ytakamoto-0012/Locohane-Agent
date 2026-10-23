@@ -261,8 +261,34 @@ async function refreshCardActivity() {
     ];
     box.replaceChildren(...tiles);
     renderCardContextChart(card.querySelector(".card-context"), item);
+    renderCardIngest(card.querySelector(".card-ingest"), item);
   }
   refreshWorkerCards();
+}
+
+// カードに「ナレッジで取り込み中のコレクション」と進捗を出す（無ければ何も出さない）。クリックでナレッジ画面を開く。
+function renderCardIngest(box, item) {
+  const jobs = item.ingesting || [];
+  if (!jobs.length) {
+    box.replaceChildren();
+    return;
+  }
+  const rows = jobs.map((j) => {
+    const state = j.stop_requested ? "停止中" : j.trigger === "schedule" ? "取り込み中（自動）" : "取り込み中";
+    const count = j.total ? `${fmtNum(j.done)} / ${fmtNum(j.total)} ファイル` : "対象を確認中";
+    const current = j.current ? j.current.split(/[\\/]/).pop() : "";
+    return el("div", { class: "card-ingest-job", title: [j.collection, state, count, j.current].filter(Boolean).join("\n") }, [
+      el("div", { class: "card-ingest-head" }, [
+        el("span", { class: "card-ingest-name", text: j.collection }),
+        el("span", { class: "card-ingest-count", text: `${state} ${count}` }),
+      ]),
+      knowledgeProgressBar(j.done, j.total),
+      current ? el("div", { class: "card-ingest-file", text: current }) : null,
+    ]);
+  });
+  const title = el("div", { class: "card-ingest-title", text: "ナレッジの取り込み" });
+  box.replaceChildren(title, ...rows);
+  box.onclick = () => renderInstanceDetail(item.name, "knowledge");
 }
 
 // スキル調整ワーカー（スキル研究室の実行役）のカードに、処理中のテーマ・待ち件数・LLM 接続先を出す。

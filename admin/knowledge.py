@@ -98,6 +98,15 @@ class _JobRegistry:
         with self._lock:
             return {c: j for (i, c), j in self._jobs.items() if i == instance}
 
+    def running(self) -> dict[str, list[IngestJob]]:
+        """取り込み中のジョブをインスタンス名ごとに返す（インスタンス一覧のカード用）。"""
+        with self._lock:
+            result: dict[str, list[IngestJob]] = {}
+            for (i, _c), j in sorted(self._jobs.items()):
+                if j.state == "running":
+                    result.setdefault(i, []).append(j)
+            return result
+
     def start(self, instance: str, job: IngestJob) -> bool:
         with self._lock:
             current = self._jobs.get((instance, job.collection))
@@ -285,6 +294,7 @@ def build_router(
 
     返す router の ingest_scheduler 属性が時間指定の自動取り込みの IngestScheduler
     （手動の取り込みとジョブの記録を共有する）。start()・stop() は呼び出し側（admin/server.py の lifespan）で行う。
+    ingest_jobs 属性はジョブの記録（_JobRegistry）。
     """
     router = APIRouter()
     jobs = _JobRegistry()
@@ -297,6 +307,8 @@ def build_router(
         return load_config(config_path=CONFIG_INI_PATH, overrides_path=inst.overrides_path(instances_root, name), instance_name=name)
 
     loader = config_loader or _default_loader
+    # インスタンス一覧のカード（admin/server.py の /api/monitor/overview）が取り込み中のジョブを読む口
+    router.ingest_jobs = jobs
     router.ingest_scheduler = IngestScheduler(
         instances_root=instances_root, jobs=jobs, loader=loader, audit_log_path=audit_log_path, ingest_kwargs=extra_ingest_kwargs
     )

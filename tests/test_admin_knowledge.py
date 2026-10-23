@@ -209,3 +209,14 @@ def test_scheduler_skips_running_collection(env):
 
 def _scheduler(client) -> knowledge.IngestScheduler:
     return client.app.state.knowledge_scheduler
+
+
+def test_running_jobs_by_instance():
+    jobs = knowledge._JobRegistry()
+    jobs.start("org_a", knowledge.IngestJob(collection="b", rebuild=False, actor="admin"))
+    jobs.start("org_a", knowledge.IngestJob(collection="a", rebuild=False, actor="scheduler", trigger="schedule"))
+    jobs.start("org_b", knowledge.IngestJob(collection="x", rebuild=False, actor="admin", state="done"))
+    running = jobs.running()
+    assert list(running) == ["org_a"]
+    assert [j.collection for j in running["org_a"]] == ["a", "b"]
+    assert running["org_a"][0].trigger == "schedule"

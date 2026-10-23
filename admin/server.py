@@ -926,8 +926,9 @@ def _runtime_view(name: str, cfg) -> dict[str, Any]:
 
 @app.get("/api/monitor/overview")
 def get_monitor_overview(user: str = Depends(require_login)):
-    """全インスタンスの接続中ユーザー数・生成中スレッド数（インスタンス一覧のカード用）。"""
+    """全インスタンスの接続中ユーザー数・生成中スレッド数・ナレッジの取り込み状況（インスタンス一覧のカード用）。"""
     result = []
+    ingesting = _knowledge_router.ingest_jobs.running()
     for name in inst.list_instance_names(INSTANCES_ROOT):
         try:
             cfg = monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name)
@@ -956,6 +957,11 @@ def get_monitor_overview(user: str = Depends(require_login)):
                 "log_counts_24h": monitor.recent_level_counts(cfg.log_dir),
                 # 生成中スレッドごとの LLM リクエストの入力トークン（メイン・サブの最大値）。
                 "context_series": context_series,
+                # ナレッジで取り込み中のコレクション（管理ツールのプロセス内のジョブ）。
+                "ingesting": [
+                    {k: getattr(j, k) for k in ("collection", "trigger", "started_at", "done", "total", "current", "stop_requested")}
+                    for j in ingesting.get(name, [])
+                ],
             }
         )
     return {"instances": result}
