@@ -18,8 +18,8 @@ from pathlib import Path
 
 from src.tools.check_work_dir_status import WorkDirAccessStatus
 
-# 候補の最大件数（UI に出す件数）。
-MAX_SUGGESTIONS = 10
+# 候補の最大件数の既定値（実際の件数は config.ini [ui].work_dir_max_suggestions）。
+MAX_SUGGESTIONS = 100
 # 1ディレクトリあたり走査するエントリ数の上限。巨大なフォルダ（数万件）で
 # 入力のたびに全件列挙して応答が遅れるのを防ぐ。
 MAX_SCAN_ENTRIES = 5000
@@ -67,7 +67,7 @@ def _windows_drive_roots() -> list[Path]:
     return [Path(f"{letter}:\\") for letter in string.ascii_uppercase if os.path.isdir(f"{letter}:\\")]
 
 
-def _rank(candidates: list[Path], keyword: str) -> list[str]:
+def _rank(candidates: list[Path], keyword: str, limit: int) -> list[str]:
     """名前が keyword で始まるものを先に、次に keyword を含むものを並べる（大文字小文字無視）。"""
     kw = keyword.casefold()
     prefix: list[str] = []
@@ -80,10 +80,10 @@ def _rank(candidates: list[Path], keyword: str) -> list[str]:
             contains.append(str(path))
     prefix.sort(key=str.casefold)
     contains.sort(key=str.casefold)
-    return (prefix + contains)[:MAX_SUGGESTIONS]
+    return (prefix + contains)[:limit]
 
 
-def suggest_work_dirs(text: str) -> list[str]:
+def suggest_work_dirs(text: str, limit: int = MAX_SUGGESTIONS) -> list[str]:
     """入力途中の文字列から、サーバーPC上に実在するディレクトリの候補を返す。
 
     - 区切り文字（/ や \\）を含む場合: 最後の区切りより前を親フォルダとみなし、
@@ -94,12 +94,13 @@ def suggest_work_dirs(text: str) -> list[str]:
 
     Args:
         text: 入力欄の文字列（未加工）。
+        limit: 候補の最大件数（0以下なら候補を返さない）。
 
     Returns:
-        絶対パス文字列の候補（最大 MAX_SUGGESTIONS 件）。
+        絶対パス文字列の候補（最大 limit 件）。
     """
     text = text.strip().strip('"')
-    if not text:
+    if not text or limit <= 0:
         return []
     seps = "/\\" if _is_windows() else "/"
     cut = max(text.rfind(c) for c in seps)
@@ -110,8 +111,8 @@ def suggest_work_dirs(text: str) -> list[str]:
             return []
         subdirs = _list_subdirs(parent)
         if not keyword:
-            return sorted((str(p) for p in subdirs), key=str.casefold)[:MAX_SUGGESTIONS]
-        return _rank(subdirs, keyword)
+            return sorted((str(p) for p in subdirs), key=str.casefold)[:limit]
+        return _rank(subdirs, keyword, limit)
 
     candidates: list[Path] = []
     if _is_windows():
@@ -122,8 +123,8 @@ def suggest_work_dirs(text: str) -> list[str]:
         home = Path.home()
     except RuntimeError:
         home = None
-    ranked = _rank(_list_subdirs(home), text) if home is not None else []
-    return ([str(p) for p in candidates] + ranked)[:MAX_SUGGESTIONS]
+    ranked = _rank(_list_subdirs(home), text, limit) if home is not None else []
+    return ([str(p) for p in candidates] + ranked)[:limit]
 
 
 def work_dir_error_message(resolved: str, status: WorkDirAccessStatus) -> str | None:

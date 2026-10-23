@@ -73,7 +73,8 @@ def test_suggest_lists_children_when_input_ends_with_separator(tmp_path) -> None
 def test_suggest_caps_results(tmp_path) -> None:
     for i in range(15):
         (tmp_path / f"dir{i:02d}").mkdir()
-    assert len(workdir_suggest.suggest_work_dirs(str(tmp_path) + "/dir")) == workdir_suggest.MAX_SUGGESTIONS
+    assert len(workdir_suggest.suggest_work_dirs(str(tmp_path) + "/dir", limit=10)) == 10
+    assert len(workdir_suggest.suggest_work_dirs(str(tmp_path) + "/dir")) == 15
 
 
 def test_suggest_returns_empty_for_missing_parent(tmp_path) -> None:
@@ -139,3 +140,23 @@ def test_suggest_excludes_hidden_and_system_dirs(tmp_path) -> None:
         ctypes.windll.kernel32.SetFileAttributesW(str(hidden), 0x2 | 0x4)  # HIDDEN | SYSTEM
     names = [p.replace("\\", "/").rsplit("/", 1)[-1] for p in workdir_suggest.suggest_work_dirs(str(tmp_path) + "/")]
     assert sorted(names, key=str.casefold) == ["my_project", "Other", "Project", "projects_old"]
+
+
+@pytest.mark.asyncio
+async def test_suggest_action_uses_config_limit(tmp_path, monkeypatch) -> None:
+    import dataclasses
+
+    for i in range(8):
+        (tmp_path / f"dir{i}").mkdir()
+    monkeypatch.setattr(app, "_config", dataclasses.replace(app._config, ui_work_dir_max_suggestions=3))
+    res = await app.on_suggest_work_dir(SimpleNamespace(payload={"text": str(tmp_path) + "/dir"}))
+    assert len(res["suggestions"]) == 3
+    monkeypatch.setattr(app, "_config", dataclasses.replace(app._config, ui_work_dir_max_suggestions=0))
+    res = await app.on_suggest_work_dir(SimpleNamespace(payload={"text": str(tmp_path) + "/dir"}))
+    assert res["suggestions"] == []
+
+
+def test_config_ini_work_dir_max_suggestions_loaded() -> None:
+    from src.config import load_config
+
+    assert load_config().ui_work_dir_max_suggestions == 100

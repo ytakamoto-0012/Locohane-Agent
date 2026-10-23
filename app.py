@@ -2770,11 +2770,14 @@ async def on_suggest_work_dir(action: cl.Action) -> dict:
         action: payload["text"] に入力途中の文字列が入る。
 
     Returns:
-        {"suggestions": [絶対パス, ...]}（最大10件）。
+        {"suggestions": [絶対パス, ...]}（最大 config.ini [ui].work_dir_max_suggestions 件）。
     """
     text = str(action.payload.get("text", ""))
+    limit = _config.ui_work_dir_max_suggestions
     try:
-        suggestions = await asyncio.wait_for(asyncio.to_thread(suggest_work_dirs, text), _WORK_DIR_PROBE_TIMEOUT_SECONDS)
+        suggestions = await asyncio.wait_for(
+            asyncio.to_thread(suggest_work_dirs, text, limit), _WORK_DIR_PROBE_TIMEOUT_SECONDS
+        )
     except (asyncio.TimeoutError, OSError, ValueError):
         suggestions = []
     return {"suggestions": suggestions}

@@ -1287,6 +1287,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[ui]` | `max_input_chars` | 1回の送信の最大文字数（入力欄＋貼り付けテキストの合計）。超過中は送信不可、バックエンドも拒否する（`0`以下で無制限） | `UI_MAX_INPUT_CHARS` |
 | `[ui]` | `token_usage_warn_threshold` | トークン使用量カードの「リクエスト1回あたり」行（メインと実行中のサブエージェント/一括委譲のグループごとに1行。コンテキスト圧縮の要約呼び出しは「圧縮処理（直近1回）」行として出し、会話累計にも加算する。行ごとに判定）の合計トークン数がこの値以上でオレンジ太字表示（`0`以下で無効） | `UI_TOKEN_USAGE_WARN_THRESHOLD` |
 | `[ui]` | `token_usage_alert_threshold` | 同上、この値以上で赤太字表示（`token_usage_warn_threshold`より優先、`0`以下で無効） | `UI_TOKEN_USAGE_ALERT_THRESHOLD` |
+| `[ui]` | `work_dir_max_suggestions` | 作業フォルダの入力欄に2文字以上入力したときに出す、サーバーPC上のフォルダ候補の最大件数（`0`以下で候補を出さない。既定 `100`） | `UI_WORK_DIR_MAX_SUGGESTIONS` |
 | `[websocket]` | `ping_interval_seconds` | ブラウザ⇔サーバー間WebSocket（Socket.IO）の生存確認ping送信間隔秒数。`[llm].stream_chunk_timeout_seconds`（LLMサーバーとの通信）とは別レイヤー | `WEBSOCKET_PING_INTERVAL_SECONDS` |
 | `[websocket]` | `ping_timeout_seconds` | 直近pingへの応答をこの秒数待っても受信できない場合に切断とみなす。LLM応答待ちでイベントループがブロッキング気味の時間帯（`dispatch_agent`の長時間実行中等）に短すぎると誤切断しやすい | `WEBSOCKET_PING_TIMEOUT_SECONDS` |
 
@@ -1395,7 +1396,8 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
   `work_dir_server_info` action_callback。取得できなければ接続先の IP）と注意書きを、
   サイドパネルの「📁 作業ディレクトリ」に「（サーバーPC上）」を出す。`localhost`・`127.0.0.1`・
   `::1` で開いている（ブラウザとサーバーが同じPC）場合はパスの区別が無いので出さない。
-- **パス候補**: 2文字以上入力すると、サーバーPC上に実在するフォルダの候補を最大10件出す
+- **パス候補**: 2文字以上入力すると、サーバーPC上に実在するフォルダの候補を出す
+  （最大件数は `config.ini` の `[ui].work_dir_max_suggestions`）
   （`src/workdir_suggest.py` の `suggest_work_dirs`、`suggest_work_dir` action_callback）。
   区切り（`\` や `/`）を含む入力は最後の区切りより前を親フォルダとして、その直下から
   名前の前方一致→部分一致の順に探す。隠し・システムフォルダ（Windows の隠し/システム属性、

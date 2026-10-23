@@ -1187,6 +1187,9 @@ class Config:
     # 上記と同じ判定対象で、この値以上になったら赤太字で強調表示する
     # （warn_threshold より優先。0以下で無効）。
     ui_token_usage_alert_threshold: int
+    # 作業フォルダの入力欄（WorkDirButton.tsx）に出すパス候補の最大件数
+    # （0以下で候補を出さない。src/workdir_suggest.py 参照）。
+    ui_work_dir_max_suggestions: int
     # WebSocket（Socket.IO）のping間隔・タイムアウト秒数。chainlit本体は
     # これらを指定せずAsyncServerを生成しているため、未設定時は
     # python-socketio/engineioのデフォルト（25秒/20秒）が使われる
@@ -3235,6 +3238,9 @@ def load_config(
         ),
         ui_token_usage_alert_threshold=int(
             os.getenv("UI_TOKEN_USAGE_ALERT_THRESHOLD", ui.get("token_usage_alert_threshold", 64000))
+        ),
+        ui_work_dir_max_suggestions=int(
+            os.getenv("UI_WORK_DIR_MAX_SUGGESTIONS", ui.get("work_dir_max_suggestions", 100))
         ),
         websocket_ping_interval_seconds=int(
             os.getenv("WEBSOCKET_PING_INTERVAL_SECONDS", websocket.get("ping_interval_seconds", 25))
