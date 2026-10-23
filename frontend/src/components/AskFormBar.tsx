@@ -12,6 +12,8 @@ interface IMultiTextFormProps {
  * askUser.spec.element_id に一致するカスタム要素の props（question/labels）を
  * 元にラベル付き入力欄をまとめて描画し、送信時に askUser.callback へ
  * { submitted: true, values } をそのまま返す（AskElementResponse は任意キー可）。
+ * キャンセル時は { submitted: false, values: [] } を返す
+ * （AskChoiceFormBar と同じく backend 側は submitted===false をキャンセルとして扱う）。
  */
 export function AskFormBar() {
   const { askUser, elements } = useChatData();
@@ -37,6 +39,10 @@ export function AskFormBar() {
     askUser.callback({ submitted: true, values });
   };
 
+  const handleCancel = () => {
+    askUser.callback({ submitted: false, values: [] });
+  };
+
   return (
     <form className="ask-form-bar" onSubmit={handleSubmit}>
       {props?.question && <div className="ask-form-question">{props.question}</div>}
@@ -57,9 +63,14 @@ export function AskFormBar() {
           </label>
         ))}
       </div>
-      <button type="submit" className="ask-form-submit">
-        送信
-      </button>
+      <div className="ask-form-actions">
+        <button type="button" className="ask-form-cancel" onClick={handleCancel}>
+          ❌ キャンセル
+        </button>
+        <button type="submit" className="ask-form-submit">
+          送信
+        </button>
+      </div>
     </form>
   );
 }

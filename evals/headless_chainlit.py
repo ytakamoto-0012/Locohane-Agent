@@ -67,6 +67,10 @@ class _FakeAskActionMessage:
         payload = getattr(chosen, "payload", None) or {}
         return {"payload": payload, "label": getattr(chosen, "label", "")}
 
+    async def update(self):
+        # src/tools/_ask_echo.py が回答後に質問文へ戻すために呼ぶ。
+        return self
+
 
 class _FakeAskUserMessage:
     """cl.AskUserMessage の代替。scripted_text_answers を順に1件ずつ消費する。
@@ -127,6 +131,10 @@ class _FakeAskElementMessage:
                 return {"submitted": False}
             return {"submitted": True, "values": [choices[0]], "other": ""}
         return None
+
+    async def update(self):
+        # src/tools/_ask_echo.py が回答後に質問文へ戻すために呼ぶ。
+        return self
 
 
 async def _fake_ask_with_cross_session_relay(thread_id: str, factory, timeout: int):

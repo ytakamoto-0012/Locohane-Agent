@@ -7,10 +7,14 @@ import chainlit as cl
 import logging
 
 from . import _state
+from ._ask_echo import _echo_ask_answer
+from ._ask_echo import _is_text_ask_cancelled
 from ._ask_relay_helper import _ask_with_cross_session_relay
 from ._state import _resolve_ask_timeout
 
 logger = logging.getLogger(__name__)
+
+_ASK_QUESTION_CANCEL_MESSAGE = "エラー: ユーザーが質問への回答をキャンセルしました。"
 
 
 @tool("AskUserQuestion")
@@ -36,7 +40,9 @@ async def ask_user_question(question: str, labels: list[str] | None = None) -> s
     Returns:
         labels を省略した場合はユーザーが入力した回答テキストをそのまま返す。
         labels を指定した場合は "ラベル: 入力値" を改行区切りで並べた文字列を
-        返す。設定されたタイムアウト秒数以内に応答が無い場合は、例外を送出せず
+        返す。入力欄には常に「❌ キャンセル」ボタンが表示され、ユーザーが
+        キャンセルした場合は "エラー: ユーザーが質問への回答をキャンセルしました。"
+        を返す。設定されたタイムアウト秒数以内に応答が無い場合は、例外を送出せず
         「エラー: ユーザーからの応答がありませんでした（タイムアウト）。」を返す。
     """
     timeout = _resolve_ask_timeout(_state._ASK_USER_QUESTION_TIMEOUT_SECONDS)
@@ -50,18 +56,32 @@ async def ask_user_question(question: str, labels: list[str] | None = None) -> s
         res = await _ask_with_cross_session_relay(thread_id, _factory, timeout)
         if res is None:
             return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+        if _is_text_ask_cancelled(res):
+            return _ASK_QUESTION_CANCEL_MESSAGE
         return res.get("output", "")
     logger.info("ask_user_question: %s labels=%s", question, labels)
 
-    def _factory_element():
+    async def _factory_element():
         # cl.CustomElement はセッション文脈に依存するため、中継時に別セッションで
         # 作り直せるよう毎回ここで新規生成する（_ask_with_cross_session_relay の
         # factory 引数のdocstring参照）。
         element = cl.CustomElement(name="MultiTextForm", props={"question": question, "labels": labels})
-        return cl.AskElementMessage(content=question, element=element, timeout=timeout).send()
+        ask_message = cl.AskElementMessage(content=question, element=element, timeout=timeout)
+        res = await ask_message.send()
+        if res is not None:
+            if not res.get("submitted", True):
+                answer = "❌ キャンセル"
+            else:
+                # 改行区切りのままだと Markdown 表示で1行に連結されるため、箇条書きで表示する。
+                values = res.get("values") or []
+                answer = "\n".join(f"- {label}: {value}" for label, value in zip(labels, values))
+            await _echo_ask_answer(ask_message, question, answer)
+        return res
 
     res = await _ask_with_cross_session_relay(thread_id, _factory_element, timeout)
     if res is None:
         return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+    if not res.get("submitted", True):
+        return _ASK_QUESTION_CANCEL_MESSAGE
     values = res.get("values") or []
     return "\n".join(f"{label}: {value}" for label, value in zip(labels, values))

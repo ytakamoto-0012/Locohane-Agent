@@ -7,6 +7,8 @@ import chainlit as cl
 import logging
 
 from . import _state
+from ._ask_echo import _echo_ask_answer
+from ._ask_echo import _is_text_ask_cancelled
 from ._ask_relay_helper import _ask_with_cross_session_relay
 from ._state import _resolve_ask_timeout
 
@@ -16,6 +18,16 @@ logger = logging.getLogger(__name__)
 _ASK_CHOICE_CANCEL_VALUE = "__cancel__"
 _ASK_CHOICE_OTHER_VALUE = "__other__"
 _ASK_CHOICE_CANCEL_MESSAGE = "エラー: ユーザーが選択をキャンセルしました。"
+_ASK_CHOICE_CANCEL_LABEL = "❌ キャンセル"
+
+
+def _multi_select_answer(res: dict) -> str:
+    """MultiChoiceForm の送信結果を、ツールの戻り値（兼チャット表示）の文字列にする。"""
+    selected = list(res.get("values") or [])
+    other = (res.get("other") or "").strip()
+    if other:
+        selected.append(other)
+    return "、".join(selected) if selected else "(選択なし)"
 
 
 @tool
@@ -54,29 +66,37 @@ async def ask_user_choice(question: str, choices: list[str], multi_select: bool 
     thread_id = cl.user_session.get("thread_id") or "_no_session"
     if multi_select:
 
-        def _factory_multi():
+        async def _factory_multi():
             # cl.CustomElement はセッション文脈に依存するため、中継時に別セッションで
             # 作り直せるよう毎回ここで新規生成する（_ask_with_cross_session_relay の
             # factory 引数のdocstring参照）。
             element = cl.CustomElement(name="MultiChoiceForm", props={"question": question, "choices": choices})
-            return cl.AskElementMessage(content=question, element=element, timeout=timeout).send()
+            ask_message = cl.AskElementMessage(content=question, element=element, timeout=timeout)
+            res = await ask_message.send()
+            if res is not None:
+                submitted = res.get("submitted", True)
+                answer = _multi_select_answer(res) if submitted else _ASK_CHOICE_CANCEL_LABEL
+                await _echo_ask_answer(ask_message, question, answer)
+            return res
 
         res = await _ask_with_cross_session_relay(thread_id, _factory_multi, timeout)
         if res is None:
             return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
         if not res.get("submitted", True):
             return _ASK_CHOICE_CANCEL_MESSAGE
-        selected = list(res.get("values") or [])
-        other = (res.get("other") or "").strip()
-        if other:
-            selected.append(other)
-        return "、".join(selected) if selected else "(選択なし)"
+        return _multi_select_answer(res)
 
-    def _factory_single():
+    async def _factory_single():
         actions = [cl.Action(name=f"choice_{i}", payload={"value": c}, label=c) for i, c in enumerate(choices)]
         actions.append(cl.Action(name="other", payload={"value": _ASK_CHOICE_OTHER_VALUE}, label="✏️ その他（自由入力）"))
-        actions.append(cl.Action(name="cancel", payload={"value": _ASK_CHOICE_CANCEL_VALUE}, label="❌ キャンセル"))
-        return cl.AskActionMessage(content=question, actions=actions, timeout=timeout).send()
+        actions.append(cl.Action(name="cancel", payload={"value": _ASK_CHOICE_CANCEL_VALUE}, label=_ASK_CHOICE_CANCEL_LABEL))
+        ask_message = cl.AskActionMessage(content=question, actions=actions, timeout=timeout)
+        res = await ask_message.send()
+        if res is not None:
+            # 「その他」の場合も押したボタンを表示し、続く自由記述の回答は
+            # AskTextBar が user_message として表示する。
+            await _echo_ask_answer(ask_message, question, res.get("label") or res["payload"].get("value", ""))
+        return res
 
     res = await _ask_with_cross_session_relay(thread_id, _factory_single, timeout)
     if res is None:
@@ -92,5 +112,7 @@ async def ask_user_choice(question: str, choices: list[str], multi_select: bool 
         other_res = await _ask_with_cross_session_relay(thread_id, _factory_other, timeout)
         if other_res is None:
             return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+        if _is_text_ask_cancelled(other_res):
+            return _ASK_CHOICE_CANCEL_MESSAGE
         return other_res.get("output", "")
     return value

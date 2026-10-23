@@ -9,6 +9,9 @@ import type { IStep } from '@chainlit/react-client';
  * 質問文自体は既にアシスタントメッセージとしてスレッドに表示済みのため、
  * ここでは入力欄と送信ボタンのみを提供する。送信は Composer の
  * isReplying 経路と同じ replyMessage を使う（返信経路を増やさない）。
+ * キャンセル時も同じ経路で「❌ キャンセル」を metadata.askCancel=true 付きで返し、
+ * backend 側（src/tools/_ask_echo.py の _is_text_ask_cancelled）がキャンセルとして扱う
+ * （AskUserMessage の応答は user_message 形式しか返せないため）。
  */
 export function AskTextBar() {
   const { askUser } = useChatData();
@@ -23,19 +26,27 @@ export function AskTextBar() {
 
   if (!askUser || askUser.spec.type !== 'text') return null;
 
-  const submit = () => {
-    if (!value.trim()) return;
+  const reply = (output: string, metadata: Record<string, unknown> = {}) => {
     const message: IStep = {
       threadId: '',
       id: uuidv4(),
       name: 'あなた',
       type: 'user_message',
-      output: value,
+      output,
       createdAt: new Date().toISOString(),
-      metadata: {}
+      metadata
     };
     replyMessage(message);
     setValue('');
+  };
+
+  const submit = () => {
+    if (!value.trim()) return;
+    reply(value);
+  };
+
+  const handleCancel = () => {
+    reply('❌ キャンセル', { askCancel: true });
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -61,9 +72,14 @@ export function AskTextBar() {
         rows={3}
         autoFocus
       />
-      <button type="submit" className="ask-text-submit">
-        送信
-      </button>
+      <div className="ask-form-actions">
+        <button type="button" className="ask-form-cancel" onClick={handleCancel}>
+          ❌ キャンセル
+        </button>
+        <button type="submit" className="ask-text-submit">
+          送信
+        </button>
+      </div>
     </form>
   );
 }
