@@ -23,7 +23,7 @@ import httpx
 from ..config import Config
 from .catalog import Catalog, CatalogError, FileRecord, open_catalog
 from .chunking import split_text
-from .embeddings import embed_images, embed_texts, embedding_model, open_client
+from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_model, open_client
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
 from .keyword_index import KeywordIndex, open_keyword_index
 from .render import IMAGE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, PageImage, render_pages
@@ -170,7 +170,8 @@ def ingest_collection(
         rebuild: True なら既存のベクター・記録を消して全ファイルを取り込み直す
             （埋め込みモデル・document_prefix を変えたときに必要）。
         progress: ファイルの処理を始めるごとに呼ぶ進捗通知（並列のときは最後に始めたファイル）。
-        should_stop: True を返したら残りのファイルを処理せずに終える。
+        should_stop: True を返したら残りのファイルを処理せずに終える（埋め込みの再試行を
+            待っているファイルもその場でやめ、記録せずに次回の取り込みへ回す）。
         embedding_transport / store_transport: テスト用の httpx トランスポート。
 
     Raises:
@@ -265,11 +266,18 @@ def _keyword_chunks(cfg: Config, path: Path, needs_keywords: bool) -> list[Chunk
 
 
 def _prepare(
-    cfg: Config, path: Path, record: FileRecord | None, needs_keywords: bool, max_bytes: int, embedding_client: httpx.Client
+    cfg: Config,
+    path: Path,
+    record: FileRecord | None,
+    needs_keywords: bool,
+    max_bytes: int,
+    embedding_client: httpx.Client,
+    should_stop: Callable[[], bool] | None = None,
 ) -> _Prepared:
     """path を読み、必要なら本文の抽出・ページの画像化・埋め込みまで行う（DB には触れない。ワーカースレッドで動く）。
 
-    読めないファイルは kind="failed" で返す。埋め込みサーバーに接続できない等の全体に関わるエラーは例外のまま投げる。
+    読めないファイルは kind="failed" で返す。埋め込みサーバーに接続できない等の全体に関わるエラーは例外のまま投げる
+    （再試行を待つ間に should_stop() が True になったら EmbeddingStopped）。
     """
     # image_input を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
     mode = file_mode(cfg, path)
@@ -294,8 +302,8 @@ def _prepare(
         else:
             reason = "本文を取り出せませんでした（画像だけの PDF 等。[vector_db] image_input = true なら画像として取り込めます）"
         return _Prepared(path, record, mode, "failed", reason=reason)
-    vectors = embed_texts(cfg, [c.text for c in chunks], kind="document", client=embedding_client) if chunks else []
-    image_vectors = embed_images(cfg, [p.png for p in pages], client=embedding_client) if pages else []
+    vectors = embed_texts(cfg, [c.text for c in chunks], kind="document", client=embedding_client, should_stop=should_stop) if chunks else []
+    image_vectors = embed_images(cfg, [p.png for p in pages], client=embedding_client, should_stop=should_stop) if pages else []
     return _Prepared(
         path, record, mode, "embed", stat=st, sha=sha, chunks=chunks, pages=pages, vectors=vectors, image_vectors=image_vectors
     )
@@ -391,12 +399,20 @@ def _ingest(
                     if progress is not None:
                         progress(completed, len(files), source)
                     needs_keywords = not keywords.has_source(name, source)
-                    in_flight.add(pool.submit(_prepare, cfg, path, known.get(source), needs_keywords, max_bytes, embedding_client))
+                    in_flight.add(
+                        pool.submit(_prepare, cfg, path, known.get(source), needs_keywords, max_bytes, embedding_client, should_stop)
+                    )
                 if not in_flight:
                     break
                 done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
                 for future in done:
-                    writer.write(future.result())
+                    try:
+                        prepared = future.result()
+                    except EmbeddingStopped:
+                        # 埋め込みの再試行中に停止を求められた。このファイルは記録せず、次回の取り込みで処理する。
+                        stopped = True
+                        continue
+                    writer.write(prepared)
                     completed += 1
         except BaseException:
             # 埋め込みサーバーに接続できない等で止めるときは、まだ始まっていないファイルを始めない。

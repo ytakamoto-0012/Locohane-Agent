@@ -53,6 +53,12 @@
 - ナレッジのコレクションごとに、時刻（複数可）と曜日を指定して差分取り込みを自動で実行できるようにしました。
   コレクションの追加フォーム・「編集」ダイアログで設定し、一覧に次回の予定日時が出ます。設定ダッシュボード（管理ツール）が
   起動している間だけ実行します。
+- 埋め込みの接続先（`[vector_db] embedding_url`）が複数あるとき、接続できない場合だけでなくエラー（HTTP 200 以外）が返った場合も
+  次の接続先へ切り替えて送り直すようにしました。すべての接続先でエラーになったときは `[vector_db] embedding_retry_interval_seconds`
+  （既定10）秒おきに試し直します。回数は取り込みが `embedding_max_retries`（既定3。`0` にすると成功するまで無制限で、
+  ナレッジ画面の「停止」で止められます）、検索（`search_documents`）が `search_embedding_max_retries`（既定2。`0` は試し直さない）です。接続先の選び方を `[vector_db] embedding_routing_strategy`（`[llm] main_routing_strategy` と同じ
+  `round_robin`・`random`・`priority_failover`、既定は従来どおり先頭を優先する `priority_failover`）で選べるようにしました。
+  設定ダッシュボードの「ベクターDB」プリセットにもこれらを加えました。
 
 ## [0.2.0] - 2026-10-23
 

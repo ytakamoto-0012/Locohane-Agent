@@ -71,6 +71,7 @@ _THINKING_LEVEL_CHOICES = ("off", "low", "medium", "high", "xhigh")
 _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("llm", "main_routing_strategy"): _ROUTING_STRATEGY_CHOICES,
     ("llm", "sub_routing_strategy"): _ROUTING_STRATEGY_CHOICES,
+    ("vector_db", "embedding_routing_strategy"): _ROUTING_STRATEGY_CHOICES,
     ("llm", "reasoning_format"): ("", "none", "deepseek", "deepseek-legacy"),
     ("llm", "reasoning_effort"): ("", "none", "default", "minimal", "low", "medium", "high", "xhigh", "max"),
     ("main_agent_tool_guard", "mode"): ("false", "tools_skills_only", "all"),

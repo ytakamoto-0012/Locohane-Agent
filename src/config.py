@@ -479,6 +479,15 @@ class Config:
             enabled=False のときは空でもよい。
         vector_db_embedding_batch_size: 埋め込み1リクエストあたりのチャンク数。
         vector_db_embedding_timeout_seconds: 埋め込み1リクエストのタイムアウト秒数。
+        vector_db_embedding_routing_strategy: vector_db_embedding_endpoints が複数ある場合の
+            選び方（LLM_ROUTING_STRATEGIES のいずれか。src/vector_db/embeddings.py の
+            _endpoint_order() 参照）。どの戦略でも、エラーが返った接続先の次の接続先で試し直す。
+        vector_db_embedding_max_retries: すべての接続先でエラーになったとき、
+            vector_db_embedding_retry_interval_seconds 秒待ってから全接続先を試し直す回数。
+            0 なら成功するまで無制限に繰り返す。検索語の埋め込み（search_documents）には使わない。
+        vector_db_search_embedding_max_retries: 検索語の埋め込みで同じく試し直す回数。
+            検索が止まらなくならないよう、0 は「試し直さない」（無制限は指定できない）。
+        vector_db_embedding_retry_interval_seconds: 上記の試し直しの間隔（秒。取り込み・検索で共通）。
         vector_db_query_prefix / vector_db_document_prefix: 検索語・文書の先頭に
             付ける文字列（e5 系モデルの "query: " / "passage: " 等）。設定値が auto なら
             埋め込みモデル名から決めた値（auto_embedding_prefixes()）が入る。
@@ -1039,6 +1048,10 @@ class Config:
     vector_db_embedding_endpoints: tuple[LLMEndpoint, ...]
     vector_db_embedding_batch_size: int
     vector_db_embedding_timeout_seconds: float
+    vector_db_embedding_routing_strategy: str
+    vector_db_embedding_max_retries: int
+    vector_db_search_embedding_max_retries: int
+    vector_db_embedding_retry_interval_seconds: float
     vector_db_query_prefix: str
     vector_db_document_prefix: str
     vector_db_chunk_size: int
@@ -1963,12 +1976,13 @@ def _validate_vector_db(cfg: "Config") -> None:
         raise ValueError("[vector_db].backend = qdrant のときは qdrant_url を指定してください。")
 
 
-def _as_routing_strategy(value: str | None, key_name: str) -> str:
-    """[llm].main_routing_strategy / sub_routing_strategy の値を検証する。
+def _as_routing_strategy(value: str | None, key_name: str, section: str = "llm") -> str:
+    """[llm].main_routing_strategy / sub_routing_strategy（[vector_db].embedding_routing_strategy）の値を検証する。
 
     Args:
         value: config.ini から得た文字列、または環境変数由来の文字列。
         key_name: エラーメッセージに使う設定キー名。
+        section: エラーメッセージに使うセクション名。
 
     Returns:
         前後の空白を除いた文字列（LLM_ROUTING_STRATEGIES のいずれか）。
@@ -1979,7 +1993,7 @@ def _as_routing_strategy(value: str | None, key_name: str) -> str:
     text = str(value or "").strip()
     if text not in LLM_ROUTING_STRATEGIES:
         choices = "/".join(sorted(LLM_ROUTING_STRATEGIES))
-        raise ValueError(f"[llm].{key_name} は {choices} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[{section}].{key_name} は {choices} のいずれかにしてください: {value!r}")
     return text
 
 
@@ -2145,6 +2159,21 @@ def _positive_float(value: object, key: str) -> float:
         raise ValueError(f"{key} は0より大きい数値で指定してください: {value!r}") from e
     if number <= 0:
         raise ValueError(f"{key} は0より大きい数値で指定してください: {value!r}")
+    return number
+
+
+def _non_negative_int(value: object, key: str) -> int:
+    """0以上の整数として解釈して返す。
+
+    Raises:
+        ValueError: 整数として解釈できない、または0未満の場合。
+    """
+    try:
+        number = int(str(value).strip())
+    except ValueError as e:
+        raise ValueError(f"{key} は0以上の整数で指定してください: {value!r}") from e
+    if number < 0:
+        raise ValueError(f"{key} は0以上の整数で指定してください: {value!r}")
     return number
 
 
@@ -3018,6 +3047,22 @@ def load_config(
         vector_db_embedding_timeout_seconds=_positive_float(
             os.getenv("VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS", vector_db.get("embedding_timeout_seconds", 120)),
             "[vector_db].embedding_timeout_seconds",
+        ),
+        vector_db_embedding_routing_strategy=_as_routing_strategy(
+            os.getenv("VECTOR_DB_EMBEDDING_ROUTING_STRATEGY", vector_db.get("embedding_routing_strategy", "priority_failover")),
+            "embedding_routing_strategy",
+            section="vector_db",
+        ),
+        vector_db_embedding_max_retries=_non_negative_int(
+            os.getenv("VECTOR_DB_EMBEDDING_MAX_RETRIES", vector_db.get("embedding_max_retries", 3)), "[vector_db].embedding_max_retries"
+        ),
+        vector_db_search_embedding_max_retries=_non_negative_int(
+            os.getenv("VECTOR_DB_SEARCH_EMBEDDING_MAX_RETRIES", vector_db.get("search_embedding_max_retries", 2)),
+            "[vector_db].search_embedding_max_retries",
+        ),
+        vector_db_embedding_retry_interval_seconds=_positive_float(
+            os.getenv("VECTOR_DB_EMBEDDING_RETRY_INTERVAL_SECONDS", vector_db.get("embedding_retry_interval_seconds", 10)),
+            "[vector_db].embedding_retry_interval_seconds",
         ),
         vector_db_query_prefix=_as_embedding_prefix(
             os.getenv("VECTOR_DB_QUERY_PREFIX", vector_db.get("query_prefix", "auto")), vector_db_embedding_endpoints, "query"

@@ -151,6 +151,35 @@ def test_admin_catalog_offers_qdrant_preset_choices():
     assert tuple(info.choices) == VECTOR_DB_QDRANT_PRESETS
 
 
+def test_embedding_retry_and_routing_defaults_and_validation(tmp_path):
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert cfg.vector_db_embedding_routing_strategy == "priority_failover"
+    assert cfg.vector_db_embedding_max_retries == 3
+    assert cfg.vector_db_search_embedding_max_retries == 2
+    assert cfg.vector_db_embedding_retry_interval_seconds == 10.0
+    cfg = _load(
+        tmp_path,
+        {
+            "embedding_routing_strategy": "round_robin",
+            "embedding_max_retries": "0",
+            "search_embedding_max_retries": "0",
+            "embedding_retry_interval_seconds": "2.5",
+        },
+    )
+    assert cfg.vector_db_embedding_routing_strategy == "round_robin"
+    assert cfg.vector_db_embedding_max_retries == 0
+    assert cfg.vector_db_search_embedding_max_retries == 0
+    assert cfg.vector_db_embedding_retry_interval_seconds == 2.5
+    with pytest.raises(ValueError, match=r"\[vector_db\]\.embedding_routing_strategy"):
+        _load(tmp_path, {"embedding_routing_strategy": "sticky"})
+    with pytest.raises(ValueError, match="embedding_max_retries"):
+        _load(tmp_path, {"embedding_max_retries": "-1"})
+    with pytest.raises(ValueError, match="search_embedding_max_retries"):
+        _load(tmp_path, {"search_embedding_max_retries": "-1"})
+    with pytest.raises(ValueError, match="embedding_retry_interval_seconds"):
+        _load(tmp_path, {"embedding_retry_interval_seconds": "0"})
+
+
 def test_ingest_workers_default_and_validation(tmp_path):
     assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_ingest_workers == 1
     assert _load(tmp_path, {"ingest_workers": "4"}).vector_db_ingest_workers == 4

@@ -1139,8 +1139,16 @@ enabled = true
 embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3"},]
 ```
 
-`embedding_url` は `[llm] main_url` と同じ形式で、複数書くと接続できなかったときだけ次へ切り替える。接続先ごとにベクターが
-変わらないよう、すべて同じ `model` にする必要があり、`start`/`end` は指定できない。
+`embedding_url` は `[llm] main_url` と同じ形式で、接続先ごとにベクターが変わらないよう、すべて同じ `model` にする必要があり、
+`start`/`end` は指定できない。複数書いたときの選び方は `embedding_routing_strategy`（`[llm] main_routing_strategy` と同じ
+`round_robin`・`random`・`priority_failover`（既定）。GET /slots の確認はしない）で決める。どの戦略でも、接続できない・
+HTTP 200 以外が返ったときは同じリクエストを次の接続先へ送り直し、`priority_failover` ではエラーが返った接続先を60秒間後回しにする。
+すべての接続先でエラーになったら `embedding_retry_interval_seconds`（既定10）秒待って全接続先を試し直し、これを
+取り込みでは `embedding_max_retries`（既定3）回まで繰り返す。`embedding_max_retries = 0` なら成功するまで無制限に繰り返す
+（埋め込みサーバーの再起動を待つ用途。ナレッジ画面の「停止」で止められ、待っていたファイルは記録せずに次回の取り込みへ回す）。
+検索（`search_documents` の検索語の埋め込み）は止める手段が無いため、別の `search_embedding_max_retries`（既定2）回までとし、
+こちらの `0` は「試し直さない」（無制限は指定できない）。408・429 以外の 4xx（入力・設定の誤りで待っても直らない）しか返らなかったときは
+試し直さずにエラーにする（`src/vector_db/embeddings.py` の `_embed_batch()`）。
 
 一部の埋め込みモデルは、検索語と文書の先頭に決まった目印（接頭辞）を付けないと精度が落ちる。`query_prefix`・`document_prefix` が
 既定の `auto` なら `model` の名前から自動で決める（`src/config.py` の `auto_embedding_prefixes()`）。実際に付ける値はナレッジ画面に出る。
@@ -1495,6 +1503,10 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定30） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
 | `[vector_db]` | `qdrant_preset` | Qdrant のコレクションのチャンク件数の規模別の設定（`none` 既定＝Qdrant の既定 / `1m` / `2m` / `3m` / `4m`＝〜100万〜400万件向け。HNSW・int8 量子化・ベクターのディスク配置・セグメント数・検索時の `hnsw_ef`）。既存のコレクションには次の取り込み時に反映（再構築不要）。「Qdrant を使う」参照 | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | 埋め込みを計算する接続先（`/v1/embeddings`）。`[llm] main_url` と同じ形式で、全要素同じ `model`・`start`/`end` 指定不可。`enabled = true` のとき必須（`[]` は未設定） | `VECTOR_DB_EMBEDDING_URL` |
+| `[vector_db]` | `embedding_routing_strategy` | `embedding_url` が複数件のときの選び方（`round_robin` / `random` / `priority_failover` 既定。GET /slots の確認はしない）。どの戦略でもエラーが返れば次の接続先へ送り直す（「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
+| `[vector_db]` | `embedding_max_retries` | 取り込みで全接続先がエラーになったとき試し直す回数（既定3）。`0` なら成功するまで無制限。408・429 以外の 4xx だけなら試し直さない | `VECTOR_DB_EMBEDDING_MAX_RETRIES` |
+| `[vector_db]` | `search_embedding_max_retries` | 検索（`search_documents`）で同じく試し直す回数（既定2）。`0` は試し直さない（無制限は指定できない） | `VECTOR_DB_SEARCH_EMBEDDING_MAX_RETRIES` |
+| `[vector_db]` | `embedding_retry_interval_seconds` | 上記の試し直しの間隔（秒、既定10。取り込み・検索で共通） | `VECTOR_DB_EMBEDDING_RETRY_INTERVAL_SECONDS` |
 | `[vector_db]` | `embedding_batch_size` | 埋め込み1リクエストあたりのチャンク数（既定16） | `VECTOR_DB_EMBEDDING_BATCH_SIZE` |
 | `[vector_db]` | `embedding_timeout_seconds` | 埋め込み1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS` |
 | `[vector_db]` | `query_prefix` / `document_prefix` | 検索語・文書の先頭に付ける文字列（既定 `auto` で `model` の名前から決める。空欄で付けない、それ以外はその値。末尾の空白を残すならダブルクォートで囲む。`document_prefix` を変えたら再構築が必要。「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_QUERY_PREFIX` / `VECTOR_DB_DOCUMENT_PREFIX` |
@@ -1679,7 +1691,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 

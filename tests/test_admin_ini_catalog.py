@@ -164,6 +164,7 @@ def test_choices_match_src_config_constants():
         ("main_agent_tool_guard", "visibility_mode"): MAIN_AGENT_TOOL_GUARD_VISIBILITY_MODES,
         ("log", "level"): {"info", "debug", "none"},
         ("vector_db", "backend"): set(VECTOR_DB_BACKENDS),
+        ("vector_db", "embedding_routing_strategy"): LLM_ROUTING_STRATEGIES,
     }
     for pair, values in expected.items():
         info = by_pair[pair]

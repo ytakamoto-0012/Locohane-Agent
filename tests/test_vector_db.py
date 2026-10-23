@@ -10,9 +10,9 @@ import pytest
 from _vector_db_fakes import DIM, FakeEmbeddingServer, FakeQdrant, fake_vector, make_config
 from src.config import LLMEndpoint
 from src.vector_db import catalog as vcat
-from src.vector_db import ingest, search
+from src.vector_db import embeddings, ingest, search
 from src.vector_db.chunking import split_text
-from src.vector_db.embeddings import EmbeddingError, embed_texts, open_client, shared_client
+from src.vector_db.embeddings import EmbeddingError, EmbeddingStopped, embed_images, embed_texts, open_client, shared_client
 from src.vector_db.extract import ExtractError, extract_segments
 from src.vector_db.qdrant_store import QDRANT_PRESETS, QdrantStore
 from src.vector_db.sqlite_vec_store import SqliteVecStore
@@ -107,6 +107,33 @@ def test_extract_rejects_unsupported_and_broken_files(tmp_path):
 # --- 埋め込み ---------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _no_embedding_retry_wait(monkeypatch):
+    """埋め込みの再試行の待ちを実際には眠らずに記録し、接続先の選び方の状態をテストごとに初期化する。"""
+    sleeps: list[float] = []
+    monkeypatch.setattr(embeddings, "_sleep", sleeps.append)
+    monkeypatch.setattr(embeddings, "_round_robin_counters", {})
+    monkeypatch.setattr(embeddings, "_failed_until", {})
+    return sleeps
+
+
+def _two_endpoints(*hosts: str) -> tuple[LLMEndpoint, ...]:
+    return tuple(LLMEndpoint(base_url=f"http://{h}/v1", api_key="k", model="fake-embed") for h in hosts)
+
+
+def _flaky_transport(server: FakeEmbeddingServer, failures: int, status: int = 503) -> tuple[httpx.MockTransport, list[str]]:
+    """最初の failures 回は status を返し、その後は server に任せるトランスポート（送った先の URL を記録する）。"""
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        if len(calls) <= failures:
+            return httpx.Response(status, text="busy")
+        return server.handler(request)
+
+    return httpx.MockTransport(handler), calls
+
+
 def test_embed_texts_batches_and_adds_prefix(tmp_path):
     server = FakeEmbeddingServer()
     cfg = make_config(tmp_path, vector_db_embedding_batch_size=2, vector_db_query_prefix="query: ", vector_db_document_prefix="passage: ")
@@ -118,19 +145,130 @@ def test_embed_texts_batches_and_adds_prefix(tmp_path):
     assert server.requests[-1]["input"] == ["query: q"]
 
 
-def test_embed_texts_fails_over_to_next_endpoint_only_on_connection_error(tmp_path):
+def test_embed_texts_fails_over_to_next_endpoint_on_connection_error(tmp_path, _no_embedding_retry_wait):
     server = FakeEmbeddingServer(fail_hosts=("down",))
-    endpoints = (
-        LLMEndpoint(base_url="http://down/v1", api_key="k", model="fake-embed"),
-        LLMEndpoint(base_url="http://up/v1", api_key="k", model="fake-embed"),
-    )
+    endpoints = _two_endpoints("down", "up")
     cfg = make_config(tmp_path, vector_db_embedding_endpoints=endpoints)
     embed_texts(cfg, ["a"], kind="query", transport=server.transport)
     assert server.requests[0]["url"] == "http://up/v1/embeddings"
+    assert _no_embedding_retry_wait == []
 
-    cfg = make_config(tmp_path, vector_db_embedding_endpoints=endpoints[:1])
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=endpoints[:1], vector_db_embedding_max_retries=2)
+    with pytest.raises(EmbeddingError, match="2回再試行"):
+        embed_texts(cfg, ["a"], kind="document", transport=server.transport)
+
+
+def test_embed_texts_fails_over_to_next_endpoint_on_http_error(tmp_path, _no_embedding_retry_wait):
+    """HTTP 200 以外が返ったら、同じリクエストを次の接続先へ送り直す（待たない）。"""
+    server = FakeEmbeddingServer()
+    transport, calls = _flaky_transport(server, failures=1, status=500)
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_two_endpoints("a", "b"))
+    assert len(embed_texts(cfg, ["x"], kind="query", transport=transport)) == 1
+    assert calls == ["http://a/v1/embeddings", "http://b/v1/embeddings"]
+    assert _no_embedding_retry_wait == []
+
+
+def test_embed_texts_retries_after_interval_until_success(tmp_path, _no_embedding_retry_wait):
+    """全接続先でエラーなら embedding_retry_interval_seconds 待って全接続先を試し直す。"""
+    server = FakeEmbeddingServer()
+    transport, calls = _flaky_transport(server, failures=4)
+    cfg = make_config(
+        tmp_path,
+        vector_db_embedding_endpoints=_two_endpoints("a", "b"),
+        vector_db_embedding_max_retries=2,
+        vector_db_embedding_retry_interval_seconds=1.0,
+    )
+    embed_texts(cfg, ["x"], kind="document", transport=transport)
+    # 1巡目（a, b）・再試行1（a, b）が失敗し、再試行2の a で成功する
+    assert len(calls) == 5
+    assert sum(_no_embedding_retry_wait) == pytest.approx(2.0)
+
+
+def test_embed_texts_gives_up_after_max_retries(tmp_path, _no_embedding_retry_wait):
+    transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=10**6)
+    cfg = make_config(tmp_path, vector_db_embedding_max_retries=3, vector_db_embedding_retry_interval_seconds=2.0)
+    with pytest.raises(EmbeddingError, match="3回再試行.*HTTP 503"):
+        embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert len(calls) == 4
+    assert sum(_no_embedding_retry_wait) == pytest.approx(6.0)
+
+
+def test_embed_texts_retries_without_limit_when_max_retries_is_zero(tmp_path, _no_embedding_retry_wait):
+    transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=25)
+    cfg = make_config(tmp_path, vector_db_embedding_max_retries=0, vector_db_embedding_retry_interval_seconds=0.5)
+    embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert len(calls) == 26
+    assert sum(_no_embedding_retry_wait) == pytest.approx(12.5)
+
+
+def test_search_embedding_uses_its_own_bounded_retries(tmp_path, _no_embedding_retry_wait):
+    """検索語の埋め込みは embedding_max_retries = 0（無制限）でも search_embedding_max_retries 回でやめる。"""
+    cfg = make_config(tmp_path, vector_db_embedding_max_retries=0, vector_db_search_embedding_max_retries=2)
+    transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=10**6)
+    with pytest.raises(EmbeddingError, match="2回再試行"):
+        embed_texts(cfg, ["x"], kind="query", transport=transport)
+    assert len(calls) == 3
+    assert sum(_no_embedding_retry_wait) == pytest.approx(20.0)
+
+    # 0 は「試し直さない」
+    _no_embedding_retry_wait.clear()
+    cfg = make_config(tmp_path, vector_db_search_embedding_max_retries=0)
+    transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=10**6)
     with pytest.raises(EmbeddingError):
-        embed_texts(cfg, ["a"], kind="query", transport=server.transport)
+        embed_texts(cfg, ["x"], kind="query", transport=transport)
+    assert len(calls) == 1 and _no_embedding_retry_wait == []
+
+
+def test_embed_texts_does_not_retry_client_errors(tmp_path, _no_embedding_retry_wait):
+    """408・429 以外の 4xx は待っても直らないため、全接続先を1巡したら試し直さない。"""
+    transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=10**6, status=400)
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_two_endpoints("a", "b"), vector_db_embedding_max_retries=0)
+    with pytest.raises(EmbeddingError, match="HTTP 400"):
+        embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert len(calls) == 2 and _no_embedding_retry_wait == []
+
+    transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=2, status=429)
+    embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert len(calls) == 3
+
+
+def test_embed_retry_wait_stops_when_requested(tmp_path):
+    transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=10**6)
+    cfg = make_config(tmp_path, vector_db_embedding_max_retries=0)
+    checks = iter([False, False, True])
+    with pytest.raises(EmbeddingStopped):
+        embed_images(cfg, [b"png"], transport=transport, should_stop=lambda: next(checks))
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize(
+    ("strategy", "expected_first"),
+    [("priority_failover", ["a", "a", "a"]), ("round_robin", ["a", "b", "c"])],
+)
+def test_embed_texts_routing_strategy(tmp_path, strategy, expected_first):
+    server = FakeEmbeddingServer()
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_two_endpoints("a", "b", "c"), vector_db_embedding_routing_strategy=strategy)
+    for _ in range(3):
+        embed_texts(cfg, ["x"], kind="query", transport=server.transport)
+    assert [httpx.URL(r["url"]).host for r in server.requests] == expected_first
+
+
+def test_embed_texts_random_strategy_uses_all_endpoints(tmp_path, monkeypatch):
+    server = FakeEmbeddingServer()
+    monkeypatch.setattr(embeddings.random, "sample", lambda seq, k: list(reversed(seq)))
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_two_endpoints("a", "b"), vector_db_embedding_routing_strategy="random")
+    embed_texts(cfg, ["x"], kind="query", transport=server.transport)
+    assert server.requests[0]["url"] == "http://b/v1/embeddings"
+
+
+def test_priority_failover_puts_failed_endpoint_last_for_a_while(tmp_path):
+    """priority_failover では、エラーが返った接続先を一定時間後回しにする（毎回タイムアウトを待たない）。"""
+    server = FakeEmbeddingServer()
+    transport, calls = _flaky_transport(server, failures=1)
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_two_endpoints("a", "b"))
+    embed_texts(cfg, ["x"], kind="query", transport=transport)
+    embed_texts(cfg, ["y"], kind="query", transport=transport)
+    assert calls == ["http://a/v1/embeddings", "http://b/v1/embeddings", "http://b/v1/embeddings"]
 
 
 def test_embed_texts_rejects_token_level_embeddings(tmp_path):
@@ -141,7 +279,7 @@ def test_embed_texts_rejects_token_level_embeddings(tmp_path):
 
 def test_embed_texts_reports_http_error(tmp_path):
     transport = httpx.MockTransport(lambda r: httpx.Response(500, text="model not loaded"))
-    with pytest.raises(EmbeddingError, match="HTTP 500"):
+    with pytest.raises(EmbeddingError, match="HTTP 500.*model not loaded"):
         embed_texts(make_config(tmp_path), ["a"], kind="query", transport=transport)
 
 
@@ -604,6 +742,24 @@ def test_ingest_in_parallel_stops_on_embedding_error(env):
     with pytest.raises(EmbeddingError):
         ingest.ingest_collection(cfg, "docs", **kwargs)
     assert search.list_collections(cfg)[0].file_count == 0
+
+
+def test_ingest_stop_during_embedding_retry_keeps_file_for_next_run(env):
+    """埋め込みの再試行を待っている間に停止したら、そのファイルを記録せずに止め、次回の取り込みで処理する。"""
+    cfg = make_config(env["cfg"].vector_db_dir.parent, vector_db_backend=env["cfg"].vector_db_backend, vector_db_embedding_max_retries=0)
+    stop = {"requested": False}
+
+    def down(request: httpx.Request) -> httpx.Response:
+        stop["requested"] = True
+        return httpx.Response(503, text="loading")
+
+    kwargs = {**env["kwargs"], "embedding_transport": httpx.MockTransport(down)}
+    result = ingest.ingest_collection(cfg, "docs", should_stop=lambda: stop["requested"], **kwargs)
+    assert result.added == 0
+    assert search.list_collections(cfg)[0].file_count == 0
+
+    again = ingest.ingest_collection(cfg, "docs", **env["kwargs"])
+    assert again.added > 0 and again.removed == 0
 
 
 def test_ingest_errors_for_missing_collection_or_folder(env):
