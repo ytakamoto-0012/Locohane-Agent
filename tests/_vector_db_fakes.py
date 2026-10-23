@@ -87,9 +87,9 @@ class FakeQdrant:
             if request.method == "GET":
                 if coll is None:
                     return httpx.Response(404, json={"status": {"error": "Not found"}})
-                return httpx.Response(200, json={"result": {"config": {"params": {"vectors": {"size": coll["size"], "distance": "Cosine"}}}}})
+                return httpx.Response(200, json={"result": {"config": {"params": {"vectors": {"size": coll["size"], "distance": coll["distance"]}}}}})
             if request.method == "PUT":
-                self.collections[name] = {"size": body["vectors"]["size"], "points": {}}
+                self.collections[name] = {"size": body["vectors"]["size"], "distance": body["vectors"]["distance"], "points": {}}
                 return httpx.Response(200, json={"result": True})
             if request.method == "DELETE":
                 self.collections.pop(name, None)
@@ -109,11 +109,13 @@ class FakeQdrant:
             return httpx.Response(200, json={"result": {}})
         if rest == ["points", "query"]:
             q = body["query"]
-            scored = [
-                {"id": k, "score": sum(a * b for a, b in zip(q, p["vector"])), "payload": p["payload"]}
-                for k, p in coll["points"].items()
-            ]
-            scored.sort(key=lambda s: s["score"], reverse=True)
+            # Euclid・Manhattan は距離（小さいほど近い）を返し、昇順に並べる（実際の Qdrant と同じ）。
+            metric = {
+                "Euclid": lambda v: sum((a - b) ** 2 for a, b in zip(q, v)) ** 0.5,
+                "Manhattan": lambda v: sum(abs(a - b) for a, b in zip(q, v)),
+            }.get(coll["distance"], lambda v: sum(a * b for a, b in zip(q, v)))
+            scored = [{"id": k, "score": metric(p["vector"]), "payload": p["payload"]} for k, p in coll["points"].items()]
+            scored.sort(key=lambda s: s["score"], reverse=coll["distance"] not in ("Euclid", "Manhattan"))
             return httpx.Response(200, json={"result": {"points": scored[: body["limit"]]}})
         return httpx.Response(400, json={"status": {"error": f"unexpected {request.method} {path}"}})
 
@@ -131,6 +133,10 @@ def make_config(tmp_path: Path, **changes):
         "vector_db_embedding_endpoints": (LLMEndpoint(base_url="http://embed/v1", api_key="k", model="fake-embed"),),
         "vector_db_embedding_batch_size": 16,
         "vector_db_min_score": 0.0,
+        "vector_db_image_min_score": 0.0,
+        "vector_db_rrf_weight_text": 1.0,
+        "vector_db_rrf_weight_keyword": 1.0,
+        "vector_db_rrf_weight_image": 1.0,
         "vector_db_chunk_size": 200,
         "vector_db_chunk_overlap": 20,
         "vector_db_qdrant_url": "http://qdrant:6333",

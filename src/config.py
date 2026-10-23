@@ -52,6 +52,10 @@ LLM_ROUTING_STRATEGIES = frozenset({"round_robin", "random", "priority_failover"
 LLM_PROVIDERS = frozenset({"openai_compatible", "llama_cpp", "vllm"})
 # [vector_db].backend の選択肢（admin/ini_catalog.py の _KEY_CHOICES と一致させる）。
 VECTOR_DB_BACKENDS = ("sqlite_vec", "qdrant")
+# [vector_db].distance の選択肢（Qdrant の distance の綴り。admin/ini_catalog.py の _KEY_CHOICES と一致させる）。
+# sqlite-vec（vec0）は Dot に対応していない（VECTOR_DB_SQLITE_VEC_DISTANCES）。
+VECTOR_DB_DISTANCES = ("Cosine", "Euclid", "Dot", "Manhattan")
+VECTOR_DB_SQLITE_VEC_DISTANCES = ("Cosine", "Euclid", "Manhattan")
 
 # reasoning_format が取りうる値（llama-server の --reasoning-format と同じ）。
 LLM_REASONING_FORMATS = frozenset({"none", "deepseek", "deepseek-legacy"})
@@ -464,6 +468,8 @@ class Config:
         vector_db_qdrant_collection_prefix: Qdrant のコレクション名の接頭辞
             （${instance} 展開済み）。
         vector_db_qdrant_timeout_seconds: Qdrant への1リクエストのタイムアウト秒数。
+        vector_db_distance: コレクションを作るときの距離関数（VECTOR_DB_DISTANCES の
+            いずれか。backend=sqlite_vec では VECTOR_DB_SQLITE_VEC_DISTANCES のいずれか）。
         vector_db_embedding_endpoints: 埋め込みを計算する接続先（/v1/embeddings）。
             enabled=False のときは空でもよい。
         vector_db_embedding_batch_size: 埋め込み1リクエストあたりのチャンク数。
@@ -472,14 +478,22 @@ class Config:
             付ける文字列（e5 系モデルの "query: " / "passage: " 等）。
         vector_db_chunk_size / vector_db_chunk_overlap: チャンク分割の目安文字数と
             隣り合うチャンクの重複文字数。
-        vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。
+        vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。画像ファイルの
+            拡張子は vector_db_image_input が True のときだけ使う。
         vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。
         vector_db_image_input: True なら .pdf/.docx/.pptx/.xlsx/.xlsm をページごとの
-            画像にして埋め込む（マルチモーダルの埋め込みモデルが必要）。
+            画像にし、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
+            （マルチモーダルの埋め込みモデルが必要）。
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
+        vector_db_ingest_workers: 取り込みで並列に処理するファイル数（ワーカースレッド数）。
         vector_db_top_k: search_documents の既定の返却件数。
         vector_db_max_result_chars: search_documents の結果全体の最大文字数。
-        vector_db_min_score: search_documents の結果に出す類似度の下限。
+        vector_db_min_score: search_documents の結果に出す類似度の下限（本文のチャンク）。
+        vector_db_image_min_score: 同じくページ画像（image_input）の類似度の下限。
+            検索語（テキスト）と画像の類似度は本文より低めに出るため別に持つ。
+        vector_db_rrf_weight_text / vector_db_rrf_weight_keyword / vector_db_rrf_weight_image:
+            本文の埋め込み・本文のキーワード（BM25）・ページ画像の検索結果を順位で統合する
+            （Reciprocal Rank Fusion）ときの重み。0 ならその検索を使わない。
         script_timeout: run_script の実行タイムアウト秒数。
         script_python: run_script が .py スクリプトを起動する際に使う
             Python 実行ファイル。
@@ -1014,6 +1028,7 @@ class Config:
     vector_db_qdrant_api_key: str
     vector_db_qdrant_collection_prefix: str
     vector_db_qdrant_timeout_seconds: float
+    vector_db_distance: str
     vector_db_embedding_endpoints: tuple[LLMEndpoint, ...]
     vector_db_embedding_batch_size: int
     vector_db_embedding_timeout_seconds: float
@@ -1025,9 +1040,14 @@ class Config:
     vector_db_max_file_mb: float
     vector_db_image_input: bool
     vector_db_image_dpi: int
+    vector_db_ingest_workers: int
     vector_db_top_k: int
     vector_db_max_result_chars: int
     vector_db_min_score: float
+    vector_db_image_min_score: float
+    vector_db_rrf_weight_text: float
+    vector_db_rrf_weight_keyword: float
+    vector_db_rrf_weight_image: float
 
     # --- ログファイル（app_*.log）の行数ベースローテーション・自動削除 ---
     log_max_lines: int
@@ -1819,6 +1839,15 @@ def _as_vector_db_backend(value: str | None) -> str:
     return text
 
 
+def _as_vector_db_distance(value: str | None) -> str:
+    """[vector_db].distance の値を検証し、VECTOR_DB_DISTANCES の綴りにする（大文字小文字は問わない）。"""
+    text = str(value or "").strip().lower()
+    for distance in VECTOR_DB_DISTANCES:
+        if text == distance.lower():
+            return distance
+    raise ValueError(f"[vector_db].distance は {'/'.join(VECTOR_DB_DISTANCES)} のいずれかにしてください: {value!r}")
+
+
 def _as_extension_list(value: str | None) -> tuple[str, ...]:
     """カンマ区切りの拡張子リストを、小文字・"." 付きに正規化したタプルにする。"""
     result: list[str] = []
@@ -1850,6 +1879,7 @@ def _validate_vector_db(cfg: "Config") -> None:
 
     Raises:
         ValueError: chunk_overlap が 0〜chunk_size-1 の範囲外、min_score が 0〜1 の範囲外、
+            backend=sqlite_vec なのに distance が sqlite-vec の対応しない値（Dot）、
             または enabled=true なのに embedding_url が空・backend=qdrant なのに
             qdrant_url が空の場合。
     """
@@ -1859,6 +1889,16 @@ def _validate_vector_db(cfg: "Config") -> None:
         )
     if not (0.0 <= cfg.vector_db_min_score <= 1.0):
         raise ValueError(f"[vector_db].min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_min_score}")
+    if not (0.0 <= cfg.vector_db_image_min_score <= 1.0):
+        raise ValueError(f"[vector_db].image_min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_image_min_score}")
+    for key in ("text", "keyword", "image"):
+        if getattr(cfg, f"vector_db_rrf_weight_{key}") < 0:
+            raise ValueError(f"[vector_db].rrf_weight_{key} は 0 以上で指定してください: {getattr(cfg, f'vector_db_rrf_weight_{key}')}")
+    if cfg.vector_db_backend == "sqlite_vec" and cfg.vector_db_distance not in VECTOR_DB_SQLITE_VEC_DISTANCES:
+        raise ValueError(
+            f"[vector_db].backend = sqlite_vec では distance に {'/'.join(VECTOR_DB_SQLITE_VEC_DISTANCES)} のいずれかを指定してください"
+            f"（sqlite-vec は {cfg.vector_db_distance} に対応していません）。"
+        )
     if not cfg.vector_db_enabled:
         return
     if not cfg.vector_db_embedding_endpoints:
@@ -2911,6 +2951,7 @@ def load_config(
         vector_db_qdrant_timeout_seconds=_positive_float(
             os.getenv("VECTOR_DB_QDRANT_TIMEOUT_SECONDS", vector_db.get("qdrant_timeout_seconds", 30)), "[vector_db].qdrant_timeout_seconds"
         ),
+        vector_db_distance=_as_vector_db_distance(os.getenv("VECTOR_DB_DISTANCE", vector_db.get("distance", "Cosine"))),
         vector_db_embedding_endpoints=_as_embedding_endpoints(os.getenv("VECTOR_DB_EMBEDDING_URL", vector_db.get("embedding_url", ""))),
         vector_db_embedding_batch_size=_positive_int(
             os.getenv("VECTOR_DB_EMBEDDING_BATCH_SIZE", vector_db.get("embedding_batch_size", 16)), "[vector_db].embedding_batch_size"
@@ -2924,16 +2965,23 @@ def load_config(
         vector_db_chunk_size=_positive_int(os.getenv("VECTOR_DB_CHUNK_SIZE", vector_db.get("chunk_size", 800)), "[vector_db].chunk_size"),
         vector_db_chunk_overlap=int(os.getenv("VECTOR_DB_CHUNK_OVERLAP", vector_db.get("chunk_overlap", 100))),
         vector_db_include_extensions=_as_extension_list(
-            os.getenv("VECTOR_DB_INCLUDE_EXTENSIONS", vector_db.get("include_extensions", ".pdf, .docx, .xlsx, .xlsm, .pptx, .md, .txt, .csv"))
+            os.getenv("VECTOR_DB_INCLUDE_EXTENSIONS", vector_db.get("include_extensions", ".pdf, .docx, .xlsx, .xlsm, .pptx, .md, .txt, .csv, .png, .jpg, .jpeg, .gif, .bmp, .webp, .tif, .tiff, .heic, .heif"))
         ),
         vector_db_max_file_mb=_positive_float(os.getenv("VECTOR_DB_MAX_FILE_MB", vector_db.get("max_file_mb", 50)), "[vector_db].max_file_mb"),
         vector_db_image_input=_as_bool(os.getenv("VECTOR_DB_IMAGE_INPUT", vector_db.get("image_input", False))),
         vector_db_image_dpi=_positive_int(os.getenv("VECTOR_DB_IMAGE_DPI", vector_db.get("image_dpi", 100)), "[vector_db].image_dpi"),
+        vector_db_ingest_workers=_positive_int(
+            os.getenv("VECTOR_DB_INGEST_WORKERS", vector_db.get("ingest_workers", 1)), "[vector_db].ingest_workers"
+        ),
         vector_db_top_k=_positive_int(os.getenv("VECTOR_DB_TOP_K", vector_db.get("top_k", 5)), "[vector_db].top_k"),
         vector_db_max_result_chars=_positive_int(
             os.getenv("VECTOR_DB_MAX_RESULT_CHARS", vector_db.get("max_result_chars", 6000)), "[vector_db].max_result_chars"
         ),
         vector_db_min_score=float(os.getenv("VECTOR_DB_MIN_SCORE", vector_db.get("min_score", 0.3))),
+        vector_db_image_min_score=float(os.getenv("VECTOR_DB_IMAGE_MIN_SCORE", vector_db.get("image_min_score", 0.1))),
+        vector_db_rrf_weight_text=float(os.getenv("VECTOR_DB_RRF_WEIGHT_TEXT", vector_db.get("rrf_weight_text", 1.0))),
+        vector_db_rrf_weight_keyword=float(os.getenv("VECTOR_DB_RRF_WEIGHT_KEYWORD", vector_db.get("rrf_weight_keyword", 1.0))),
+        vector_db_rrf_weight_image=float(os.getenv("VECTOR_DB_RRF_WEIGHT_IMAGE", vector_db.get("rrf_weight_image", 1.0))),
         log_max_lines=int(os.getenv("LOG_MAX_LINES", log_section.get("max_lines", 5000))),
         log_retention_days=int(os.getenv("LOG_RETENTION_DAYS", log_section.get("retention_days", 7))),
         log_cleanup_interval_hours=float(os.getenv("LOG_CLEANUP_INTERVAL_HOURS", log_section.get("cleanup_interval_hours", 1))),

@@ -20,9 +20,9 @@ from pydantic import BaseModel
 from src.config import Config, load_config
 from src.vector_db import catalog as vcat
 from src.vector_db.embeddings import EmbeddingError
-from src.vector_db.ingest import IngestError, ingest_collection
-from src.vector_db.page_images import drop_collection_images
-from src.vector_db.store import StoreError, open_store
+from src.vector_db.ingest import IngestError, effective_extensions, ingest_collection
+from src.vector_db.keyword_index import open_keyword_index
+from src.vector_db.store import StoreError, image_collection_name, open_store
 
 from . import audit
 from . import instances as inst
@@ -179,9 +179,11 @@ def build_router(
             "dir": str(cfg.vector_db_dir),
             "qdrant_url": cfg.vector_db_qdrant_url,
             "qdrant_collection_prefix": cfg.vector_db_qdrant_collection_prefix,
+            "distance": cfg.vector_db_distance,
             "embedding_model": endpoints[0].model if endpoints else None,
-            "include_extensions": list(cfg.vector_db_include_extensions),
+            "include_extensions": list(effective_extensions(cfg.vector_db_include_extensions, cfg.vector_db_image_input)),
             "image_input": cfg.vector_db_image_input,
+            "max_file_mb": cfg.vector_db_max_file_mb,
             "collections": [_collection_dict(c, running.get(c.name)) for c in collections],
         }
 
@@ -226,11 +228,13 @@ def build_router(
                 store = open_store(cfg, transport=extra_ingest_kwargs.get("store_transport"))
                 try:
                     store.drop_collection(collection)
+                    store.drop_collection(image_collection_name(collection))
                 finally:
                     store.close()
             except StoreError as exc:
                 raise HTTPException(status_code=502, detail=f"ベクターを削除できませんでした: {exc}") from exc
-            drop_collection_images(cfg.vector_db_dir, collection)
+            with open_keyword_index(cfg.vector_db_dir) as keywords:
+                keywords.drop_collection(collection)
             catalog.delete(collection)
         jobs.forget(name, collection)
         _audit(request, user, name, "knowledge_collection_delete", collection=collection)

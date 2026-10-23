@@ -16,6 +16,8 @@ from ._path_memory_helpers import _register_path_memory
 logger = logging.getLogger(__name__)
 
 _DISABLED_MESSAGE = "ベクターDB機能は無効です（config.ini の [vector_db] enabled = false）。社内文書の検索はできません。"
+# Hit.matched（一致した埋め込み）の表示名。
+_MATCHED_LABELS = {"text": "本文", "keyword": "キーワード", "image": "画像"}
 
 
 def _enabled_config():
@@ -61,8 +63,10 @@ def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
     ではなく意味で探すため、query は質問文や要点を短い文で書けばよい。
     結果は抜粋なので、詳しく確かめる必要があれば出典の `@N` を Read に渡して
     原文を読むこと（Read を持たないメインエージェントは explore へ委譲する）。
-    ページを画像として取り込んだ文書は「ページ画像」の `@N` も付くので、図・表等を
-    確かめる必要があればそれを analyze_image に渡す。
+    「一致: 画像」を含む結果は、ページの見た目（図・表・写真等）が一致している。
+    中身を確かめるには、出典が画像ファイルならその `@N` を analyze_image に渡し、
+    PDF・Office なら render 系スキル（pdf-tools / docx-render / pptx-render /
+    excel-render）でそのページを画像にしてから analyze_image で見る。
     回答には出典（ファイル名とページ等）を添えること。
     読み取り専用のため、計画の有無に関わらずいつでも呼んでよい。
 
@@ -73,7 +77,8 @@ def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
         top_k: 返す最大件数。0 なら既定値（config.ini の [vector_db] top_k）。
 
     Returns:
-        類似度の高い順に「類似度・出典（@N とファイルパス・ページ等）・ページ画像（あれば @N とパス）・本文抜粋」を並べたテキスト。
+        関連の高い順に「類似度・一致（本文 / キーワード / 画像）・出典（@N とファイルパス・ページ等）・本文抜粋」を
+        並べたテキスト。同じファイル・同じページのチャンクは1件にまとめ、最も一致したチャンクを抜粋にする。
         全体の文字数は上限で切り詰める。該当が無い・機能が無効・エラーの場合はその旨のテキスト
         （エラーは「エラー: ...」形式）。
     """
@@ -91,20 +96,18 @@ def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
 
     path_refs = _register_path_memory(sorted({h.source_path for h in result.hits}), description="search_documents の出典")
     ref_of = {path: ref for ref, path in path_refs.items()}
-    image_refs = _register_path_memory(
-        sorted({h.image_path for h in result.hits if h.image_path}), description="search_documents の出典のページ画像"
-    )
-    ref_of.update({path: ref for ref, path in image_refs.items()})
     budget = cfg.vector_db_max_result_chars
     lines = [f"{len(result.hits)}件見つかりました。"]
     for i, hit in enumerate(result.hits, start=1):
         ref = ref_of.get(hit.source_path)
         source = f"{ref} {hit.source_path}" if ref else hit.source_path
         locator = f" {hit.locator}" if hit.locator else ""
-        header = f"[{i}] 類似度 {hit.score:.2f} / {hit.collection} / {source}{locator}"
-        if hit.image_path:
-            image_ref = ref_of.get(hit.image_path)
-            header += f"\nページ画像: {f'{image_ref} ' if image_ref else ''}{hit.image_path}"
+        matched = "・".join(_MATCHED_LABELS[m] for m in hit.matched) or _MATCHED_LABELS["text"]
+        # キーワードだけの一致には類似度が無い（BM25 の値はコサイン類似度と比べられない）。
+        score = f"類似度 {hit.score:.2f}" if set(hit.matched) - {"keyword"} else "類似度 -"
+        header = f"[{i}] {score}（一致: {matched}）/ {hit.collection} / {source}{locator}"
+        if hit.other_chunks:
+            header += f"（同じ位置で他 {hit.other_chunks} チャンクも一致）"
         text = hit.text.strip()
         remaining = budget - len(header)
         if remaining <= 0:

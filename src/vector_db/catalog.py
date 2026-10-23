@@ -61,7 +61,7 @@ class Collection:
 
 @dataclass(frozen=True)
 class FileRecord:
-    """取り込み済みファイルの記録。mode は埋め込み方（"text" または "image"、ingest.file_mode()）。"""
+    """取り込み済みファイルの記録。mode は埋め込み方（"text" または "text+image"、ingest.file_mode()）。"""
 
     source_path: str
     size: int

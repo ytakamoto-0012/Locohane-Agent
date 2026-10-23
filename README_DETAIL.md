@@ -427,10 +427,11 @@ Locohane/
 │   ├── memory.py            # 永続メモリーの読み書き・索引再構築
 │   ├── vector_db/            # ベクターDB（社内文書の意味検索。「ベクターDB（社内文書の意味検索）」節）
 │   │   ├── extract.py / chunking.py # 文書からのテキスト抽出・チャンク分割
-│   │   ├── render.py / page_images.py # image_input 時のページ画像化（Office は COM で PDF 経由）とページ画像の保存
+│   │   ├── render.py         # image_input 時のページ・画像ファイルの画像化（Office は COM で PDF 経由）
 │   │   ├── embeddings.py     # /v1/embeddings による埋め込み計算
 │   │   ├── catalog.py        # コレクション定義・取り込み済みファイルの記録（catalog.sqlite）
 │   │   ├── store.py / sqlite_vec_store.py / qdrant_store.py # ベクターの保存先（sqlite-vec / Qdrant）
+│   │   ├── keyword_index.py  # 本文のキーワード索引（keywords.sqlite、SQLite FTS5 の BM25）
 │   │   └── ingest.py / search.py # 差分取り込み（CLI: python -m src.vector_db.ingest）・検索
 │   ├── project_instructions.py # .locohane/LOCOHANE.md の読込
 │   ├── graph.py             # ReAct ループ（handwritten / prebuilt を切替）
@@ -557,7 +558,7 @@ Locohane/
 | `data/chat_threads.sqlite` | 会話スレッド一覧（画面左サイドバー）・再開用のメタデータ（スレッド名・所有者・Chainlitの Step 履歴）。`checkpoints.sqlite` とは別ファイル（`[thread_store]`参照） | 一覧・再開機能が不要になったとき | ファイルを削除（アプリ停止中に。`checkpoints.sqlite` 自体は消えないため会話状態は失われない） |
 | `data/logs/app.log` | アプリの動作ログ | いつでも | ファイルを削除 |
 | `data/memory/` | 永続メモリー（`user`/`feedback`/`project`/`reference` サブフォルダ＋`MEMORY.md`索引） | 蓄積した記憶が不要になったとき | フォルダ内を削除（`MEMORY.md`は次回保存時に再生成される） |
-| `data/vector_db/` | ベクターDB の `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`backend = sqlite_vec` 時のベクター `vectors.sqlite`、`image_input = true` 時のページ画像 `page_images/`（`[vector_db] dir`）。取り込み元の文書そのものは複製しない | コレクションが不要になったとき | 設定ダッシュボードのナレッジ画面でコレクションを削除する（フォルダごと消す場合はアプリと管理ツールの取り込みを止めてから。`backend = qdrant` のベクターは Qdrant 側に残る） |
+| `data/vector_db/` | ベクターDB の `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`backend = sqlite_vec` 時のベクター `vectors.sqlite`、本文のキーワード索引 `keywords.sqlite`（`[vector_db] dir`）。取り込み元の文書そのものは複製しない | コレクションが不要になったとき | 設定ダッシュボードのナレッジ画面でコレクションを削除する（フォルダごと消す場合はアプリと管理ツールの取り込みを止めてから。`backend = qdrant` のベクターは Qdrant 側に残る） |
 | `data/plans/` | `create_plan` が `detail_markdown` 引数を渡した場合の詳細計画Markdown（`[paths] plans_dir`） | 古い計画が不要になったとき | フォルダ内を削除 |
 | `data/skill_drafts/<ユーザー名>/` | skill-creator が作ったユーザー別ドラフトスキル（`<スキル名>/`）と、その評価結果（`_workspace/`）。`[skill_creator] draft_dir`。不採用のドラフトも記録として残る（一覧には出ない） | 不要なドラフトがあるとき | ドラフトのフォルダを削除（作成者は skill-creator の `delete_draft.py` でも消せる）。自動削除はされない |
 | `data/<インスタンス名>/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
@@ -1081,19 +1082,33 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   `[vector_db] dir`（既定 `data/<インスタンス名>/vector_db/`）の `catalog.sqlite` に置く（`src/vector_db/catalog.py`）。
 - **保存先**（`[vector_db] backend`）: `sqlite_vec`（既定。同じフォルダの `vectors.sqlite` に sqlite-vec の `vec0` 仮想テーブルで
   保存、サーバー不要、`src/vector_db/sqlite_vec_store.py`）か `qdrant`（Qdrant サーバー、`src/vector_db/qdrant_store.py`）。
-  どちらもコサイン類似度で比べる。
+  どちらもコサイン類似度で比べる。本文のチャンクは保存先によらず、同じフォルダの `keywords.sqlite`（SQLite FTS5）にも
+  キーワード検索用に入れる（`src/vector_db/keyword_index.py`）。
 - **取り込み**（`src/vector_db/ingest.py`）: 対応形式は `.pdf`（ページ単位）・`.docx`・`.xlsx`/`.xlsm`（シート単位）・`.pptx`
   （スライド単位、ノート含む）・`.md`/`.txt`/`.csv`（`[vector_db] include_extensions` で絞れる。Office の一時ファイル `~$*` は除く）。
   本文を `chunk_size` 文字以内のチャンクに分け（段落・改行の切れ目を優先し、隣と `chunk_overlap` 文字重ねる）、
   チャンクごとの埋め込みを保存する。2回目以降は**差分だけ**を処理する（サイズ・更新日時が同じファイルは読み直さず、
   内容が同じなら埋め込み直さない。フォルダから消えたファイルのチャンクは削除する）。読めないファイル・本文が無いファイル
-  （画像だけの PDF 等）・`max_file_mb` を超えるファイルは失敗一覧に載せて続行する。`[vector_db] image_input = true` なら
-  PDF・Office ファイルはテキストではなくページ画像で埋め込む（「ページを画像として取り込む（image_input）」参照）。
+  （画像だけの PDF 等）・`max_file_mb` を超えるファイルは失敗一覧に載せて続行する（`max_file_mb` は llama-server ではなく Locohane 側の上限で、超えたファイルがあるとナレッジ画面に「`max_file_mb` を大きくして取り込み直す」案内を出す）。`[vector_db] image_input = true` なら
+  PDF・Office ファイルは本文に加えてページ画像も埋め込み、画像ファイル（`.png`・`.jpg`・`.heic` 等）も取り込む
+  （「ページを画像として取り込む（image_input）」参照）。
 - **埋め込みモデルの固定**: コレクションには作成時の埋め込みモデル名と次元を記録する。`embedding_url` のモデルを変えると
   ベクターを比べられなくなるため、そのコレクションは検索対象から外れ（理由を LLM に返す）、取り込みも「再構築」
   （全ベクターを消して取り込み直す）を求めるエラーになる。
-- **検索**（`search_documents`、`src/vector_db/search.py`）: `collection` 省略時は全コレクションを横断し、類似度が `min_score`
-  以上のチャンクを上位 `top_k` 件返す。各結果には出典のファイルパスをパスメモリー（`@N`）付きで添えるため、原文は
+- **検索**（`search_documents`、`src/vector_db/search.py`）: `collection` 省略時は全コレクションを横断する。次の検索を
+  コレクションごとに別々に行い、点数ではなく順位で統合して上位 `top_k` 件返す（Reciprocal Rank Fusion。各一覧での順位 r に
+  `重み / (60 + r)` を足した合計の高い順。重みは `rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`、0 で無効）。
+  - **本文の埋め込み**: 意味の近いチャンク（類似度 `min_score` 以上）。
+  - **本文のキーワード**: 検索語の語句を含むチャンクを BM25 の高い順に。埋め込みが苦手な型番・品番・数値の完全一致を拾う。
+    日本語は単語に分けずに、漢字・かな等の連続を2文字ずつ（バイグラム）に区切って索引にし（ひらがなだけの2文字は助詞・
+    語尾として除く）、英数字は語ごとに小文字で、全角・半角は NFKC でそろえる。
+  - **ページ画像**: `image_input = true` のとき（「ページを画像として取り込む（image_input）」参照）。
+
+  各一覧は `top_k` の4倍の候補を取る。結果は**同じファイル・同じ位置（ページ・シート・スライド。`.md`/`.txt`/`.csv` は
+  ファイル全体）ごとに1件にまとめる**。1つの一覧の中では同じ位置のチャンクは最上位の1つだけを数えるため、1ページに
+  大量のチャンクがあっても点数はチャンク数で増えず、複数の検索（本文・キーワード・画像）で一致した位置が上に来る。
+  埋め込み・索引はチャンク（`chunk_size`）単位のままで、抜粋には最も一致したチャンクを使い、同じ位置で他に一致した
+  チャンクは数だけ添える。各結果にはどの検索で一致したか（`一致: 本文・キーワード` 等）を載せ、出典のファイルパスをパスメモリー（`@N`）付きで添えるため、原文は
   `@N` を `Read`（メインエージェントは `explore` への委譲）に渡して確認できる。結果全体は `max_result_chars` 文字で切り詰める。
   結果が小さく抑えられるため、メインエージェント自身も直接呼べる（`[main_agent_tool_guard] allow_entries` に登録済み）。
   サブエージェントは `explore`・`worker`・`verifier` が持つ。
@@ -1123,22 +1138,39 @@ embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not
 変わらないよう、すべて同じ `model` にする必要があり、`start`/`end` は指定できない。`multilingual-e5` 系は
 `query_prefix = "query: "`・`document_prefix = "passage: "` も設定する（末尾の空白を残すためダブルクォートで囲む）。
 
+ベクター同士の近さの測り方（距離関数）は `distance` で選ぶ（`Cosine` 既定 / `Euclid` / `Manhattan` / `Dot`）。
+sqlite-vec では `Euclid` が vec0 の `l2`、`Manhattan` が `l1` に当たり、`Dot` は対応していない（`Qdrant` のみ）。
+`Euclid`・`Manhattan` は値が小さいほど近いため、検索結果の類似度を `1 / (1 + 距離)` に換算してから
+`min_score`・`image_min_score` と比べる（`Cosine` とは値の出方が違うので下限を調整する）。
+**距離関数はコレクションを作るときに決まるため、変えた後は既存のコレクションをすべて「再構築」する**
+（再構築前の差分取り込みは「距離関数が違います」のエラーになり、検索は作ったときの距離関数のまま行う）。
+
 ### ページを画像として取り込む（image_input）
 
-`[vector_db] image_input = true` にすると、`.pdf`・`.docx`・`.pptx`・`.xlsx`/`.xlsm` は文字を取り出す代わりに
-1ページずつ画像にして、その画像を埋め込む（`src/vector_db/render.py`）。図・表・写真・スキャンした PDF のように
-文字を取り出せない内容も検索できる。`.md`/`.txt`/`.csv` は従来どおりテキストで埋め込む。
+`[vector_db] image_input = true` にすると、`.pdf`・`.docx`・`.pptx`・`.xlsx`/`.xlsm` は本文のチャンクに加えて
+1ページずつの画像も埋め込む（`src/vector_db/render.py`）。本文は型番・数値等の細かい語句に、画像は図・表・写真・
+スキャンした PDF のように文字を取り出せない内容に強いため、両方を持たせて補い合う。`.md`/`.txt`/`.csv` は従来どおり
+本文だけを埋め込む。
+画像ファイル（`.png`・`.jpg`/`.jpeg`・`.gif`・`.bmp`・`.webp`・`.tif`/`.tiff`・`.heic`/`.heif`）も取り込み対象になる
+（`image_input = false` のときは文字を取り出せないため無視する）。
 
 - **画像化の方法**: render 系スキル（`docx-render`・`pptx-render`・`excel-render`）と同じく、Office ファイルは OLE（COM）で
   Word / PowerPoint / Excel をヘッドレス起動して PDF に書き出し、PDF のページを pypdfium2 で `image_dpi`（既定100）の
   PNG にする。Excel は表示中のシートごとに横1×縦1ページのフィット印刷で書き出し（印刷設定の変更は保存しない。
   非表示シート・空のシートは除く）、PowerPoint の非表示スライドは含めない。Office ファイルの画像化には Windows と
   Microsoft Office が必要で、使えない環境ではそのファイルが失敗一覧に載る。
-- **チャンク**: 1ページ（Excel は1シート）が1チャンクになる。出典の位置は PDF・Word が `p.N`、PowerPoint が `スライドN`、
-  Excel が `シート: 名前`。検索結果の本文抜粋には、PDF のテキスト層から取ったそのページの文字（`chunk_size` 文字まで）を使う。
-- **ページ画像の保存**: 埋め込みに使った画像は `[vector_db] dir` の `page_images/<コレクション名>/` に残し、
-  `search_documents` の結果に「ページ画像」のパス（`@N`）を載せる。LLM は図表の中身をそれを `analyze_image` に渡して確かめられる。
-  ファイルの取り込み直し・削除、コレクションの再構築・削除のときに合わせて消える。
+- **画像ファイル**: Pillow（HEIC/HEIF は pillow-heif）で開き、EXIF の回転を反映して PNG にそろえる（透過部分は白で埋める）。
+  長辺は A4 の文書を `image_dpi` で画像化したときの長辺（100 DPI なら 1169px）まで縮小し、それより小さい画像は拡大しない。
+  1枚が1チャンクで出典の位置は `画像`。複数ページの TIFF はページごとに分けて `p.N`、アニメーション GIF は先頭のコマだけを使う。
+- **チャンク**: 本文は `image_input = false` のときと同じチャンクにする。ページ画像は1ページ（Excel は1シート）が1チャンクで、
+  出典の位置は PDF・Word が `p.N`、PowerPoint が `スライドN`、Excel が `シート: 名前`。ページ画像の結果の本文抜粋には、
+  PDF のテキスト層から取ったそのページの文字（`chunk_size` 文字まで）を使う。
+- **保存先**: 本文と画像は類似度の出方が違う（検索語はテキストのため、画像との類似度は低めに出る）ので、ページ画像の
+  ベクターは別のコレクション `<コレクション名>.image`（Qdrant では接頭辞付き）に入れる。ページ画像のファイルは保存しない。
+  出典は元のファイルとページ位置だけで、図表の中身を確かめるときは render 系スキル（`pdf-tools`・`docx-render` 等）で
+  そのページを画像にしてから `analyze_image` で見る（画像ファイルは出典の `@N` をそのまま `analyze_image` に渡す）。
+- **検索の統合**: ページ画像は `image_min_score` 以上のものを、本文の埋め込み・キーワードの結果と順位で統合する
+  （「ベクターDB（社内文書の意味検索）」の「検索」参照）。同じページが本文と画像の両方で一致すれば1件にまとめて合算する。
 - **埋め込みモデル**: 画像入力に対応したマルチモーダルの埋め込みモデル（例: Qwen3-VL-Embedding）を、llama-server に
   `--mmproj` を付けて起動する。画像は llama-server の `/v1/embeddings` の画像入力形式
   （`{"input": [{"content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}]}]}`）で、
@@ -1149,8 +1181,9 @@ embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not
 llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models\mmproj-Qwen3-VL-Embedding-2B-f16.gguf --alias qwen3-vl-embedding --embedding --pooling last --port 12440 -c 8192 -b 8192 -ub 8192
 ```
 
-- **切り替え**: 取り込み済みファイルの記録には埋め込み方（テキスト / 画像）も残すため、`image_input` を切り替えて
-  「取り込み（差分）」を押すと、内容が変わっていなくても該当する形式のファイルだけを新しい方式で取り込み直す。
+- **切り替え**: 取り込み済みファイルの記録には埋め込み方（`text` / `text+image`）も残すため、`image_input` を切り替えて
+  「取り込み（差分）」を押すと、内容が変わっていなくても該当する形式のファイルだけを新しい方式で取り込み直す
+  （false に戻すとページ画像のベクターは消え、画像ファイルは取り込み対象から外れて削除される）。
   埋め込みモデルも変えた場合は、これまでどおり「再構築」が必要。
 
 ### 文書の取り込み（設定ダッシュボードの「ナレッジ」）
@@ -1159,11 +1192,19 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
 （`admin/knowledge.py`・`admin/static/knowledge.js`）。
 
 1. 「コレクションを追加」にコレクション名・説明・取り込み元フォルダ（管理ツールの PC から見える絶対パス。共有フォルダの
-   UNC パスも可）を入れて追加する。
+   UNC パスも可）を入れて追加する。名前が `.` で始まる、または Windows の隠し属性が付いたファイル・フォルダ（`.git` 等）は
+   取り込み対象外（取り込み元フォルダ自身は隠しでも可）。
 2. 「取り込み（差分）」を押すと、管理ツールのプロセス内で取り込みが始まり、進捗（処理済みファイル数・処理中のファイル）・
    結果（追加・更新・変更なし・削除・失敗の件数と失敗理由）が表に出る。取り込み中は「停止」で中断できる
    （未処理のファイルは次回の取り込みで処理され、削除扱いにはならない）。
 3. 文書を追加・更新したら、もう一度「取り込み（差分）」を押す（自動では取り込まない）。埋め込みモデルを変えたときは「再構築」。
+
+`[vector_db] ingest_workers`（既定1）を2以上にすると、複数のファイルを並列に処理する。並列にするのはファイルの読み取り・
+本文の抽出・画像化・埋め込みの計算で、カタログ・ベクター・キーワード索引への書き込みはメインスレッドで1件ずつ行う
+（同時に処理するのはワーカー数までのファイルで、1つ終わるごとに次を始める）。埋め込みが速くなるのは推論サーバーが
+同時に複数のリクエストを処理できる場合だけで、llama-server なら `--parallel`（`-np`）を `ingest_workers` 以上にして起動する。
+`image_input = true` の Office ファイルはワーカーごとに Word / PowerPoint / Excel を別に起動するため、メモリーに注意する。
+PDF のページの画像化（pypdfium2）はスレッドから同時に呼べないため、ワーカー数によらず1つずつ行う。
 
 取り込みは対象インスタンスの設定（`config_overrides.json` を重ねたもの）で行う。本体インスタンスが起動中でも
 取り込みと検索は同時に行え、本体の再起動は不要。コレクションの作成・取り込み・削除は変更履歴（監査ログ）に残る。
@@ -1185,6 +1226,8 @@ python -m src.vector_db.ingest --instance default --collection manuals --rebuild
   インスタンスごとに接頭辞が変わるため、インスタンス同士の文書も混ざらない。
 - コレクションの定義と取り込み済みファイルの記録は Qdrant ではなく `[vector_db] dir` の `catalog.sqlite` に置く。
   `backend` を切り替えた場合は、各コレクションを「再構築」して新しい保存先へ取り込み直す。
+- `[vector_db] distance = Dot`（内積）は Qdrant でだけ使える（sqlite-vec は未対応）。距離関数の選び方は
+  距離関数の選び方は「埋め込みサーバーの準備と設定」を参照。
 - インスタンスを削除してもデータフォルダの `catalog.sqlite` が消えるだけで、Qdrant 上のコレクションは残る。
   不要なら先にナレッジ画面でコレクションを削除するか、Qdrant 側で `locohane_<インスタンス名>_*` を削除する。
 
@@ -1392,7 +1435,8 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[path_memory]` | `search_min_score` | パスメモリー類似検索（`search_path_memory`・「見つかりません」エラー時の候補提示）で結果に出す類似度（0.0〜1.0）の下限（既定0.3） | `PATH_MEMORY_SEARCH_MIN_SCORE` |
 | `[vector_db]` | `enabled` | ベクターDB（社内文書の意味検索）の有効/無効（既定 false）。false の間は `search_documents`/`list_document_collections` が「無効です」を返し、ダッシュボードからの取り込みもできない（「ベクターDB（社内文書の意味検索）」参照） | `VECTOR_DB_ENABLED` |
 | `[vector_db]` | `backend` | ベクターの保存先（`sqlite_vec` 既定 / `qdrant`） | `VECTOR_DB_BACKEND` |
-| `[vector_db]` | `dir` | `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`sqlite_vec` 時の `vectors.sqlite`、`image_input = true` 時のページ画像 `page_images/` の保存先（既定 `${common_data_dir}/vector_db`） | `VECTOR_DB_DIR` |
+| `[vector_db]` | `distance` | コレクションの距離関数（`Cosine` 既定 / `Euclid` / `Manhattan` / `Dot`。`Dot` は `backend = qdrant` のみ）。**変えた後は既存のコレクションの再構築が必要**。`Euclid`・`Manhattan` の類似度は `1 / (1 + 距離)` に換算 | `VECTOR_DB_DISTANCE` |
+| `[vector_db]` | `dir` | `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`sqlite_vec` 時の `vectors.sqlite`、キーワード索引 `keywords.sqlite` の保存先（既定 `${common_data_dir}/vector_db`） | `VECTOR_DB_DIR` |
 | `[vector_db]` | `qdrant_url` | `backend = qdrant` 時の Qdrant サーバー URL（例 `http://localhost:6333`）。API キーは `.env` の `QDRANT_API_KEY` | `VECTOR_DB_QDRANT_URL` |
 | `[vector_db]` | `qdrant_collection_prefix` | Qdrant 上のコレクション名の接頭辞（既定 `locohane_${instance}_`）。この接頭辞以外のコレクションには触れない | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
 | `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定30） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
@@ -1401,13 +1445,18 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedding_timeout_seconds` | 埋め込み1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS` |
 | `[vector_db]` | `query_prefix` / `document_prefix` | 検索語・文書の先頭に付ける文字列（`multilingual-e5` 系は `"query: "`/`"passage: "`。末尾の空白を残すならダブルクォートで囲む） | `VECTOR_DB_QUERY_PREFIX` / `VECTOR_DB_DOCUMENT_PREFIX` |
 | `[vector_db]` | `chunk_size` / `chunk_overlap` | チャンク1つの最大文字数（既定800）と、隣り合うチャンクで重ねる文字数（既定100、`chunk_size` 未満） | `VECTOR_DB_CHUNK_SIZE` / `VECTOR_DB_CHUNK_OVERLAP` |
-| `[vector_db]` | `include_extensions` | 取り込む拡張子（カンマ区切り。対応形式は `.pdf .docx .xlsx .xlsm .pptx .md .txt .csv`） | `VECTOR_DB_INCLUDE_EXTENSIONS` |
+| `[vector_db]` | `include_extensions` | 取り込む拡張子（カンマ区切り。対応形式は `.pdf .docx .xlsx .xlsm .pptx .md .txt .csv`、`image_input = true` のときは画像ファイル `.png .jpg .jpeg .gif .bmp .webp .tif .tiff .heic .heif` も） | `VECTOR_DB_INCLUDE_EXTENSIONS` |
 | `[vector_db]` | `max_file_mb` | 取り込む1ファイルの上限サイズ（MB、既定50。超えると失敗一覧に載る） | `VECTOR_DB_MAX_FILE_MB` |
-| `[vector_db]` | `image_input` | 埋め込みに画像を入力するか（既定 false）。true なら `.pdf .docx .pptx .xlsx .xlsm` をページごとの画像にして埋め込み、ページ画像を `dir` の `page_images/` に残す。画像入力に対応した埋め込みモデルと、Office ファイルには Windows・Microsoft Office が必要（「ページを画像として取り込む（image_input）」参照） | `VECTOR_DB_IMAGE_INPUT` |
+| `[vector_db]` | `image_input` | 埋め込みに画像を入力するか（既定 false）。true なら `.pdf .docx .pptx .xlsx .xlsm` は本文に加えてページごとの画像も埋め込み、画像ファイル（`.png .jpg .heic` 等）も画像として埋め込む。画像入力に対応した埋め込みモデルと、Office ファイルには Windows・Microsoft Office が必要（「ページを画像として取り込む（image_input）」参照） | `VECTOR_DB_IMAGE_INPUT` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
+| `[vector_db]` | `ingest_workers` | 取り込みで並列に処理するファイル数（ワーカースレッド数、既定1）。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照） | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `top_k` | `search_documents` が既定で返す件数（既定5） | `VECTOR_DB_TOP_K` |
 | `[vector_db]` | `max_result_chars` | `search_documents` の結果全体の最大文字数（既定6000） | `VECTOR_DB_MAX_RESULT_CHARS` |
-| `[vector_db]` | `min_score` | 結果に出す類似度（0.0〜1.0、コサイン類似度）の下限（既定0.3） | `VECTOR_DB_MIN_SCORE` |
+| `[vector_db]` | `min_score` | 結果に出す本文のチャンクの類似度（0.0〜1.0、コサイン類似度）の下限（既定0.3） | `VECTOR_DB_MIN_SCORE` |
+| `[vector_db]` | `image_min_score` | `image_input` で埋め込んだページ画像の類似度の下限（既定0.1）。検索語と画像の類似度は本文より低めに出るため `min_score` と別に持つ | `VECTOR_DB_IMAGE_MIN_SCORE` |
+| `[vector_db]` | `rrf_weight_text` | 検索結果を順位で統合するときの、本文の埋め込みの結果の重み（既定1.0、0 で使わない） | `VECTOR_DB_RRF_WEIGHT_TEXT` |
+| `[vector_db]` | `rrf_weight_keyword` | 同じく本文のキーワード検索（BM25）の結果の重み（既定1.0、0 で使わない） | `VECTOR_DB_RRF_WEIGHT_KEYWORD` |
+| `[vector_db]` | `rrf_weight_image` | 同じくページ画像（`image_input`）の結果の重み（既定1.0、0 で使わない） | `VECTOR_DB_RRF_WEIGHT_IMAGE` |
 | `[path_memory]` | `search_filename_weight` | 検索語がフルパスの場合に、類似度計算でファイル名部分を重視する割合（既定0.7、残りはフォルダ部分同士の類似度） | `PATH_MEMORY_SEARCH_FILENAME_WEIGHT` |
 | `[auth]` | `enabled` | ログイン認証機能のON/OFF（`false`＝現状通りログイン不要） | `AUTH_ENABLED` |
 | `[auth]` | `require_password` | 認証ON時、パスワード一致を必須にするか（`false`＝ユーザー名のみで通す） | `AUTH_REQUIRE_PASSWORD` |
@@ -1576,7 +1625,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`qdrant_url`・`embedding_url`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`chunk_size`・`chunk_overlap`・`top_k`・`max_result_chars`・`min_score`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`embedding_url`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 

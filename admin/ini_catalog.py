@@ -79,6 +79,8 @@ _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("log", "level"): ("info", "debug", "none"),
     # src/config.py の VECTOR_DB_BACKENDS と同じ値・順序。
     ("vector_db", "backend"): ("sqlite_vec", "qdrant"),
+    # src/config.py の VECTOR_DB_DISTANCES と同じ値・順序。
+    ("vector_db", "distance"): ("Cosine", "Euclid", "Dot", "Manhattan"),
     ("thinking_loop_guard", "target"): ("all", "content_only", "thinking_only"),
     ("thinking_control", "default_level"): _THINKING_LEVEL_CHOICES,
     # rule_* は false＝ルール無効。

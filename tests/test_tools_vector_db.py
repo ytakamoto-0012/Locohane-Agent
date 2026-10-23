@@ -94,7 +94,7 @@ def test_tools_are_registered_for_main_and_subagents():
     assert {"search_documents", "list_document_collections"} <= allowed
 
 
-def test_search_documents_shows_page_image_refs(env, monkeypatch, tmp_path):
+def test_search_documents_shows_image_matches(env, monkeypatch, tmp_path):
     from reportlab.pdfgen import canvas
 
     from src.vector_db.render import PageImage
@@ -108,5 +108,18 @@ def test_search_documents_shows_page_image_refs(env, monkeypatch, tmp_path):
     ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport)
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", cfg)
     text = tools.search_documents.func(query="配管の図面", top_k=1)
-    assert str(env["docs"] / "drawing.pdf") + " p.1" in text
-    assert "ページ画像: @2 " in text and ".png" in text
+    assert "（一致: 画像）" in text and str(env["docs"] / "drawing.pdf") + " p.1" in text
+    assert ".png" not in text  # ページ画像のファイルは作らず、元のファイルを出典にする
+
+
+def test_search_documents_shows_keyword_matches_and_merged_chunks(env, monkeypatch):
+    (env["docs"] / "parts.md").write_text("交換部品の型番は XR-7741 です。", encoding="utf-8")
+    (env["docs"] / "room.md").write_text("会議室の予約はポータルから行う。" * 30, encoding="utf-8")  # 480文字 → 2チャンク
+    ingest.ingest_collection(env["cfg"], "docs", embedding_transport=FakeEmbeddingServer().transport)
+    monkeypatch.setattr(tools._state, "_LLM_CONFIG", dataclasses.replace(env["cfg"], vector_db_min_score=0.99))
+    text = tools.search_documents.func(query="XR-7741", top_k=1)
+    assert "類似度 -（一致: キーワード）" in text and "parts.md" in text
+    # room.md の2チャンクは1件にまとめて、他のチャンク数を添える
+    monkeypatch.setattr(tools._state, "_LLM_CONFIG", env["cfg"])
+    text = tools.search_documents.func(query="会議室の予約はポータルから行う。", top_k=1)
+    assert "room.md" in text and "（同じ位置で他 1 チャンクも一致）" in text

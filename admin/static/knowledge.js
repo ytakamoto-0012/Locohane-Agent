@@ -27,10 +27,10 @@ async function renderKnowledgePanel(container, name) {
 
   const settings = [
     `機能: ${data.enabled ? "有効" : "無効"}`,
-    `保存先: ${data.backend === "qdrant" ? `Qdrant（${data.qdrant_url || "URL 未設定"}、接頭辞 ${data.qdrant_collection_prefix}）` : `sqlite-vec（${data.dir}）`}`,
+    `保存先: ${data.backend === "qdrant" ? `Qdrant（${data.qdrant_url || "URL 未設定"}、接頭辞 ${data.qdrant_collection_prefix}）` : `sqlite-vec（${data.dir}）`}、距離関数 ${data.distance}`,
     `埋め込みモデル: ${data.embedding_model || "未設定"}`,
     `対象の拡張子: ${data.include_extensions.join(" ")}`,
-    `埋め込み方: ${data.image_input ? "PDF・Office はページ画像（image_input = true）" : "テキスト"}`,
+    `埋め込み方: ${data.image_input ? "本文＋画像（image_input = true。PDF・Office はページ画像も、画像ファイルは画像で埋め込む）" : "テキスト"}`,
   ];
   container.append(el("h3", { text: "ナレッジ（社内文書の意味検索）" }));
   container.append(el("p", { class: "hint", text: settings.join(" / ") }));
@@ -55,7 +55,7 @@ async function renderKnowledgePanel(container, name) {
       `${c.file_count} 件 / ${c.chunk_count} チャンク`,
       c.model ? `${c.model}（${c.dim} 次元）` : "-",
       fmtTime(c.last_ingested_at),
-      knowledgeJobCell(c.job),
+      knowledgeJobCell(c.job, data.max_file_mb),
       knowledgeActions(container, name, c, data.enabled),
     ]);
     list.append(dataTable(["コレクション", "取り込み元フォルダ", "文書", "埋め込みモデル", "最終取り込み", "状態", "操作"], rows, "まだコレクションはありません。"));
@@ -74,7 +74,7 @@ async function renderKnowledgePanel(container, name) {
   });
 }
 
-function knowledgeJobCell(job) {
+function knowledgeJobCell(job, maxFileMb) {
   if (!job) return "-";
   const parts = [el("strong", { text: KNOWLEDGE_JOB_LABELS[job.state] || job.state })];
   if (job.state === "running") {
@@ -88,6 +88,18 @@ function knowledgeJobCell(job) {
       const details = el("details", {}, [el("summary", { text: "失敗したファイル" })]);
       for (const f of r.failed) details.append(el("div", { class: "hint", text: `${f.path}: ${f.reason}` }));
       parts.push(details);
+    }
+    // 上限サイズ超えは設定で対処できるため、失敗一覧を開かなくても見えるように対処方法を出す
+    // （src/vector_db/ingest.py の _too_large_hint と同じ内容）。
+    if (r.too_large) {
+      parts.push(
+        el("div", {
+          class: "warn-box",
+          text:
+            `${r.too_large} 件は上限サイズ（[vector_db] max_file_mb = ${maxFileMb}MB。Locohane 側の制限）を超えたため取り込んでいません。` +
+            "config.ini タブ（「ベクターDB」プリセット）で max_file_mb を大きくしてから「取り込み（差分）」を実行し直すと取り込めます。",
+        })
+      );
     }
   }
   if (job.error) parts.push(el("div", { class: "error", text: job.error }));

@@ -170,22 +170,106 @@ def _exercise_store(store):
     assert store.search("docs", fake_vector("x"), 3) == []
 
 
-def test_sqlite_vec_store(tmp_path):
-    store = SqliteVecStore(tmp_path)
+@pytest.mark.parametrize("distance", ["Cosine", "Euclid", "Manhattan"])
+def test_sqlite_vec_store(tmp_path, distance):
+    store = SqliteVecStore(tmp_path, distance=distance)
     try:
+        # 完全一致の score が 1.0 になる（Euclid・Manhattan は 1 / (1 + 距離) に換算）
         _exercise_store(store)
     finally:
         store.close()
 
 
-def test_qdrant_store_uses_prefixed_collection_names():
-    fake = FakeQdrant()
-    store = QdrantStore("http://qdrant:6333/", prefix="locohane_x_", api_key="secret", transport=fake.transport)
+def test_sqlite_vec_store_rejects_dot(tmp_path):
+    with pytest.raises(StoreError, match="Dot"):
+        SqliteVecStore(tmp_path, distance="Dot")
+
+
+def test_sqlite_vec_store_rejects_distance_mismatch(tmp_path):
+    store = SqliteVecStore(tmp_path, distance="Euclid")
     try:
+        store.ensure_collection("docs", DIM)
+        store.replace_source("docs", "/a.md", [ChunkRecord("", "溶接の基準"), ChunkRecord("", "会議室の予約")], [fake_vector("溶接の基準"), fake_vector("会議室の予約")])
+    finally:
+        store.close()
+    other = SqliteVecStore(tmp_path, distance="Cosine")
+    try:
+        with pytest.raises(StoreError, match="距離関数.*再構築"):
+            other.ensure_collection("docs", DIM)
+        # 検索は作ったときの距離関数（Euclid）で換算する
+        hits = other.search("docs", fake_vector("溶接の基準"), 2)
+        assert [h.text for h in hits] == ["溶接の基準", "会議室の予約"]
+        assert 0.0 < hits[1].score < hits[0].score == pytest.approx(1.0)
+        # 再構築（消して作り直す）すれば新しい距離関数で作れる
+        other.drop_collection("docs")
+        other.ensure_collection("docs", DIM)
+    finally:
+        other.close()
+
+
+def test_sqlite_vec_store_migrates_db_without_distance_column(tmp_path):
+    import sqlite3
+
+    import sqlite_vec
+
+    conn = sqlite3.connect(str(tmp_path / "vectors.sqlite"))
+    conn.enable_load_extension(True)
+    sqlite_vec.load(conn)
+    conn.executescript(
+        """
+        CREATE TABLE vec_collections (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, dim INTEGER NOT NULL);
+        CREATE TABLE chunks (id INTEGER PRIMARY KEY AUTOINCREMENT, collection_id INTEGER NOT NULL, source_path TEXT NOT NULL,
+                             locator TEXT NOT NULL, text TEXT NOT NULL);
+        """
+    )
+    conn.execute("INSERT INTO vec_collections (name, dim) VALUES ('docs', ?)", (DIM,))
+    conn.execute(f"CREATE VIRTUAL TABLE vec_c1 USING vec0(embedding float[{DIM}] distance_metric=cosine)")
+    conn.commit()
+    conn.close()
+    # 旧版の DB はコサイン距離で作られているため、そのまま Cosine として使える
+    store = SqliteVecStore(tmp_path)
+    try:
+        store.ensure_collection("docs", DIM)
+        store.replace_source("docs", "/a.md", [ChunkRecord("", "溶接の基準")], [fake_vector("溶接の基準")])
+        assert store.search("docs", fake_vector("溶接の基準"), 1)[0].score == pytest.approx(1.0, abs=1e-5)
+    finally:
+        store.close()
+
+
+@pytest.mark.parametrize("distance", ["Cosine", "Euclid", "Dot", "Manhattan"])
+def test_qdrant_store_uses_prefixed_collection_names(distance):
+    fake = FakeQdrant()
+    store = QdrantStore("http://qdrant:6333/", prefix="locohane_x_", api_key="secret", distance=distance, transport=fake.transport)
+    try:
+        # 完全一致の score が 1.0 になる（Euclid・Manhattan は 1 / (1 + 距離) に換算）
         _exercise_store(store)
     finally:
         store.close()
     assert all(path.startswith("/collections/locohane_x_") for _, path in fake.calls)
+
+
+def test_qdrant_store_creates_collection_with_distance_and_rejects_mismatch():
+    fake = FakeQdrant()
+    store = QdrantStore("http://qdrant:6333", prefix="p_", distance="Euclid", transport=fake.transport)
+    try:
+        store.ensure_collection("docs", DIM)
+        assert fake.collections["p_docs"]["distance"] == "Euclid"
+        store.replace_source("docs", "/a.md", [ChunkRecord("", "溶接の基準"), ChunkRecord("", "会議室の予約")], [fake_vector("溶接の基準"), fake_vector("会議室の予約")])
+        hits = store.search("docs", fake_vector("溶接の基準"), 2)
+        # 距離が小さい順（換算後の score が大きい順）
+        assert [h.text for h in hits] == ["溶接の基準", "会議室の予約"]
+        assert 0.0 < hits[1].score < hits[0].score == pytest.approx(1.0)
+    finally:
+        store.close()
+    # 距離関数を変えた設定では、既存のコレクションへの取り込みを拒否し再構築を求める
+    other = QdrantStore("http://qdrant:6333", prefix="p_", distance="Cosine", transport=fake.transport)
+    try:
+        with pytest.raises(StoreError, match="距離関数.*再構築"):
+            other.ensure_collection("docs", DIM)
+        # 検索は作ったときの距離関数（Euclid）で換算する
+        assert other.search("docs", fake_vector("溶接の基準"), 1)[0].score == pytest.approx(1.0)
+    finally:
+        other.close()
 
 
 def test_qdrant_store_sends_api_key_and_reports_connection_error():
@@ -272,6 +356,7 @@ def test_ingest_skips_files_over_size_limit_and_non_recursive(env):
     cfg = make_config(env["cfg"].vector_db_dir.parent, vector_db_backend=env["cfg"].vector_db_backend, vector_db_max_file_mb=0.00001)
     result = ingest.ingest_collection(cfg, "docs", **env["kwargs"])
     assert len(result.failed) == 2 and "上限" in result.failed[0][1]
+    assert result.too_large == 2 and result.to_dict()["too_large"] == 2
     with vcat.open_catalog(cfg.vector_db_dir) as catalog:
         catalog.update("docs", recursive=False)
     files = ingest.list_source_files(env["docs"], False, cfg.vector_db_include_extensions)
@@ -304,6 +389,54 @@ def test_ingest_stops_without_deleting_unprocessed_files(env):
     assert search.list_collections(cfg)[0].file_count == 2
 
 
+def test_ingest_runs_files_in_parallel_with_ingest_workers(env):
+    """ingest_workers > 1 なら複数ファイルの埋め込みを同時に行い、結果は1つずつ処理したときと同じになる。"""
+    import threading
+    import time
+
+    cfg, docs = env["cfg"], env["docs"]
+    for i in range(6):
+        (docs / f"extra{i}.md").write_text(f"追加の文書{i}。手順{i}を守る。", encoding="utf-8")
+    (docs / "empty.md").write_text("   ", encoding="utf-8")
+    embed = env["embed"]
+    lock = threading.Lock()
+    state = {"active": 0, "peak": 0}
+
+    def slow_handler(request):
+        with lock:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        try:
+            time.sleep(0.05)
+            return embed.handler(request)
+        finally:
+            with lock:
+                state["active"] -= 1
+
+    kwargs = {**env["kwargs"], "embedding_transport": httpx.MockTransport(slow_handler)}
+    parallel = make_config(cfg.vector_db_dir.parent, vector_db_backend=cfg.vector_db_backend, vector_db_ingest_workers=3)
+    progress = []
+    result = ingest.ingest_collection(parallel, "docs", progress=lambda *a: progress.append(a), **kwargs)
+    assert (result.added, result.unchanged) == (8, 0)
+    assert [p for p, _ in result.failed] == [str(docs / "empty.md")]
+    assert 1 < state["peak"] <= 3
+    assert progress[-1] == (9, 9, "")
+    assert search.list_collections(parallel)[0].file_count == 8
+    assert [h.text for h in search.search(parallel, "溶接ビードの幅", **kwargs).hits][0] == "溶接ビードの幅は5mm以上とする。"
+    # 2回目は差分なし（並列でも記録が正しく残っている）
+    again = ingest.ingest_collection(parallel, "docs", **kwargs)
+    assert (again.added, again.updated, again.unchanged) == (0, 0, 8)
+
+
+def test_ingest_in_parallel_stops_on_embedding_error(env):
+    cfg = make_config(env["cfg"].vector_db_dir.parent, vector_db_backend=env["cfg"].vector_db_backend, vector_db_ingest_workers=2)
+    failing = FakeEmbeddingServer(fail_hosts=("embed",))
+    kwargs = {**env["kwargs"], "embedding_transport": failing.transport}
+    with pytest.raises(EmbeddingError):
+        ingest.ingest_collection(cfg, "docs", **kwargs)
+    assert search.list_collections(cfg)[0].file_count == 0
+
+
 def test_ingest_errors_for_missing_collection_or_folder(env):
     with pytest.raises(ingest.IngestError):
         ingest.ingest_collection(env["cfg"], "missing", **env["kwargs"])
@@ -333,3 +466,15 @@ def test_list_collections_without_catalog_does_not_create_it(tmp_path):
     cfg = make_config(tmp_path)
     assert search.list_collections(cfg) == []
     assert not cfg.vector_db_dir.exists()
+
+
+def test_list_source_files_skips_hidden_files_and_folders(tmp_path):
+    (tmp_path / "a.md").write_text("a", encoding="utf-8")
+    (tmp_path / ".secret.md").write_text("x", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+    (tmp_path / ".git" / "b.md").write_text("x", encoding="utf-8")
+    (tmp_path / "sub" / ".cache").mkdir(parents=True)
+    (tmp_path / "sub" / ".cache" / "c.md").write_text("x", encoding="utf-8")
+    (tmp_path / "sub" / "d.md").write_text("d", encoding="utf-8")
+    files = ingest.list_source_files(tmp_path, True, (".md",))
+    assert [p.relative_to(tmp_path).as_posix() for p in files] == ["a.md", "sub/d.md"]

@@ -14,7 +14,7 @@ from src.config import load_config
 def isolated_data_dir(tmp_path, monkeypatch):
     """実プロジェクトの data/ にテスト用ディレクトリを作らないよう、データ保存先を tmp へ逃がす。"""
     monkeypatch.setenv("COMMON_DATA_DIR", str(tmp_path / "data" / "${instance}"))
-    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "QDRANT_API_KEY"):
+    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "VECTOR_DB_DISTANCE", "QDRANT_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -34,6 +34,7 @@ def test_defaults_are_disabled_sqlite_vec(tmp_path):
     assert cfg.vector_db_dir == tmp_path / "data" / "inst1" / "vector_db"
     assert cfg.vector_db_embedding_endpoints == ()
     assert cfg.vector_db_qdrant_collection_prefix == "locohane_inst1_"
+    assert cfg.vector_db_distance == "Cosine"
     assert ".pdf" in cfg.vector_db_include_extensions
     # 無効のときはディレクトリを作らない
     assert not cfg.vector_db_dir.exists()
@@ -89,3 +90,25 @@ def test_admin_catalog_offers_embedding_url_editor():
     info = {(k.section, k.key): k for k in catalog.keys}[("vector_db", "embedding_url")]
     assert info.ui_kind == "list"
     assert [f["name"] for f in info.schema["item"]["fields"]] == ["base_url", "api_key", "model"]
+
+
+@pytest.mark.parametrize(("value", "expected"), [("euclid", "Euclid"), (" DOT ", "Dot"), ("Manhattan", "Manhattan")])
+def test_distance_is_normalized(tmp_path, value, expected):
+    assert _load(tmp_path, {"backend": "qdrant", "distance": value}).vector_db_distance == expected
+
+
+def test_distance_rejects_unknown_value(tmp_path):
+    with pytest.raises(ValueError, match="distance"):
+        _load(tmp_path, {"distance": "l2"})
+
+
+def test_sqlite_vec_rejects_dot(tmp_path):
+    with pytest.raises(ValueError, match="sqlite-vec は Dot"):
+        _load(tmp_path, {"backend": "sqlite_vec", "distance": "dot"})
+
+
+def test_ingest_workers_default_and_validation(tmp_path):
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_ingest_workers == 1
+    assert _load(tmp_path, {"ingest_workers": "4"}).vector_db_ingest_workers == 4
+    with pytest.raises(ValueError, match="ingest_workers"):
+        _load(tmp_path, {"ingest_workers": "0"})

@@ -11,37 +11,66 @@ from ..config import Config
 
 
 class StoreError(Exception):
-    """ベクターの保存先を操作できなかった（接続できない・次元が合わない等）。"""
+    """ベクターの保存先を操作できなかった（接続できない・次元・距離関数が合わない等）。"""
+
+
+# 値が小さいほど近い距離関数（[vector_db].distance）。Hit.score を「大きいほど近い」に
+# そろえるため、検索結果の距離を distance_to_score() で換算する。
+DISTANCE_METRICS = frozenset({"Euclid", "Manhattan"})
+
+
+def distance_to_score(distance: float) -> float:
+    """Euclid・Manhattan の距離（0 以上、小さいほど近い）を (0, 1] の類似度にする（1 / (1 + 距離)）。"""
+    return 1.0 / (1.0 + max(float(distance), 0.0))
+
+
+# [vector_db].image_input = true でページ画像を埋め込んだベクターは、本文のベクターと
+# 類似度の出方が違う（検索語はテキストのため、画像との類似度は低めに出る）ので、
+# 同じ順位付けに混ぜないよう別のコレクションに入れる。コレクション名には "." を
+# 使えない（catalog.validate_name）ため、利用者のコレクション名とは衝突しない。
+IMAGE_COLLECTION_SUFFIX = ".image"
+
+
+def image_collection_name(name: str) -> str:
+    """コレクション name のページ画像のベクターを入れる保存先のコレクション名。"""
+    return name + IMAGE_COLLECTION_SUFFIX
 
 
 @dataclass(frozen=True)
 class ChunkRecord:
     """保存する1チャンク。locator はファイル内の位置（extract.Segment.locator）。
 
-    image_path はページを画像として埋め込んだ（[vector_db].image_input）チャンクの
-    ページ画像のパス。テキストとして埋め込んだチャンクは空文字。
+    ページ画像のチャンクの text は、検索結果の抜粋に使うそのページの文字。
     """
 
     locator: str
     text: str
-    image_path: str = ""
 
 
 @dataclass(frozen=True)
 class Hit:
-    """検索で見つかった1チャンク。score はコサイン類似度（1.0 が完全一致）。"""
+    """検索で見つかった1チャンク。score は大きいほど近い類似度（1.0 が完全一致）。
+
+    コレクションの距離関数が Cosine ならコサイン類似度、Dot（Qdrant のみ）なら内積、
+    Euclid・Manhattan なら distance_to_score() で換算した値。キーワード検索では 0.0。
+
+    matched は一致した検索（"text" = 本文の埋め込み、"keyword" = 本文のキーワード、
+    "image" = ページ画像）。other_chunks は同じ位置で他に一致した本文のチャンクの数。
+    どちらも保存先の search() は既定値のまま返し、search.search() が結果を統合するときに入れる。
+    """
 
     collection: str
     score: float
     source_path: str
     locator: str
     text: str
-    image_path: str = ""
+    matched: tuple[str, ...] = ()
+    other_chunks: int = 0
 
 
 class VectorStore(Protocol):
     def ensure_collection(self, name: str, dim: int) -> None:
-        """コレクションが無ければ作る。あって次元が違えば StoreError。"""
+        """コレクションが無ければ [vector_db].distance の距離関数で作る。あって次元・距離関数が違えば StoreError（再構築が必要）。"""
 
     def drop_collection(self, name: str) -> None:
         """コレクションのベクターをすべて消す（無ければ何もしない）。"""
@@ -73,8 +102,9 @@ def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None) -> 
             prefix=cfg.vector_db_qdrant_collection_prefix,
             api_key=cfg.vector_db_qdrant_api_key,
             timeout=cfg.vector_db_qdrant_timeout_seconds,
+            distance=cfg.vector_db_distance,
             transport=transport,
         )
     from .sqlite_vec_store import SqliteVecStore
 
-    return SqliteVecStore(cfg.vector_db_dir)
+    return SqliteVecStore(cfg.vector_db_dir, distance=cfg.vector_db_distance)

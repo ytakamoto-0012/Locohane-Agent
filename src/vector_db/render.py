@@ -4,6 +4,7 @@ render 系スキル（skills/docx-render 等の _render.py）と同じく、Offi
 OLE（COM）で Word / PowerPoint / Excel をヘッドレス起動して PDF へ書き出し、
 PDF のページを pypdfium2 で画像化する。スキルのスクリプトは CLI として作られていて
 import できないため、取り込みに必要な部分だけの薄い実装をここに持つ。
+画像ファイル（HEIC/HEIF を含む）は Pillow で開き、PNG にそろえる。
 
 Office ファイルの画像化には Windows と Microsoft Office（pywin32）が必要。
 """
@@ -15,11 +16,26 @@ import io
 import os
 from pathlib import Path
 import tempfile
+import threading
 from typing import Callable
 
 from .extract import ExtractError
 
-IMAGE_EXTENSIONS = (".pdf", ".docx", ".pptx", ".xlsx", ".xlsm")
+# ページごとに画像にする文書の形式。
+PAGE_EXTENSIONS = (".pdf", ".docx", ".pptx", ".xlsx", ".xlsm")
+# そのまま1枚の画像として取り込む画像ファイルの形式（image_input = true のときだけ取り込み対象になる）。
+IMAGE_FILE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif")
+# image_input = true のときに画像で埋め込む形式。
+IMAGE_EXTENSIONS = PAGE_EXTENSIONS + IMAGE_FILE_EXTENSIONS
+
+# 複数ページを持てる画像形式（スキャンした文書の TIFF 等）。それ以外は先頭の1枚だけ使う。
+_MULTI_PAGE_IMAGE_EXTENSIONS = (".tif", ".tiff")
+# A4 の長辺（インチ）。画像ファイルは、A4 の文書を image_dpi で画像化したときの長辺まで縮小する。
+_A4_LONG_SIDE_INCHES = 297 / 25.4
+
+# PDFium は複数スレッドからの同時呼び出しに対応していないため、取り込みを並列にしても
+# （[vector_db].ingest_workers）PDF の画像化は1つずつ行う。
+_PDFIUM_LOCK = threading.Lock()
 
 _PROG_ID = {
     ".docx": "Word.Application",
@@ -61,6 +77,8 @@ def render_pages(path: Path, dpi: int) -> list[PageImage]:
     try:
         if ext == ".pdf":
             return _render_pdf(path, dpi, _page_locator)
+        if ext in IMAGE_FILE_EXTENSIONS:
+            return _render_image_file(path, dpi)
         with tempfile.TemporaryDirectory(prefix="locohane_vdb_") as tmp:
             pages: list[PageImage] = []
             for pdf_path, locate in _export_office_to_pdf(path, Path(tmp)):
@@ -77,22 +95,59 @@ def render_pages(path: Path, dpi: int) -> list[PageImage]:
 def _render_pdf(pdf_path: Path, dpi: int, locate: Locate) -> list[PageImage]:
     import pypdfium2 as pdfium
 
-    pdf = pdfium.PdfDocument(str(pdf_path))
-    try:
-        total = len(pdf)
-        pages = []
-        for i in range(total):
-            page = pdf[i]
-            try:
-                text = page.get_textpage().get_text_bounded() or ""
-                buffer = io.BytesIO()
-                page.render(scale=dpi / 72).to_pil().save(buffer, format="PNG")
-            finally:
-                page.close()
-            pages.append(PageImage(locate(i + 1, total), _normalize_newlines(text), buffer.getvalue()))
-        return pages
-    finally:
-        pdf.close()
+    with _PDFIUM_LOCK:
+        pdf = pdfium.PdfDocument(str(pdf_path))
+        try:
+            total = len(pdf)
+            pages = []
+            for i in range(total):
+                page = pdf[i]
+                try:
+                    text = page.get_textpage().get_text_bounded() or ""
+                    buffer = io.BytesIO()
+                    page.render(scale=dpi / 72).to_pil().save(buffer, format="PNG")
+                finally:
+                    page.close()
+                pages.append(PageImage(locate(i + 1, total), _normalize_newlines(text), buffer.getvalue()))
+            return pages
+        finally:
+            pdf.close()
+
+
+def _render_image_file(path: Path, dpi: int) -> list[PageImage]:
+    """画像ファイルを PNG にする。EXIF の回転を反映し、透過部分は白で埋め、長辺が大きすぎれば縮小する。
+
+    複数ページの TIFF はページごとに分ける（位置は p.N）。1枚だけなら位置は「画像」。
+    """
+    import pillow_heif
+    from PIL import Image, ImageOps, ImageSequence
+
+    # HEIC/HEIF は Pillow 標準では開けないため、オープナーの登録が必要（何度呼んでもよい）。
+    pillow_heif.register_heif_opener()
+    max_long_side = round(_A4_LONG_SIDE_INCHES * dpi)
+    with Image.open(path) as img:
+        frames = list(ImageSequence.Iterator(img)) if path.suffix.lower() in _MULTI_PAGE_IMAGE_EXTENSIONS else [img]
+        pngs = [_to_png(ImageOps.exif_transpose(frame), max_long_side) for frame in frames]
+    if len(pngs) == 1:
+        return [PageImage("画像", "", pngs[0])]
+    return [PageImage(f"p.{i}", "", png) for i, png in enumerate(pngs, start=1)]
+
+
+def _to_png(img, max_long_side: int) -> bytes:
+    from PIL import Image
+
+    if img.mode in ("RGBA", "LA", "PA") or (img.mode == "P" and "transparency" in img.info):
+        rgba = img.convert("RGBA")
+        img = Image.new("RGB", rgba.size, (255, 255, 255))
+        img.paste(rgba, mask=rgba.getchannel("A"))
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+    if max(img.size) > max_long_side:
+        img = img.copy()
+        img.thumbnail((max_long_side, max_long_side), Image.Resampling.LANCZOS)
+    buffer = io.BytesIO()
+    img.save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _normalize_newlines(text: str) -> str:
