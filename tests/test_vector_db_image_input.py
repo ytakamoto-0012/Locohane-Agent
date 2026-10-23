@@ -315,3 +315,22 @@ def test_image_files_are_ingested_only_when_image_input_is_true(env):
     assert ingest.effective_extensions(text_cfg.vector_db_include_extensions, False) == (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".md", ".txt", ".csv")
     result = ingest.ingest_collection(text_cfg, "docs", **kwargs)
     assert (result.removed, result.failed) == (2, [])
+
+
+def test_old_catalog_gets_schedule_columns(tmp_path):
+    old = sqlite3.connect(tmp_path / "catalog.sqlite")
+    old.executescript(
+        """
+        CREATE TABLE collections (name TEXT PRIMARY KEY, description TEXT NOT NULL DEFAULT '', source_folder TEXT NOT NULL,
+            recursive INTEGER NOT NULL DEFAULT 1, model TEXT, dim INTEGER, created_at TEXT NOT NULL, last_ingested_at TEXT);
+        INSERT INTO collections (name, source_folder, created_at) VALUES ('docs', '/d', '2026-01-01T00:00:00');
+        """
+    )
+    old.close()
+    with vcat.open_catalog(tmp_path) as catalog:
+        c = catalog.get("docs")
+        assert (c.schedule_enabled, c.schedule_times, c.schedule_weekdays, c.document_prefix) == (False, (), (), None)
+        c = catalog.update("docs", schedule_enabled=True, schedule_times=["9:05"], schedule_weekdays=[6, 5, 5])
+        assert (c.schedule_enabled, c.schedule_times, c.schedule_weekdays) == (True, ("09:05",), (5, 6))
+        with pytest.raises(vcat.CatalogError):
+            catalog.update("docs", schedule_times=[])

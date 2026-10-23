@@ -16,6 +16,9 @@ CATALOG_FILENAME = "catalog.sqlite"
 # コレクション名は Qdrant のコレクション名・ログ・URL にそのまま使うため ASCII に限る。
 # 日本語の表示名は description に書く。
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
+_TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
+# 自動取り込みの時刻は1コレクションあたりこの数まで（毎時でも24で足りる）。
+MAX_SCHEDULE_TIMES = 24
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS collections (
@@ -27,7 +30,10 @@ CREATE TABLE IF NOT EXISTS collections (
     dim INTEGER,
     document_prefix TEXT,
     created_at TEXT NOT NULL,
-    last_ingested_at TEXT
+    last_ingested_at TEXT,
+    schedule_enabled INTEGER NOT NULL DEFAULT 0,
+    schedule_times TEXT NOT NULL DEFAULT '',
+    schedule_weekdays TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS files (
     collection TEXT NOT NULL,
@@ -60,6 +66,10 @@ class Collection:
     chunk_count: int = 0
     # 取り込みに使った [vector_db].document_prefix（None は記録の無い旧版で作ったもの）。
     document_prefix: str | None = None
+    # 時間指定の自動取り込み（差分）。時刻は "HH:MM"、曜日は 0=月〜6=日で空なら毎日（admin/knowledge.py の IngestScheduler）。
+    schedule_enabled: bool = False
+    schedule_times: tuple[str, ...] = ()
+    schedule_weekdays: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -78,6 +88,30 @@ def validate_name(name: str) -> str:
     if not _NAME_RE.match(name or ""):
         raise CatalogError(f"コレクション名は半角英数字・ハイフン・アンダースコアの1〜48文字にしてください: {name!r}")
     return name
+
+
+def normalize_schedule_times(times: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """自動取り込みの時刻（"H:MM"・"HH:MM"）を検証し、"HH:MM" に揃えて重複を除き昇順にする。"""
+    result: set[str] = set()
+    for raw in times:
+        value = raw.strip()
+        if not value:
+            continue
+        m = _TIME_RE.match(value)
+        if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
+            raise CatalogError(f"自動取り込みの時刻は 00:00〜23:59 の形式で指定してください: {value!r}")
+        result.add(f"{int(m.group(1)):02d}:{m.group(2)}")
+    if len(result) > MAX_SCHEDULE_TIMES:
+        raise CatalogError(f"自動取り込みの時刻は {MAX_SCHEDULE_TIMES} 個までです。")
+    return tuple(sorted(result))
+
+
+def normalize_schedule_weekdays(weekdays: list[int] | tuple[int, ...]) -> tuple[int, ...]:
+    """自動取り込みの曜日（0=月〜6=日）を検証し、重複を除き昇順にする。空は毎日。"""
+    for d in weekdays:
+        if not isinstance(d, int) or isinstance(d, bool) or not 0 <= d <= 6:
+            raise CatalogError(f"自動取り込みの曜日は 0（月）〜6（日）で指定してください: {d!r}")
+    return tuple(sorted(set(weekdays)))
 
 
 def _now() -> str:
@@ -104,6 +138,15 @@ class Catalog:
         if "document_prefix" not in columns:
             with self._conn:
                 self._conn.execute("ALTER TABLE collections ADD COLUMN document_prefix TEXT")
+        # 自動取り込みの列の無い旧版の catalog.sqlite に列を足す（既存のコレクションは自動取り込みなし）。
+        for column, ddl in (
+            ("schedule_enabled", "INTEGER NOT NULL DEFAULT 0"),
+            ("schedule_times", "TEXT NOT NULL DEFAULT ''"),
+            ("schedule_weekdays", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if column not in columns:
+                with self._conn:
+                    self._conn.execute(f"ALTER TABLE collections ADD COLUMN {column} {ddl}")
 
     def close(self) -> None:
         self._conn.close()
@@ -146,9 +189,29 @@ class Catalog:
             raise CatalogError(f"コレクション {name} は既にあります。") from e
         return self.get(name)
 
-    def update(self, name: str, *, source_folder: str | None = None, description: str | None = None, recursive: bool | None = None) -> Collection:
-        self.get(name)
+    def update(
+        self,
+        name: str,
+        *,
+        source_folder: str | None = None,
+        description: str | None = None,
+        recursive: bool | None = None,
+        schedule_enabled: bool | None = None,
+        schedule_times: list[str] | tuple[str, ...] | None = None,
+        schedule_weekdays: list[int] | tuple[int, ...] | None = None,
+    ) -> Collection:
+        current = self.get(name)
+        times = normalize_schedule_times(schedule_times) if schedule_times is not None else current.schedule_times
+        weekdays = normalize_schedule_weekdays(schedule_weekdays) if schedule_weekdays is not None else current.schedule_weekdays
+        enabled = schedule_enabled if schedule_enabled is not None else current.schedule_enabled
+        if enabled and not times:
+            raise CatalogError("自動取り込みを有効にするときは時刻を1つ以上指定してください。")
         with self._conn:
+            if schedule_enabled is not None or schedule_times is not None or schedule_weekdays is not None:
+                self._conn.execute(
+                    "UPDATE collections SET schedule_enabled = ?, schedule_times = ?, schedule_weekdays = ? WHERE name = ?",
+                    (int(enabled), ",".join(times), ",".join(str(d) for d in weekdays), name),
+                )
             if source_folder is not None:
                 if not source_folder.strip():
                     raise CatalogError("取り込み元フォルダを指定してください。")
@@ -216,6 +279,9 @@ def _to_collection(row: sqlite3.Row) -> Collection:
         file_count=row["file_count"],
         chunk_count=row["chunk_count"],
         document_prefix=row["document_prefix"],
+        schedule_enabled=bool(row["schedule_enabled"]),
+        schedule_times=tuple(t for t in row["schedule_times"].split(",") if t),
+        schedule_weekdays=tuple(int(d) for d in row["schedule_weekdays"].split(",") if d),
     )
 
 
@@ -228,4 +294,14 @@ def catalog_exists(directory: Path) -> bool:
     return (directory / CATALOG_FILENAME).is_file()
 
 
-__all__ = ["Catalog", "CatalogError", "Collection", "FileRecord", "catalog_exists", "open_catalog", "validate_name"]
+__all__ = [
+    "Catalog",
+    "CatalogError",
+    "Collection",
+    "FileRecord",
+    "catalog_exists",
+    "normalize_schedule_times",
+    "normalize_schedule_weekdays",
+    "open_catalog",
+    "validate_name",
+]

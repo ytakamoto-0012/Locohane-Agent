@@ -10,6 +10,8 @@ function knowledgePath(name, suffix) {
 }
 
 const KNOWLEDGE_JOB_LABELS = { running: "取り込み中", done: "完了", error: "エラー", stopped: "停止" };
+// 自動取り込みの曜日（catalog.sqlite の schedule_weekdays。0=月〜6=日、Python の weekday() と同じ）。
+const KNOWLEDGE_WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"];
 
 async function knowledgeAction(fn) {
   try {
@@ -56,10 +58,13 @@ async function renderKnowledgePanel(container, name) {
       `${c.file_count} 件 / ${c.chunk_count} チャンク`,
       c.model ? `${c.model}（${c.dim} 次元）` : "-",
       fmtTime(c.last_ingested_at),
+      knowledgeScheduleCell(c, data.enabled),
       knowledgeJobCell(c.job, data.max_file_mb),
       knowledgeActions(container, name, c, data.enabled),
     ]);
-    list.append(dataTable(["コレクション", "取り込み元フォルダ", "文書", "埋め込みモデル", "最終取り込み", "状態", "操作"], rows, "まだコレクションはありません。"));
+    list.append(
+      dataTable(["コレクション", "取り込み元フォルダ", "文書", "埋め込みモデル", "最終取り込み", "自動取り込み", "状態", "操作"], rows, "まだコレクションはありません。")
+    );
   };
   draw(data.collections);
 
@@ -75,9 +80,23 @@ async function renderKnowledgePanel(container, name) {
   });
 }
 
+function knowledgeScheduleText(c) {
+  const days = c.schedule_weekdays.length ? c.schedule_weekdays.map((d) => KNOWLEDGE_WEEKDAYS[d]).join("・") : "毎日";
+  return `${days} ${c.schedule_times.join(", ")}`;
+}
+
+function knowledgeScheduleCell(c, enabled) {
+  if (!c.schedule_enabled) return "なし";
+  const parts = [el("div", { text: knowledgeScheduleText(c) })];
+  if (!enabled) parts.push(el("div", { class: "hint", text: "[vector_db] enabled が false のため実行しません" }));
+  else if (c.next_scheduled_at) parts.push(el("div", { class: "hint", text: `次回 ${fmtTime(c.next_scheduled_at)}` }));
+  return el("div", {}, parts);
+}
+
 function knowledgeJobCell(job, maxFileMb) {
   if (!job) return "-";
-  const parts = [el("strong", { text: KNOWLEDGE_JOB_LABELS[job.state] || job.state })];
+  const label = KNOWLEDGE_JOB_LABELS[job.state] || job.state;
+  const parts = [el("strong", { text: job.trigger === "schedule" ? `${label}（自動）` : label })];
   if (job.state === "running") {
     parts.push(el("div", { class: "hint", text: `${job.done} / ${job.total || "?"} ファイル` }));
     if (job.current) parts.push(el("div", { class: "hint", text: job.current }));
@@ -147,10 +166,51 @@ function knowledgeActions(container, name, c, enabled) {
 }
 
 function collectionFields(c) {
+  const weekdays = KNOWLEDGE_WEEKDAYS.map((label, i) => {
+    const box = el("input", { type: "checkbox" });
+    box.checked = !!c && c.schedule_weekdays.includes(i);
+    return { index: i, label, box };
+  });
+  const scheduleEnabled = el("input", { type: "checkbox" });
+  scheduleEnabled.checked = !!c && c.schedule_enabled;
   return {
     description: el("input", { type: "text", value: c ? c.description : "", placeholder: "例: 品質管理規程・手順書" }),
     folder: el("input", { type: "text", value: c ? c.source_folder : "", placeholder: "例: D:\\shared\\manuals（管理ツールの PC から見える絶対パス）" }),
     recursive: el("input", { type: "checkbox" }),
+    scheduleEnabled,
+    scheduleTimes: el("input", { type: "text", value: c ? c.schedule_times.join(", ") : "", placeholder: "例: 02:00（複数はカンマ区切り。例: 07:30, 19:00）" }),
+    weekdays,
+  };
+}
+
+// 自動取り込みの入力欄（追加フォームと編集ダイアログで共通）。
+function scheduleFieldElements(f) {
+  const toggle = () => {
+    f.scheduleTimes.disabled = !f.scheduleEnabled.checked;
+    for (const w of f.weekdays) w.box.disabled = !f.scheduleEnabled.checked;
+  };
+  f.scheduleEnabled.addEventListener("change", toggle);
+  toggle();
+  return [
+    el("label", { class: "checkbox" }, [f.scheduleEnabled, " 時間指定で自動取り込み（差分）を行う"]),
+    el("label", {}, ["時刻（24時間表記）", f.scheduleTimes]),
+    el("div", {}, [
+      el("div", { text: "曜日（どれも選ばなければ毎日）" }),
+      el(
+        "div",
+        { class: "inline-actions" },
+        f.weekdays.map((w) => el("label", { class: "checkbox" }, [w.box, ` ${w.label}`]))
+      ),
+    ]),
+    el("p", { class: "hint", text: "管理ツール（admin.bat）が起動している間だけ実行します。止まっていた間の時刻の分は後から実行しません。" }),
+  ];
+}
+
+function scheduleBody(f) {
+  return {
+    schedule_enabled: f.scheduleEnabled.checked,
+    schedule_times: f.scheduleTimes.value.split(/[,、\s]+/).filter((t) => t),
+    schedule_weekdays: f.weekdays.filter((w) => w.box.checked).map((w) => w.index),
   };
 }
 
@@ -165,6 +225,7 @@ function buildCreateCollectionForm(container, name) {
     el("label", {}, ["説明（LLM にも一覧で見せる）", f.description]),
     el("label", {}, ["取り込み元フォルダ", f.folder]),
     el("label", { class: "checkbox" }, [f.recursive, " サブフォルダも取り込む"]),
+    ...scheduleFieldElements(f),
     error,
     el("button", { type: "submit", class: "primary", text: "追加" }),
   ]);
@@ -174,7 +235,13 @@ function buildCreateCollectionForm(container, name) {
     try {
       await api(knowledgePath(name, "/collections"), {
         method: "POST",
-        body: { name: nameInput.value.trim(), description: f.description.value, source_folder: f.folder.value, recursive: f.recursive.checked },
+        body: {
+          name: nameInput.value.trim(),
+          description: f.description.value,
+          source_folder: f.folder.value,
+          recursive: f.recursive.checked,
+          ...scheduleBody(f),
+        },
       });
       renderKnowledgePanel(container, name);
     } catch (e) {
@@ -196,6 +263,7 @@ function openEditCollectionForm(container, name, c) {
     el("label", {}, ["取り込み元フォルダ", f.folder]),
     el("label", { class: "checkbox" }, [f.recursive, " サブフォルダも取り込む"]),
     el("p", { class: "hint", text: "フォルダを変えた場合、次の取り込みで新しいフォルダに無いファイルのベクターは削除されます。" }),
+    ...scheduleFieldElements(f),
     error,
     el("div", { class: "modal-actions" }, [el("button", { type: "button", text: "キャンセル", onclick: close }), el("button", { type: "submit", class: "primary", text: "保存" })]),
   ]);
@@ -205,7 +273,7 @@ function openEditCollectionForm(container, name, c) {
     try {
       await api(knowledgePath(name, `/collections/${encodeURIComponent(c.name)}`), {
         method: "PUT",
-        body: { description: f.description.value, source_folder: f.folder.value, recursive: f.recursive.checked },
+        body: { description: f.description.value, source_folder: f.folder.value, recursive: f.recursive.checked, ...scheduleBody(f) },
       });
       close();
       renderKnowledgePanel(container, name);

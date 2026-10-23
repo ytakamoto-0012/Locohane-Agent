@@ -84,7 +84,9 @@ async def _lifespan(_app: FastAPI):
                 logger.info("autostart: インスタンス %r を起動しました。", name)
             except supervisor.SupervisorError as exc:
                 logger.warning("autostart: インスタンス %r の起動に失敗しました: %s", name, exc)
+    _knowledge_router.ingest_scheduler.start()
     yield
+    _knowledge_router.ingest_scheduler.stop()
     if _cfg.admin_stop_apps_on_exit:
         _supervisor.stop_all()
 
@@ -1088,15 +1090,15 @@ app.include_router(
 # ナレッジ（ベクターDB のコレクションと取り込み。admin/knowledge.py）
 # ---------------------------------------------------------------------------
 
-app.include_router(
-    knowledge_api.build_router(
-        require_login=require_login,
-        require_csrf=require_csrf,
-        instances_root=INSTANCES_ROOT,
-        audit_log_path=AUDIT_LOG_PATH,
-        client_ip=_client_ip,
-    )
+# 時間指定の自動取り込み（_knowledge_router.ingest_scheduler）は _lifespan で起動・停止する。
+_knowledge_router = knowledge_api.build_router(
+    require_login=require_login,
+    require_csrf=require_csrf,
+    instances_root=INSTANCES_ROOT,
+    audit_log_path=AUDIT_LOG_PATH,
+    client_ip=_client_ip,
 )
+app.include_router(_knowledge_router)
 
 
 # ---------------------------------------------------------------------------

@@ -533,6 +533,10 @@ $C -X POST $BASE/api/instances/default/knowledge/collections -H "$H" -H "$J" \
   -d '{"name":"manuals","description":"品質管理規程","source_folder":"D:/shared/manuals","recursive":true}'
 # 説明・フォルダ・サブフォルダ有無の変更（変える項目だけ）
 $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"description":"品質規程"}'
+# 時間指定の自動取り込み（差分）。schedule_times は "HH:MM" の配列、schedule_weekdays は 0=月〜6=日（空なら毎日）。
+# 作成時にも同じキーを渡せる。一覧の各コレクションに next_scheduled_at（次回の予定）が付き、自動で始まったジョブは trigger が "schedule"
+$C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" \
+  -d '{"schedule_enabled":true,"schedule_times":["02:00"],"schedule_weekdays":[0,1,2,3,4]}'
 # 取り込み開始（差分）。rebuild=true で全ベクターを消して取り込み直す
 $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/ingest -H "$H" -H "$J" -d '{"rebuild":false}'
 # 進捗・結果（state: running/done/error/stopped、done/total、result.failed）
