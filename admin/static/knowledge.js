@@ -98,6 +98,7 @@ function knowledgeJobCell(job, maxFileMb) {
   const label = KNOWLEDGE_JOB_LABELS[job.state] || job.state;
   const parts = [el("strong", { text: job.trigger === "schedule" ? `${label}（自動）` : label })];
   if (job.state === "running") {
+    parts.push(knowledgeProgressBar(job.done, job.total));
     parts.push(el("div", { class: "hint", text: `${job.done} / ${job.total || "?"} ファイル` }));
     if (job.current) parts.push(el("div", { class: "hint", text: job.current }));
   }
@@ -125,6 +126,16 @@ function knowledgeJobCell(job, maxFileMb) {
   if (job.error) parts.push(el("div", { class: "error", text: job.error }));
   if (job.finished_at) parts.push(el("div", { class: "hint", text: `終了 ${fmtTime(job.finished_at)}` }));
   return el("div", {}, parts);
+}
+
+// 取り込みの進捗バー。対象ファイルを数え終わるまで（total が 0）は割合が出せないため、流れる表示にする。
+function knowledgeProgressBar(done, total) {
+  if (!total) return el("div", { class: "kn-progress indeterminate" }, [el("div", { class: "kn-progress-fill" })]);
+  const pct = Math.min(100, Math.floor((done / total) * 100));
+  return el("div", { class: "kn-progress", title: `${pct}%` }, [
+    el("div", { class: "kn-progress-fill", style: `width: ${pct}%` }),
+    el("span", { class: "kn-progress-text", text: `${pct}%` }),
+  ]);
 }
 
 function knowledgeActions(container, name, c, enabled) {
