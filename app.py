@@ -119,6 +119,7 @@ from src import instance_lock
 from src import runtime_status
 from src import skill_drafts
 from src.version import __version__ as LOCOHANE_VERSION
+from src.workdir_suggest import server_hostname, suggest_work_dirs, work_dir_error_message
 from src.llm import (
     LLM_CONNECTION_ERRORS,
     ThinkingLoopDetected,
@@ -697,7 +698,7 @@ def _patch_chainlit_websocket_ping_timeout() -> None:
 # 呼ばれる action_callback。これらのクリックは「最初の発言」ではないが、
 # Chainlit本体側にその区別が無い（_patch_chainlit_ignore_ui_action_first_interaction
 # のdocstring参照）。
-_NON_CHAT_ACTION_NAMES = frozenset({"pick_work_dir", "toggle_plan_mode"})
+_NON_CHAT_ACTION_NAMES = frozenset({"pick_work_dir", "suggest_work_dir", "work_dir_server_info", "toggle_plan_mode"})
 
 
 def _patch_chainlit_ignore_ui_action_first_interaction() -> None:
@@ -2484,18 +2485,19 @@ async def on_chat_end() -> None:
         forget_session_tool_semaphores(thread_id)
 
 
-async def _apply_work_dir(raw: str) -> None:
+async def _apply_work_dir(raw: str) -> str | None:
     """作業ディレクトリの入力値を実際にプローブして cl.user_session に反映する。
 
     入力値が空文字なら work_dir を None に戻す（既定動作＝config.ini の
-    default_workdir に復帰）。値がある場合は常に cl.user_session に絶対パス
-    文字列として保存する（表示用）。以前はここで is_dir() に失敗すると保存
-    自体を拒否していたが、サーバー駆動でローカルネットワーク上の別PCから
-    利用される場合、ユーザーのPCからは見える/書き込めるパスがサーバー側から
-    は見えない・書き込めないことがあり得るため拒否はしない。代わりに
-    probe_workdir_access() で実際の読み書き可否を確認し、結果を
+    default_workdir に復帰）。値がある場合は probe_workdir_access() で
+    サーバーPCから見た実際の読み書き可否を確認し、存在しない・読み取れない
+    フォルダは反映せずエラーメッセージを返す（呼び出し元が UI に表示する）。
+    以前は拒否せず保存して既定フォルダへ黙ってフォールバックしていたが、
+    ブラウザだけ別PCの構成では自分のPCのパスを入力したことに気づけなかった
+    ため、設定時点で知らせるようにした（2026-10-23 ユーザー要望）。
+    読み取りのみ可能なフォルダは受け付け、結果を
     cl.user_session["work_dir_access"] にキャッシュする（src/tools.py の
-    _resolve_workdir() がこれを見て機械的に既定フォルダへフォールバックする）。
+    _resolve_workdir() がこれを見て書き込みを既定フォルダへフォールバックする）。
 
     ChatSettings（歯車アイコン）と、独自フロントエンドの「作業フォルダ」
     アイコン（pick_work_dir action_callback）の両方から共通で呼ばれる。
@@ -2517,25 +2519,45 @@ async def _apply_work_dir(raw: str) -> None:
         raw: ユーザーが指定したパス文字列（未加工）。
 
     Returns:
-        None。副作用として cl.user_session の更新・thread_store への
-        即時永続化・状態メッセージの送信を行う。
+        反映できなかった場合はエラーメッセージ、反映した場合は None。反映時は
+        副作用として cl.user_session の更新・thread_store への即時永続化・
+        状態メッセージの送信を行う。
     """
-    raw = raw.strip()
+    raw = raw.strip().strip('"')
     if not raw:
         cl.user_session.set("work_dir", None)
         cl.user_session.set("work_dir_access", None)
         cl.user_session.set("work_dir_notice_pending", True)
         await _persist_work_dir(None)
         await cl.Message(content=_format_work_dir_status(None)).send()
-        return
+        return None
 
-    resolved = str(Path(raw).resolve())
-    status = probe_workdir_access(Path(resolved))
+    try:
+        resolved, status = await asyncio.wait_for(asyncio.to_thread(_probe_work_dir_input, raw), _WORK_DIR_PROBE_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        return f"サーバー（Locohaneが動いているPC）からフォルダの確認が時間内に終わりませんでした: {raw}"
+    except (OSError, ValueError, RuntimeError) as e:
+        return f"サーバー（Locohaneが動いているPC）からこのパスを解釈できません: {raw}（{e}）"
+    error = work_dir_error_message(resolved, status)
+    if error is not None:
+        return error
     cl.user_session.set("work_dir", resolved)
     cl.user_session.set("work_dir_access", status)
     cl.user_session.set("work_dir_notice_pending", True)
     await _persist_work_dir(resolved)
     await cl.Message(content=_format_work_dir_status(resolved, status)).send()
+    return None
+
+
+# 作業フォルダの存在確認・候補列挙の待ち時間上限（秒）。応答しないネットワーク
+# 共有（UNC パス等）を指定されても入力欄が固まり続けないようにする。
+_WORK_DIR_PROBE_TIMEOUT_SECONDS = 5.0
+
+
+def _probe_work_dir_input(raw: str) -> tuple[str, WorkDirAccessStatus]:
+    """入力パスを絶対パスへ解決し、サーバーPCから見たアクセス可否を調べる（スレッドで実行）。"""
+    resolved = str(Path(raw).expanduser().resolve())
+    return resolved, probe_workdir_access(Path(resolved))
 
 
 async def _persist_work_dir(resolved: str | None) -> None:
@@ -2670,7 +2692,9 @@ async def on_settings_update(settings: dict) -> None:
     Returns:
         None。
     """
-    await _apply_work_dir(settings.get("work_dir") or "")
+    error = await _apply_work_dir(settings.get("work_dir") or "")
+    if error is not None:
+        await cl.Message(content=f"⚠️ 作業ディレクトリを変更できませんでした。{error}").send()
 
 
 @cl.action_callback("toggle_plan_mode")
@@ -2690,7 +2714,7 @@ async def on_toggle_plan_mode(action: cl.Action) -> None:
 
 
 @cl.action_callback("pick_work_dir")
-async def on_pick_work_dir(action: cl.Action) -> None:
+async def on_pick_work_dir(action: cl.Action) -> dict:
     """独自フロントエンドの「作業フォルダ」アイコンから呼ばれる action_callback。
 
     以前は tkinter の OS ネイティブなフォルダ選択ダイアログをここで表示して
@@ -2702,15 +2726,58 @@ async def on_pick_work_dir(action: cl.Action) -> None:
     ポップオーバーを設け、入力済みのパス文字列を payload で受け取る方式に
     変更した。
 
+    サーバーPCから存在しない・読み取れないフォルダは反映せず、エラーメッセージを
+    返す（ポップオーバーを閉じずに入力欄の下へ表示する）。
+
     Args:
         action: フロントエンドから callAction で渡された cl.Action。
             payload["path"] にユーザーが入力したパス文字列が入る。
 
     Returns:
-        None。
+        {"ok": bool, "error": str | None}（callAction のレスポンスの response に入る）。
     """
     raw = str(action.payload.get("path", ""))
-    await _apply_work_dir(raw)
+    error = await _apply_work_dir(raw)
+    return {"ok": error is None, "error": error}
+
+
+@cl.action_callback("work_dir_server_info")
+async def on_work_dir_server_info(action: cl.Action) -> dict:
+    """作業フォルダのポップオーバーに出すサーバーPCのホスト名を返す action_callback。
+
+    ブラウザから見えるのは接続先のアドレス（0.0.0.0 で待ち受けて LAN の IP で
+    開いた場合はその IP）だけなので、利用者が「どのPCのパスか」を分かるよう
+    サーバー側のホスト名を返す。取得できなければ空文字（フロントエンドは IP を出す）。
+
+    Args:
+        action: 未使用。
+
+    Returns:
+        {"hostname": str}。
+    """
+    del action
+    return {"hostname": server_hostname()}
+
+
+@cl.action_callback("suggest_work_dir")
+async def on_suggest_work_dir(action: cl.Action) -> dict:
+    """作業フォルダ入力欄に数文字入力したときのパス候補を返す action_callback。
+
+    候補はサーバーPC上に実在するフォルダ（src/workdir_suggest.py 参照）。
+    応答しないネットワーク共有等で固まらないよう、時間内に終わらなければ空で返す。
+
+    Args:
+        action: payload["text"] に入力途中の文字列が入る。
+
+    Returns:
+        {"suggestions": [絶対パス, ...]}（最大10件）。
+    """
+    text = str(action.payload.get("text", ""))
+    try:
+        suggestions = await asyncio.wait_for(asyncio.to_thread(suggest_work_dirs, text), _WORK_DIR_PROBE_TIMEOUT_SECONDS)
+    except (asyncio.TimeoutError, OSError, ValueError):
+        suggestions = []
+    return {"suggestions": suggestions}
 
 
 def _save_uploads(message: cl.Message) -> list[str]:
