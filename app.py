@@ -2274,16 +2274,7 @@ async def on_chat_start() -> None:
     # run_script の作業ディレクトリを歯車アイコンから指定できるようにする。
     # 未入力（初期値）なら config.ini の [default_workdir].dir が使われる
     # （tools.py の _resolve_workdir）。
-    await cl.ChatSettings(
-        [
-            TextInput(
-                id="work_dir",
-                label="作業ディレクトリ",
-                initial="",
-                placeholder=rf"例: C:\Users\me\project（未入力なら既定値 {_config.default_workdir} を使用）",
-            )
-        ]
-    ).send()
+    await _send_work_dir_settings("")
 
     skills = scan_skills([_config.skills_dir, *_config.locohane_skills_dirs])
     names = "、".join(s.name for s in skills) or "（なし）"
@@ -2423,19 +2414,10 @@ if _config.thread_store_enabled:
         cl.user_session.set("token_usage_cumulative_main", meta.get("token_usage_cumulative_main") or _new_usage_totals())
         cl.user_session.set("context_compaction_note_skip_count", meta.get("context_compaction_note_skip_count") or 0)
 
-        await cl.ChatSettings(
-            [
-                TextInput(
-                    id="work_dir",
-                    label="作業ディレクトリ",
-                    # 復元した実体値をそのまま初期表示する（以前は常に空文字固定
-                    # だったため、歯車パネルを開いても実際の値が見えず、表示との
-                    # 不一致に気づく手段が無かった）。
-                    initial=meta.get("work_dir") or "",
-                    placeholder=rf"例: C:\Users\me\project（未入力なら既定値 {_config.default_workdir} を使用）",
-                )
-            ]
-        ).send()
+        # 復元した実体値をそのまま初期表示する（以前は常に空文字固定
+        # だったため、歯車パネルを開いても実際の値が見えず、表示との
+        # 不一致に気づく手段が無かった）。
+        await _send_work_dir_settings(meta.get("work_dir") or "")
 
         if thread_id in _pending_asks:
             # 応答待ちのまま離れて戻ってきたスレッド。今このセッションで
@@ -2483,6 +2465,33 @@ async def on_chat_end() -> None:
     if thread_id is not None:
         forget_session(thread_id)
         forget_session_tool_semaphores(thread_id)
+
+
+async def _send_work_dir_settings(initial: str) -> None:
+    """歯車アイコンの ChatSettings（作業ディレクトリ入力欄）を initial の値で送る。
+
+    cl.ChatSettings.send() は画面の入力欄と cl.context.session.chat_settings の
+    両方を initial で上書きする。on_chat_start（空）・on_chat_resume（復元値）に
+    加え、on_settings_update で入力値を拒否したときにも現在の値で送り直し、
+    拒否したパスが入力欄・chat_settings に残って実際の作業ディレクトリと
+    食い違わないようにする。
+
+    Args:
+        initial: 入力欄に表示する値（未設定なら空文字）。
+
+    Returns:
+        None。
+    """
+    await cl.ChatSettings(
+        [
+            TextInput(
+                id="work_dir",
+                label="作業ディレクトリ",
+                initial=initial,
+                placeholder=rf"例: C:\Users\me\project（未入力なら既定値 {_config.default_workdir} を使用）",
+            )
+        ]
+    ).send()
 
 
 async def _apply_work_dir(raw: str) -> str | None:
@@ -2694,6 +2703,8 @@ async def on_settings_update(settings: dict) -> None:
     """
     error = await _apply_work_dir(settings.get("work_dir") or "")
     if error is not None:
+        # 拒否したパスが入力欄・chat_settings に残らないよう、現在の値で送り直す。
+        await _send_work_dir_settings(cl.user_session.get("work_dir") or "")
         await cl.Message(content=f"⚠️ 作業ディレクトリを変更できませんでした。{error}").send()
 
 

@@ -103,6 +103,27 @@ async def test_pick_work_dir_rejects_missing_dir_without_applying(tmp_path, fake
 
 
 @pytest.mark.asyncio
+async def test_settings_update_rejected_resends_current_work_dir(tmp_path, fake_cl, monkeypatch) -> None:
+    # 歯車アイコンの設定で拒否したパスが入力欄・chat_settings に残らないよう、
+    # 現在の作業ディレクトリで ChatSettings を送り直す。
+    resent: list[str] = []
+
+    async def _fake_send(initial):
+        resent.append(initial)
+
+    monkeypatch.setattr(app, "_send_work_dir_settings", _fake_send)
+    fake_cl.set("work_dir", "C:/previous")
+    await app.on_settings_update({"work_dir": str(tmp_path / "missing")})
+    assert resent == ["C:/previous"]
+    assert fake_cl.get("work_dir") == "C:/previous"
+    assert len(_FakeMessage.sent) == 1 and "変更できませんでした" in _FakeMessage.sent[0]
+
+    # 受け付けた場合は送り直さない（入力欄の値がそのまま実際の値になる）。
+    await app.on_settings_update({"work_dir": str(tmp_path)})
+    assert resent == ["C:/previous"]
+
+
+@pytest.mark.asyncio
 async def test_pick_work_dir_accepts_existing_dir(tmp_path, fake_cl) -> None:
     res = await app.on_pick_work_dir(SimpleNamespace(payload={"path": f'"{tmp_path}"'}))
     assert res == {"ok": True, "error": None}
