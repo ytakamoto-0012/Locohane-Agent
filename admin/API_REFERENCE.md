@@ -16,6 +16,9 @@
   無いと `403` になる。
 - リクエストボディはJSON（`Content-Type: application/json`）。
 - エラー時は `{"detail": "エラー内容"}` が返る。
+- **言語**: `X-Locohane-Lang: en` を付けると、エラー内容（`detail`）と管理アシスタントの回答が英語になる
+  （無ければ日本語。訳の無いメッセージは日本語のまま）。表示言語の既定値（`[ui].default_language`）は
+  認証なしの `GET /ui-config.js` が `window.LOCOHANE_DEFAULT_LANGUAGE = "auto";` の形で返す。
 
 | ステータス | 意味 |
 |---|---|

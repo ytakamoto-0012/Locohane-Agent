@@ -325,6 +325,7 @@ Locohane/
 │   ├── knowledge.py          # ナレッジ画面の HTTP API（ベクターDB のコレクション管理・取り込みジョブ）
 │   ├── assistant.py          # 管理アシスタント（右上の「AIに相談」。設定を読んで助言するだけ）の HTTP API
 │   ├── assistant_index.py    # 管理アシスタントの検索（config.ini・README_DETAIL.md・API リファレンスの簡易 RAG）
+│   ├── i18n.py               # サーバー側の表示言語（エラーメッセージの英訳・X-Locohane-Lang を読むミドルウェア）
 │   ├── ASSISTANT_GUIDE.md    # 管理アシスタントが毎回読み直す画面ガイド（編集すれば再起動不要で反映）
 │   ├── skill_lab/            # スキル研究室（「設定ダッシュボード」の「スキル研究室」節）
 │   │   ├── api.py             # 研究室の HTTP API（/api/instances/{name}/skill-lab/...）
@@ -334,11 +335,12 @@ Locohane/
 │   │   ├── llm.py / fixer.py / judge.py / drafting.py  # 研究室の LLM による AI 修正・AI judge・下書き
 │   │   ├── worker.py          # スキル調整ワーカーとして起動されるワーカー（評価 → AI 修正 → 再評価 → トライアウト）
 │   │   └── promotion.py       # 昇格（インスタンス専用の置き場へ）・差し戻し・ドラフトのアーカイブ
-│   └── static/                # フロントエンド（ビルド不要の素のHTML/JS。研究室の画面は skill_lab.js、ナレッジ画面は knowledge.js）
+│   └── static/                # フロントエンド（ビルド不要の素のHTML/JS。研究室の画面は skill_lab.js、ナレッジ画面は knowledge.js、表示言語は i18n.js・英訳は i18n_en.js）
 ├── instances/               # 管理ツールが管理するインスタンス別ディレクトリ（.gitignore済み、実行時生成）
 │   └── <name>/               # インスタンス別の設定フォルダ。既定ではインスタンス専用の拡張ディレクトリ（[skill_lab] instance_locohane_dir。研究室で昇格した skills/・agents/・回帰テスト用の evals/）も兼ねる
 ├── Locohane.lnk            # 起動用ショートカット（admin.batへリンク）
 ├── chainlit.md             # Chainlit ウェルカム画面
+├── README.en.md            # README.md の英語版
 ├── CLAUDE.md               # プロジェクト固有の追加指示（Claude Code 形式）
 ├── QWEN.md                 # プロジェクト固有の追加指示（Qwen Code 形式、内容はCLAUDE.md参照の1行）
 ├── VERSION                 # バージョン番号の正本（1行。「バージョン管理とリリース手順」節）
@@ -372,17 +374,18 @@ Locohane/
 ├── frontend/                # カスタムReactフロントエンド
 │   ├── src/
 │   │   ├── components/      # UIコンポーネント（AskFormBar, PlanCard, SidePanel等）
+│   │   ├── i18n/            # 表示言語（日本語/英語の文言・LanguageProvider・useI18n）
 │   │   └── utils/           # ユーティリティ
 │   └── public/
 ├── public/                  # Chainlit公開ファイル
 │   ├── build/               # フロントエンドビルド成果物
-│   ├── settings/            # ヘッダー・アイコン・ウェルカム文言の設定
+│   ├── settings/            # ヘッダー・アイコン・ウェルカム文言の設定（英語のセッションは welcome.en.md を優先）
 │   ├── icons/                # UIアイコン画像
 │   ├── custom.css           # カスタムCSS
 │   └── UI変更ガイド.md      # UIカスタマイズガイド
 ├── system_prompt/
 │   ├── system_prompt.md     # メインエージェント用システムプロンプト
-│   ├── help.md              # help ツールが返すユーザー向けヘルプ
+│   ├── help.md              # help ツールが返すユーザー向けヘルプ（英語のセッションでは help.en.md）
 │   ├── compaction_prompt.md # 会話履歴の自動要約指示
 │   ├── subagent_common.md   # サブエージェント共通プロンプト
 │   ├── handoff_prompt.md    # トークン上限接近時にLLMへ注入する打ち切り・引き継ぎ指示
@@ -462,6 +465,7 @@ Locohane/
 │   ├── files.py             # ファイルアップロード処理
 │   ├── images.py            # 画像処理・Data URL変換
 │   ├── tool_labels.py       # ツールの表示名（UIのStepバッジとサブエージェントの進捗表示で共有）
+│   ├── i18n.py              # チャット画面向けの表示言語（システム通知・ボタン等の文言、英語セッションの応答言語の指示）
 │   ├── log_rotation.py      # app.log の日時ローテーション
 ├── agents/
 │   ├── README/AGENTS_README.md # エージェント種別定義（frontmatter）の書き方ガイド（*.mdスキャン時の警告を避けるためREADME/配下に退避）
@@ -1604,6 +1608,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[thread_store]` | `retention_days` | スレッド一覧の保持日数（0以下で無期限保持、既定）。削除してもLangGraph側の会話状態自体は消えない | `THREAD_STORE_RETENTION_DAYS` |
 | `[thread_store]` | `cleanup_interval_hours` | 上記の自動削除チェックの実行間隔（時間） | `THREAD_STORE_CLEANUP_INTERVAL_HOURS` |
 | `[chat_starters]` | `prompts` | チャット開始時に表示する定型文ボタン（クリックでそのまま送信、複数指定可） | `CHAT_STARTER_PROMPTS` |
+| `[chat_starters]` | `prompts_en` | 英語表示のセッションで使う定型文ボタン（書式は `prompts` と同じ。空なら `prompts` を使う） | `CHAT_STARTER_PROMPTS_EN` |
 | `[checkpointer]` | `op_timeout_seconds` | LangGraphの会話状態SQLite（`[paths].checkpoint_db`）に対する1回あたりの操作（aget_tuple/aput_writes等）タイムアウト秒数。超過時はcheckpointer再構築へフォールバック | `CHECKPOINTER_OP_TIMEOUT_SECONDS` |
 | `[checkpointer]` | `close_timeout_seconds` | checkpointer再構築時に旧DB接続をクローズする際のタイムアウト秒数 | `CHECKPOINTER_CLOSE_TIMEOUT_SECONDS` |
 | `[checkpointer]` | `shutdown_drain_timeout_seconds` | アプリシャットダウン時、保留中の非同期タスクの完了を待つ最大秒数 | `CHECKPOINTER_SHUTDOWN_DRAIN_TIMEOUT_SECONDS` |
@@ -1625,6 +1630,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[admin]` | `assistant_embedding_instance` | 埋め込みの接続先を取るインスタンス名。空欄なら自動で探す | `ADMIN_ASSISTANT_EMBEDDING_INSTANCE` |
 | `[admin]` | `assistant_max_history_messages` | AI に渡す直近の会話の最大メッセージ数 | `ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES` |
 | `[admin]` | `instances_dir` | インスタンス別ディレクトリのルート（既定 `./instances`）。app.bat直接起動時のdefaultインスタンスの`.env`・`config_overrides.json`の読み込み先にも使われる。変更時は既存の中身を手動で移動する | `INSTANCES_DIR` |
+| `[ui]` | `default_language` | 表示言語の既定値（`auto`＝ブラウザの言語 / `ja` / `en`）。利用者が画面で言語を選ぶとそちらが優先される。`en` のセッションでは AI も英語で回答する（「言語切り替え（日本語 / 英語）」節） | `UI_DEFAULT_LANGUAGE` |
 | `[ui]` | `max_display_messages` | チャット画面に描画するメッセージの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_MESSAGES` |
 | `[ui]` | `max_display_side_steps` | サイドパネルに描画するツール呼び出し等のStepの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_SIDE_STEPS` |
 | `[ui]` | `paste_as_attachment_threshold_chars` | 入力欄へこの文字数以上のテキストを貼り付けると、入力欄へ展開せず「貼り付けテキスト」カード（`pasted-text-*.txt` 添付）にする。送信時はパスではなく本文としてLLMへ渡す（`0`以下で無効） | `UI_PASTE_AS_ATTACHMENT_THRESHOLD_CHARS` |
@@ -1744,6 +1750,46 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
   判定結果は `check_work_dir_status` ツールでも確認できる。
 - **スコープ**: `cl.user_session`（会話単位）に保存されるだけで、
   `config.ini` 自体は変更されない。他の会話・他ユーザーには影響しない。
+
+---
+
+## 言語切り替え（日本語 / 英語）
+
+チャット画面・設定ダッシュボード・AI の応答を、利用者ごとに日本語と英語で切り替えられる。
+
+- **選び方**: チャット画面は右上の表示設定（パレットアイコン）→「言語 / Language」、またはログイン画面の下部。
+  設定ダッシュボードは右上（ログイン画面は下部）の選択欄（切り替えると再読み込みする）。選んだ言語はブラウザの
+  localStorage（`la-language`）に保存される。チャット画面と設定ダッシュボードはポートが違う（別オリジン）ため、
+  それぞれで選ぶ。
+- **既定値**: まだ選んでいない利用者は `[ui] default_language`（`auto` ならブラウザの言語。英語なら英語、それ以外は日本語）。
+  設定ダッシュボードの config.ini 画面では選択式で変更できる。
+- **AI の応答言語**: 英語のセッションでは、`system_prompt.md` の末尾に英語で回答する指示（`src/i18n.py` の
+  `response_language_directive()`）を足してグラフを組み直す。`system_prompt.md`・ツールの docstring・SKILL.md は
+  日本語のまま（evals でチューニングした内容を変えないため。日本語のセッションのプロンプトは従来とまったく同じ）。
+  会話の途中で切り替えた場合は、次の送信から切り替わる（生成中の応答はそのまま）。管理アシスタントも同様に、
+  英語の画面では英語で回答する。
+- **翻訳されないもの**: 送信済みのメッセージ（送った時点の言語のまま残る）、ツールから LLM への戻り値・ログ、
+  設定ダッシュボードに表示する config.ini の各キーの説明（config.ini のコメント）、同梱スキル、
+  ナレッジ（`src/vector_db/`）やスキル研究室の内部処理から出る一部のエラーメッセージ。
+- **言語別の表示設定ファイル**: 英語のセッションでは `welcome.en.md`（`public/settings/`・インスタンス専用の
+  `settings/`）と `system_prompt/help.en.md`（`help` ツール）を優先して読む。`welcome.en.md` が無いときは
+  日本語の `welcome.md` ではなく組み込みの英語文言を出す。設定ダッシュボードの「表示設定」から編集できるのは
+  日本語版だけなので、英語版はファイルを直接置く。英語の定型文ボタンは `[chat_starters] prompts_en`。
+
+### 文言の置き場所と翻訳の追加方法
+
+| 対象 | 置き場所 | 書き方 |
+|------|----------|--------|
+| チャット画面（React） | `frontend/src/i18n/messages.ts` | キー（`'composer.placeholder'` 等）ごとに `ja`・`en` を書き、コンポーネントで `useI18n().t('キー')`。変更後は `npm run build` |
+| チャットのシステム通知・ボタン・Step 名（Python） | `src/i18n.py` の `MESSAGES` | キーごとに `ja`・`en` を書き、`i18n.t("キー")`。セッションの言語は `cl.user_session` の `lang` |
+| 設定ダッシュボード（画面） | `admin/static/i18n_en.js` | 日本語の原文をそのままキーにする。JS では `_t("原文")`（可変部分は `_t("{0} を停止します", name)`）、`index.html` のテンプレートは `clone()` が自動で訳す |
+| 設定ダッシュボード（サーバーのエラー） | `admin/i18n.py` の `EN` | 日本語の原文をキーにし、`_t("インスタンス {0!r} が見つかりません。", name)`。言語は `X-Locohane-Lang` ヘッダー（`admin.js` の `api()` が付ける） |
+
+訳を書き忘れた文言は日本語のまま表示される（落ちはしない）。`tests/test_i18n.py`・`tests/test_admin_i18n.py` が、
+キーの英訳の有無とプレースホルダー（`{0}` 等）の一致を確かめる。
+
+`🔢 トークン使用量` などのメッセージの接頭辞（`app.py` の `*_PREFIX` と `frontend/src/utils/messageTree.ts`）や
+`SUBAGENT_MESSAGE_AUTHOR` は、メッセージの種類を見分ける目印なので翻訳しない（表示はフロントエンドで訳す）。
 
 ---
 
