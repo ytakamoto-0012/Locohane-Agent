@@ -14,7 +14,7 @@ from src.config import load_config
 def isolated_data_dir(tmp_path, monkeypatch):
     """実プロジェクトの data/ にテスト用ディレクトリを作らないよう、データ保存先を tmp へ逃がす。"""
     monkeypatch.setenv("COMMON_DATA_DIR", str(tmp_path / "data" / "${instance}"))
-    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "QDRANT_API_KEY"):
+    for key in ("VECTOR_DB_ENABLED", "VECTOR_DB_BACKEND", "VECTOR_DB_EMBEDDING_URL", "VECTOR_DB_QDRANT_URL", "VECTOR_DB_DISTANCE", "VECTOR_DB_QDRANT_PRESET", "VECTOR_DB_QUERY_PREFIX", "VECTOR_DB_DOCUMENT_PREFIX", "QDRANT_API_KEY"):
         monkeypatch.delenv(key, raising=False)
 
 
@@ -34,6 +34,7 @@ def test_defaults_are_disabled_sqlite_vec(tmp_path):
     assert cfg.vector_db_dir == tmp_path / "data" / "inst1" / "vector_db"
     assert cfg.vector_db_embedding_endpoints == ()
     assert cfg.vector_db_qdrant_collection_prefix == "locohane_inst1_"
+    assert cfg.vector_db_distance == "Cosine"
     assert ".pdf" in cfg.vector_db_include_extensions
     # 無効のときはディレクトリを作らない
     assert not cfg.vector_db_dir.exists()
@@ -58,6 +59,37 @@ def test_enabled_with_overrides(tmp_path, monkeypatch):
     assert cfg.vector_db_include_extensions == (".pdf", ".md")
     assert cfg.vector_db_qdrant_api_key == "secret"
     assert cfg.vector_db_dir.is_dir()
+
+
+@pytest.mark.parametrize(
+    "model, query_prefix, document_prefix",
+    [
+        ("bge-m3", "", ""),
+        ("multilingual-e5-large", "query: ", "passage: "),
+        ("intfloat/multilingual-e5-base-Q8_0.gguf", "query: ", "passage: "),
+        ("multilingual-e5-large-instruct", "Instruct: Given a web search query, retrieve relevant passages that answer the query\nQuery: ", ""),
+        ("ruri-v3-310m", "検索クエリ: ", "検索文書: "),
+        ("ruri-base-v2", "クエリ: ", "文章: "),
+        ("nomic-embed-text-v1.5", "search_query: ", "search_document: "),
+        ("Nemotron-3.5-Embed-1B-Q8_0", "query: ", "passage: "),
+        ("llama-nemotron-embed-1b-v2", "query: ", "passage: "),
+        ("nemotron-nano-9b", "", ""),
+        ("qwen3-embedding", "", ""),
+    ],
+)
+def test_prefix_auto_follows_embedding_model(tmp_path, model, query_prefix, document_prefix):
+    embed = f'[{{"base_url": "http://localhost:12440/v1", "api_key": "x", "model": "{model}"}},]'
+    cfg = _load(tmp_path, {"enabled": "true", "embedding_url": embed})
+    assert (cfg.vector_db_query_prefix, cfg.vector_db_document_prefix) == (query_prefix, document_prefix)
+
+
+def test_prefix_explicit_value_and_blank_override_auto(tmp_path):
+    embed = '[{"base_url": "http://localhost:12440/v1", "api_key": "x", "model": "multilingual-e5-large"},]'
+    cfg = _load(tmp_path, {"enabled": "true", "embedding_url": embed, "query_prefix": '"q: "', "document_prefix": ""})
+    assert (cfg.vector_db_query_prefix, cfg.vector_db_document_prefix) == ("q: ", "")
+    # embedding_url 未設定なら auto は空
+    (tmp_path / "none").mkdir()
+    assert _load(tmp_path / "none", {}).vector_db_query_prefix == ""
 
 
 @pytest.mark.parametrize(
@@ -89,3 +121,92 @@ def test_admin_catalog_offers_embedding_url_editor():
     info = {(k.section, k.key): k for k in catalog.keys}[("vector_db", "embedding_url")]
     assert info.ui_kind == "list"
     assert [f["name"] for f in info.schema["item"]["fields"]] == ["base_url", "api_key", "model"]
+
+
+@pytest.mark.parametrize(("value", "expected"), [("euclid", "Euclid"), (" DOT ", "Dot"), ("Manhattan", "Manhattan")])
+def test_distance_is_normalized(tmp_path, value, expected):
+    assert _load(tmp_path, {"backend": "qdrant", "distance": value}).vector_db_distance == expected
+
+
+def test_distance_rejects_unknown_value(tmp_path):
+    with pytest.raises(ValueError, match="distance"):
+        _load(tmp_path, {"distance": "l2"})
+
+
+def test_sqlite_vec_rejects_dot(tmp_path):
+    with pytest.raises(ValueError, match="sqlite-vec は Dot"):
+        _load(tmp_path, {"backend": "sqlite_vec", "distance": "dot"})
+
+
+def test_qdrant_preset_default_and_validation(tmp_path):
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_qdrant_preset == "none"
+    assert _load(tmp_path, {"backend": "qdrant", "qdrant_preset": " 3M "}).vector_db_qdrant_preset == "3m"
+    with pytest.raises(ValueError, match="qdrant_preset"):
+        _load(tmp_path, {"qdrant_preset": "5m"})
+
+
+def test_admin_catalog_offers_qdrant_preset_choices():
+    from admin.ini_catalog import parse_file
+    from src.config import VECTOR_DB_QDRANT_PRESETS
+
+    catalog = parse_file(Path(__file__).resolve().parent.parent / "config.ini")
+    info = {(k.section, k.key): k for k in catalog.keys}[("vector_db", "qdrant_preset")]
+    assert tuple(info.choices) == VECTOR_DB_QDRANT_PRESETS
+
+
+def test_embedding_retry_and_routing_defaults_and_validation(tmp_path):
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert cfg.vector_db_embedding_routing_strategy == "priority_failover"
+    assert cfg.vector_db_embedding_max_retries == 3
+    assert cfg.vector_db_search_embedding_max_retries == 2
+    assert cfg.vector_db_embedding_retry_interval_seconds == 10.0
+    cfg = _load(
+        tmp_path,
+        {
+            "embedding_routing_strategy": "round_robin",
+            "embedding_max_retries": "0",
+            "search_embedding_max_retries": "0",
+            "embedding_retry_interval_seconds": "2.5",
+        },
+    )
+    assert cfg.vector_db_embedding_routing_strategy == "round_robin"
+    assert cfg.vector_db_embedding_max_retries == 0
+    assert cfg.vector_db_search_embedding_max_retries == 0
+    assert cfg.vector_db_embedding_retry_interval_seconds == 2.5
+    with pytest.raises(ValueError, match=r"\[vector_db\]\.embedding_routing_strategy"):
+        _load(tmp_path, {"embedding_routing_strategy": "sticky"})
+    with pytest.raises(ValueError, match="embedding_max_retries"):
+        _load(tmp_path, {"embedding_max_retries": "-1"})
+    with pytest.raises(ValueError, match="search_embedding_max_retries"):
+        _load(tmp_path, {"search_embedding_max_retries": "-1"})
+    with pytest.raises(ValueError, match="embedding_retry_interval_seconds"):
+        _load(tmp_path, {"embedding_retry_interval_seconds": "0"})
+
+
+def test_ingest_workers_default_and_validation(tmp_path):
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_ingest_workers == 1
+    assert _load(tmp_path, {"ingest_workers": "4"}).vector_db_ingest_workers == 4
+    with pytest.raises(ValueError, match="ingest_workers"):
+        _load(tmp_path, {"ingest_workers": "0"})
+
+
+def test_embedding_encoding_format_and_ingest_processes(tmp_path):
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert (cfg.vector_db_embedding_encoding_format, cfg.vector_db_ingest_processes) == ("base64", 0)
+    cfg = _load(tmp_path, {"embedding_encoding_format": "FLOAT", "ingest_processes": "4"})
+    assert (cfg.vector_db_embedding_encoding_format, cfg.vector_db_ingest_processes) == ("float", 4)
+    with pytest.raises(ValueError, match="embedding_encoding_format"):
+        _load(tmp_path, {"embedding_encoding_format": "binary"})
+    with pytest.raises(ValueError, match="ingest_processes"):
+        _load(tmp_path, {"ingest_processes": "-1"})
+
+
+def test_scan_workers_and_max_files_per_collection(tmp_path):
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert (cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection) == (8, 1000000)
+    cfg = _load(tmp_path, {"scan_workers": "16", "max_files_per_collection": "5000"})
+    assert (cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection) == (16, 5000)
+    with pytest.raises(ValueError, match="scan_workers"):
+        _load(tmp_path, {"scan_workers": "0"})
+    with pytest.raises(ValueError, match="max_files_per_collection"):
+        _load(tmp_path, {"max_files_per_collection": "0"})

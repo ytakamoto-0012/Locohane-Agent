@@ -261,8 +261,34 @@ async function refreshCardActivity() {
     ];
     box.replaceChildren(...tiles);
     renderCardContextChart(card.querySelector(".card-context"), item);
+    renderCardIngest(card.querySelector(".card-ingest"), item);
   }
   refreshWorkerCards();
+}
+
+// カードに「ナレッジで取り込み中のコレクション」と進捗を出す（無ければ何も出さない）。クリックでナレッジ画面を開く。
+function renderCardIngest(box, item) {
+  const jobs = item.ingesting || [];
+  if (!jobs.length) {
+    box.replaceChildren();
+    return;
+  }
+  const rows = jobs.map((j) => {
+    const state = j.stop_requested ? "停止中" : j.trigger === "schedule" ? "取り込み中（自動）" : "取り込み中";
+    const count = j.total ? `${fmtNum(j.done)} / ${fmtNum(j.total)} ファイル` : "対象を確認中";
+    const current = j.current ? j.current.split(/[\\/]/).pop() : "";
+    return el("div", { class: "card-ingest-job", title: [j.collection, state, count, j.current].filter(Boolean).join("\n") }, [
+      el("div", { class: "card-ingest-head" }, [
+        el("span", { class: "card-ingest-name", text: j.collection }),
+        el("span", { class: "card-ingest-count", text: `${state} ${count}` }),
+      ]),
+      knowledgeProgressBar(j.done, j.total),
+      current ? el("div", { class: "card-ingest-file", text: current }) : null,
+    ]);
+  });
+  const title = el("div", { class: "card-ingest-title", text: "ナレッジの取り込み" });
+  box.replaceChildren(title, ...rows);
+  box.onclick = () => renderInstanceDetail(item.name, "knowledge");
 }
 
 // スキル調整ワーカー（スキル研究室の実行役）のカードに、処理中のテーマ・待ち件数・LLM 接続先を出す。
@@ -816,14 +842,35 @@ const CONFIG_PRESETS = [
       "vector_db.enabled",
       "vector_db.backend",
       "vector_db.qdrant_url",
+      "vector_db.qdrant_preset",
+      "vector_db.distance",
       "vector_db.embedding_url",
+      "vector_db.embedding_routing_strategy",
+      "vector_db.embedding_max_retries",
+      "vector_db.search_embedding_max_retries",
+      "vector_db.embedding_retry_interval_seconds",
+      "vector_db.embedding_encoding_format",
       "vector_db.query_prefix",
       "vector_db.document_prefix",
+      "vector_db.image_input",
+      "vector_db.image_dpi",
+      "vector_db.office_timeout_seconds",
+      "vector_db.ingest_workers",
+      "vector_db.ingest_processes",
+      "vector_db.scan_workers",
+      "vector_db.max_files_per_collection",
       "vector_db.chunk_size",
       "vector_db.chunk_overlap",
+      "vector_db.max_file_mb",
       "vector_db.top_k",
       "vector_db.max_result_chars",
       "vector_db.min_score",
+      "vector_db.image_min_score",
+      "vector_db.path_min_score",
+      "vector_db.rrf_weight_text",
+      "vector_db.rrf_weight_keyword",
+      "vector_db.rrf_weight_image",
+      "vector_db.rrf_weight_path_keyword",
     ],
   },
 ];

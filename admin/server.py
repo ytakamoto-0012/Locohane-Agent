@@ -84,7 +84,9 @@ async def _lifespan(_app: FastAPI):
                 logger.info("autostart: インスタンス %r を起動しました。", name)
             except supervisor.SupervisorError as exc:
                 logger.warning("autostart: インスタンス %r の起動に失敗しました: %s", name, exc)
+    _knowledge_router.ingest_scheduler.start()
     yield
+    _knowledge_router.ingest_scheduler.stop()
     if _cfg.admin_stop_apps_on_exit:
         _supervisor.stop_all()
 
@@ -924,8 +926,9 @@ def _runtime_view(name: str, cfg) -> dict[str, Any]:
 
 @app.get("/api/monitor/overview")
 def get_monitor_overview(user: str = Depends(require_login)):
-    """全インスタンスの接続中ユーザー数・生成中スレッド数（インスタンス一覧のカード用）。"""
+    """全インスタンスの接続中ユーザー数・生成中スレッド数・ナレッジの取り込み状況（インスタンス一覧のカード用）。"""
     result = []
+    ingesting = _knowledge_router.ingest_jobs.running()
     for name in inst.list_instance_names(INSTANCES_ROOT):
         try:
             cfg = monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name)
@@ -954,6 +957,11 @@ def get_monitor_overview(user: str = Depends(require_login)):
                 "log_counts_24h": monitor.recent_level_counts(cfg.log_dir),
                 # 生成中スレッドごとの LLM リクエストの入力トークン（メイン・サブの最大値）。
                 "context_series": context_series,
+                # ナレッジで取り込み中のコレクション（管理ツールのプロセス内のジョブ）。
+                "ingesting": [
+                    {k: getattr(j, k) for k in ("collection", "trigger", "started_at", "done", "total", "current", "stop_requested")}
+                    for j in ingesting.get(name, [])
+                ],
             }
         )
     return {"instances": result}
@@ -1088,15 +1096,15 @@ app.include_router(
 # ナレッジ（ベクターDB のコレクションと取り込み。admin/knowledge.py）
 # ---------------------------------------------------------------------------
 
-app.include_router(
-    knowledge_api.build_router(
-        require_login=require_login,
-        require_csrf=require_csrf,
-        instances_root=INSTANCES_ROOT,
-        audit_log_path=AUDIT_LOG_PATH,
-        client_ip=_client_ip,
-    )
+# 時間指定の自動取り込み（_knowledge_router.ingest_scheduler）は _lifespan で起動・停止する。
+_knowledge_router = knowledge_api.build_router(
+    require_login=require_login,
+    require_csrf=require_csrf,
+    instances_root=INSTANCES_ROOT,
+    audit_log_path=AUDIT_LOG_PATH,
+    client_ip=_client_ip,
 )
+app.include_router(_knowledge_router)
 
 
 # ---------------------------------------------------------------------------

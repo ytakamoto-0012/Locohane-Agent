@@ -71,6 +71,7 @@ _THINKING_LEVEL_CHOICES = ("off", "low", "medium", "high", "xhigh")
 _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("llm", "main_routing_strategy"): _ROUTING_STRATEGY_CHOICES,
     ("llm", "sub_routing_strategy"): _ROUTING_STRATEGY_CHOICES,
+    ("vector_db", "embedding_routing_strategy"): _ROUTING_STRATEGY_CHOICES,
     ("llm", "reasoning_format"): ("", "none", "deepseek", "deepseek-legacy"),
     ("llm", "reasoning_effort"): ("", "none", "default", "minimal", "low", "medium", "high", "xhigh", "max"),
     ("main_agent_tool_guard", "mode"): ("false", "tools_skills_only", "all"),
@@ -79,6 +80,11 @@ _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("log", "level"): ("info", "debug", "none"),
     # src/config.py の VECTOR_DB_BACKENDS と同じ値・順序。
     ("vector_db", "backend"): ("sqlite_vec", "qdrant"),
+    # src/config.py の VECTOR_DB_DISTANCES と同じ値・順序。
+    ("vector_db", "distance"): ("Cosine", "Euclid", "Dot", "Manhattan"),
+    # src/config.py の VECTOR_DB_QDRANT_PRESETS と同じ値・順序。
+    ("vector_db", "qdrant_preset"): ("none", "1m", "2m", "3m", "4m"),
+    ("vector_db", "embedding_encoding_format"): ("base64", "float"),
     ("thinking_loop_guard", "target"): ("all", "content_only", "thinking_only"),
     ("thinking_control", "default_level"): _THINKING_LEVEL_CHOICES,
     # rule_* は false＝ルール無効。

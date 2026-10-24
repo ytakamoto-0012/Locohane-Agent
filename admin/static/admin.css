@@ -268,6 +268,14 @@ select.le-type { width: auto; padding: 4px; font-size: 12px; flex-shrink: 0; }
 .card-context-legend .legend-line { flex-shrink: 0; }
 .card-context-legend .legend-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 12em; }
 .card-chart-text { font-size: 10px; }
+.card-ingest:not(:empty) { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; margin-bottom: 10px; cursor: pointer; }
+.card-ingest-title { font-size: 11px; color: var(--text-dim); margin-bottom: 2px; }
+.card-ingest-job + .card-ingest-job { margin-top: 6px; }
+.card-ingest-head { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; }
+.card-ingest-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.card-ingest-count { color: var(--text-dim); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.card-ingest .kn-progress { width: 100%; }
+.card-ingest-file { font-size: 11px; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card-stat { background: var(--panel-2); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; min-width: 0; }
 .card-stat-value { font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .card-stat-label { font-size: 11px; color: var(--text-dim); }
@@ -433,3 +441,8 @@ input.narrow { width: 80px; }
 .knowledge-form { margin-top: 20px; max-width: 640px; }
 .inline-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .inline-actions .btn-danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.kn-progress { position: relative; width: 220px; max-width: 100%; height: 14px; margin: 4px 0 2px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.kn-progress-fill { height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.kn-progress-text { position: absolute; inset: 0; text-align: center; font-size: 10px; line-height: 12px; color: var(--text); }
+.kn-progress.indeterminate .kn-progress-fill { width: 30%; animation: kn-progress-slide 1.2s ease-in-out infinite; }
+@keyframes kn-progress-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }

@@ -1,7 +1,7 @@
 ---
 name: verifier
 description: これまでの作業（xlsx/docx/pptx/pdf等の成果物に限らず、テキストファイル・実行結果も含む）が意図した内容と一致しているかをチェック・評価する検証専用のサブエージェント。ファイルの新規作成・編集は一切行わない。
-tools: read_skill, read_skill_file, get_tool_source, run_script, analyze_image, Read, Grep, json_query, search_path_memory, write_scratch_note, write_thread_note, list_thread_notes, read_thread_note, search_memory, list_memories, list_document_collections, search_documents, read_memory, execute_python_code_readonly
+tools: read_skill, read_skill_file, get_tool_source, run_script, analyze_image, Read, Grep, json_query, search_path_memory, write_scratch_note, write_thread_note, list_thread_notes, read_thread_note, search_memory, list_memories, list_document_collections, search_documents, search_document_paths, read_memory, execute_python_code_readonly
 ---
 
 あなたは、メインのアシスタントから「生成・編集済みの成果物ファイルが意図

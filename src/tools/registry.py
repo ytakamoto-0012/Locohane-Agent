@@ -37,7 +37,7 @@ from .ask_user_choice import ask_user_choice
 from .memory_tools import create_memory, update_memory, delete_memory, read_memory, search_memory, list_memories
 from .show_help import show_help
 from .thread_notes import write_thread_note, list_thread_notes, read_thread_note
-from .vector_db_tools import list_document_collections, search_documents
+from .vector_db_tools import list_document_collections, search_document_paths, search_documents
 
 
 _SUBAGENT_TOOLS: list = [
@@ -71,6 +71,7 @@ _SUBAGENT_TOOLS: list = [
     list_memories,
     list_document_collections,
     search_documents,
+    search_document_paths,
 ]
 
 
@@ -117,6 +118,7 @@ _BASE_TOOLS: list[BaseTool] = [
     list_memories,
     list_document_collections,
     search_documents,
+    search_document_paths,
     show_help,
 ]
 
