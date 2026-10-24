@@ -16,6 +16,7 @@ import re
 import sqlite3
 import unicodedata
 
+from .sqlite_batch import SqliteBatchMixin, configure_connection
 from .store import ChunkRecord, Hit
 
 KEYWORDS_FILENAME = "keywords.sqlite"
@@ -77,12 +78,12 @@ def _match_query(query: str) -> str | None:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in unique)
 
 
-class KeywordIndex:
+class KeywordIndex(SqliteBatchMixin):
     def __init__(self, directory: Path):
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / KEYWORDS_FILENAME
         self._conn = sqlite3.connect(str(self.path), timeout=30)
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        configure_connection(self._conn)
         self._conn.executescript(_SCHEMA)
 
     def close(self) -> None:
@@ -100,6 +101,11 @@ class KeywordIndex:
         ).fetchone()
         return row is not None
 
+    def sources(self, collection: str) -> set[str]:
+        """collection の索引に入れたファイルの一覧（取り込みで has_source() をファイルごとに呼ばずに済むよう、まとめて読む）。"""
+        rows = self._conn.execute("SELECT source_path FROM keyword_sources WHERE collection = ?", (collection,))
+        return {r[0] for r in rows}
+
     def replace_source(
         self, collection: str, source_path: str, chunks: list[ChunkRecord], *, index_texts: list[str] | None = None
     ) -> None:
@@ -109,7 +115,7 @@ class KeywordIndex:
         （検索結果の text はチャンクの text のまま）。
         """
         texts = index_texts if index_texts is not None else [c.text for c in chunks]
-        with self._conn:
+        with self._transaction():
             self._delete_source(collection, source_path)
             self._conn.executemany(
                 "INSERT INTO keyword_chunks (tokens, collection, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
@@ -122,7 +128,7 @@ class KeywordIndex:
         self._conn.execute("DELETE FROM keyword_sources WHERE collection = ? AND source_path = ?", (collection, source_path))
 
     def delete_source(self, collection: str, source_path: str) -> None:
-        with self._conn:
+        with self._transaction():
             self._delete_source(collection, source_path)
 
     def drop_collection(self, collection: str) -> None:

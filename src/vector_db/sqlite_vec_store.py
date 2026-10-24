@@ -12,6 +12,7 @@ import sqlite3
 
 import sqlite_vec
 
+from .sqlite_batch import SqliteBatchMixin, configure_connection
 from .store import DISTANCE_METRICS, ChunkRecord, Hit, StoreError, distance_to_score
 
 VECTORS_FILENAME = "vectors.sqlite"
@@ -37,7 +38,7 @@ CREATE INDEX IF NOT EXISTS chunks_source ON chunks (collection_id, source_path);
 """
 
 
-class SqliteVecStore:
+class SqliteVecStore(SqliteBatchMixin):
     def __init__(self, directory: Path, *, distance: str = "Cosine"):
         if distance not in _METRICS:
             raise StoreError(f"sqlite-vec は距離関数 {distance} に対応していません（{'/'.join(_METRICS)} のいずれか）。")
@@ -52,7 +53,7 @@ class SqliteVecStore:
         except (AttributeError, sqlite3.OperationalError) as e:
             self._conn.close()
             raise StoreError(f"sqlite-vec を読み込めません（この Python の sqlite3 は拡張の読み込みに対応していない可能性があります）: {e}") from e
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        configure_connection(self._conn)
         self._conn.executescript(_SCHEMA)
         # 距離関数を選べるようになる前の DB（すべてコサイン距離で作っている）に列を足す。
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(vec_collections)")}
@@ -78,7 +79,7 @@ class SqliteVecStore:
                     f"コレクション {name} の距離関数（{existing[2]}）と [vector_db].distance（{self._distance}）が違います。再構築してください。"
                 )
             return
-        with self._conn:
+        with self._transaction():
             cur = self._conn.execute("INSERT INTO vec_collections (name, dim, distance) VALUES (?, ?, ?)", (name, dim, self._distance))
             self._conn.execute(
                 f"CREATE VIRTUAL TABLE vec_c{int(cur.lastrowid)} USING vec0(embedding float[{int(dim)}] distance_metric={_METRICS[self._distance]})"
@@ -98,16 +99,18 @@ class SqliteVecStore:
             self._conn.execute("DELETE FROM vec_collections WHERE id = ?", (cid,))
 
     def _delete_source(self, cid: int, source_path: str) -> None:
-        ids = [r[0] for r in self._conn.execute("SELECT id FROM chunks WHERE collection_id = ? AND source_path = ?", (cid, source_path))]
-        for chunk_id in ids:
-            self._conn.execute(f"DELETE FROM vec_c{cid} WHERE rowid = ?", (chunk_id,))
+        ids = self._conn.execute("SELECT id FROM chunks WHERE collection_id = ? AND source_path = ?", (cid, source_path)).fetchall()
+        if not ids:
+            return
+        # vec0 は rowid の一致（=）でしか索引を使わないため、IN でまとめず1件ずつ（executemany で）消す。
+        self._conn.executemany(f"DELETE FROM vec_c{cid} WHERE rowid = ?", ids)
         self._conn.execute("DELETE FROM chunks WHERE collection_id = ? AND source_path = ?", (cid, source_path))
 
     def delete_source(self, name: str, source_path: str) -> None:
         existing = self._collection(name)
         if existing is None:
             return
-        with self._conn:
+        with self._transaction():
             self._delete_source(existing[0], source_path)
 
     def replace_source(self, name: str, source_path: str, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
@@ -115,19 +118,30 @@ class SqliteVecStore:
         if existing is None:
             raise StoreError(f"コレクション {name} がありません。")
         cid, dim, _ = existing
-        with self._conn:
+        pairs = list(zip(chunks, vectors, strict=True))
+        for _chunk, vector in pairs:
+            if len(vector) != dim:
+                raise StoreError(f"埋め込みの次元（{len(vector)}）がコレクション {name} の次元（{dim}）と違います。")
+        with self._transaction():
             self._delete_source(cid, source_path)
-            for chunk, vector in zip(chunks, vectors, strict=True):
-                if len(vector) != dim:
-                    raise StoreError(f"埋め込みの次元（{len(vector)}）がコレクション {name} の次元（{dim}）と違います。")
-                cur = self._conn.execute(
-                    "INSERT INTO chunks (collection_id, source_path, locator, text) VALUES (?, ?, ?, ?)",
-                    (cid, source_path, chunk.locator, chunk.text),
-                )
-                self._conn.execute(
-                    f"INSERT INTO vec_c{cid} (rowid, embedding) VALUES (?, ?)",
-                    (cur.lastrowid, sqlite_vec.serialize_float32(vector)),
-                )
+            if not pairs:
+                return
+            # まとめて（executemany で）入れるため、chunks の ID を AUTOINCREMENT の続きから自分で振る
+            # （明示した ID は sqlite_sequence にも反映される）。読んでから入れるまでに他の接続が書き込まないよう、
+            # まだ書き込みのトランザクションを始めていなければここで始める。
+            if not self._conn.in_transaction:
+                self._conn.execute("BEGIN IMMEDIATE")
+            row = self._conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'chunks'").fetchone()
+            start = (row[0] if row else 0) + 1
+            ids = range(start, start + len(pairs))
+            self._conn.executemany(
+                "INSERT INTO chunks (id, collection_id, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
+                [(i, cid, source_path, chunk.locator, chunk.text) for i, (chunk, _v) in zip(ids, pairs)],
+            )
+            self._conn.executemany(
+                f"INSERT INTO vec_c{cid} (rowid, embedding) VALUES (?, ?)",
+                [(i, sqlite_vec.serialize_float32(vector)) for i, (_c, vector) in zip(ids, pairs)],
+            )
 
     def search(self, name: str, vector: list[float], top_k: int) -> list[Hit]:
         """Hit.score は、Cosine では 1 - コサイン距離（コサイン類似度）、Euclid・Manhattan では 1 / (1 + 距離)。"""

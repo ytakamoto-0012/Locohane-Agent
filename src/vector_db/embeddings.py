@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from array import array
 import base64
 from contextlib import contextmanager
 import logging
 import random
+import sys
 import threading
 import time
 from typing import Callable, Literal
@@ -32,6 +34,8 @@ _round_robin_counters: dict[tuple[str, ...], int] = {}
 # priority_failover で、エラーが返った接続先を後回しにする期限（base_url → time.monotonic()）。
 _failed_until: dict[str, float] = {}
 _FAILOVER_COOLDOWN_SECONDS = 60.0
+# encoding_format = base64 に対応していない（400・422 を返した）接続先の base_url。以後は float で受け取る。
+_float_only: set[str] = set()
 # 再試行を待つ間に should_stop() を確かめる間隔（秒）。
 _STOP_POLL_SECONDS = 0.5
 # 再試行の待ちに使う sleep（テストで差し替える）。
@@ -237,11 +241,7 @@ def _embed_batch(
         for endpoint in _endpoint_order(cfg, endpoints):
             url = endpoint.base_url.rstrip("/") + "/embeddings"
             try:
-                response = client.post(
-                    url,
-                    json={"model": endpoint.model, "input": batch},
-                    headers={"Authorization": f"Bearer {endpoint.api_key}"},
-                )
+                response = _post(cfg, client, endpoint, url, batch)
             except httpx.TransportError as e:
                 logger.warning("embeddings: %s に接続できません: %s", url, e)
                 errors.append(f"{url} に接続できません（{e}）")
@@ -272,6 +272,42 @@ def _embed_batch(
         _wait_retry(interval, should_stop)
 
 
+def _post(cfg: Config, client: httpx.Client, endpoint: LLMEndpoint, url: str, batch: list[str | dict]) -> httpx.Response:
+    """endpoint へ batch を送る。
+
+    [vector_db].embedding_encoding_format = base64 なら encoding_format を付けて送り、接続先が 400・422 を返したら
+    （encoding_format に対応していない）、その接続先を以後 float で受け取ることにして同じリクエストを送り直す。
+    """
+    headers = {"Authorization": f"Bearer {endpoint.api_key}"}
+    body: dict = {"model": endpoint.model, "input": batch}
+    if cfg.vector_db_embedding_encoding_format != "base64" or endpoint.base_url in _float_only:
+        return client.post(url, json=body, headers=headers)
+    response = client.post(url, json={**body, "encoding_format": "base64"}, headers=headers)
+    if response.status_code in (400, 422):
+        logger.warning(
+            "embeddings: %s が encoding_format=base64 を受け付けませんでした（HTTP %d）。以後この接続先は float で受け取ります: %s",
+            url,
+            response.status_code,
+            response.text[:300],
+        )
+        with _routing_lock:
+            _float_only.add(endpoint.base_url)
+        response = client.post(url, json=body, headers=headers)
+    return response
+
+
+def _decode_base64_vector(text: str) -> list[float]:
+    """encoding_format = base64 の埋め込み（リトルエンディアンの float32 の並び）をベクターにする。"""
+    raw = base64.b64decode(text)
+    if not raw or len(raw) % 4:
+        raise ValueError("base64 の長さが float32 の並びではありません")
+    values = array("f")
+    values.frombytes(raw)
+    if sys.byteorder != "little":
+        values.byteswap()
+    return values.tolist()
+
+
 def _parse_response(url: str, body: dict, expected: int) -> list[list[float]]:
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, list) or len(data) != expected:
@@ -280,8 +316,15 @@ def _parse_response(url: str, body: dict, expected: int) -> list[list[float]]:
     vectors = []
     for item in ordered:
         embedding = item.get("embedding")
+        if isinstance(embedding, str):
+            # encoding_format = base64 の応答（対応していない接続先は無視して数値の配列で返すため、どちらも受け付ける）。
+            try:
+                vectors.append(_decode_base64_vector(embedding))
+            except ValueError as e:
+                raise EmbeddingError(f"{url} の応答の base64 の埋め込みを読めません: {e}") from e
+            continue
         # llama-server は --pooling none のとき トークンごとのベクター（2次元）を返す。検索には使えない。
-        if not isinstance(embedding, list) or not embedding or isinstance(embedding[0], list):
+        if not isinstance(embedding, list) or not embedding or isinstance(embedding[0], (list, str)):
             raise EmbeddingError(f"{url} の応答が1次元のベクターではありません（llama-server は --pooling を none 以外にして起動してください）。")
-        vectors.append([float(x) for x in embedding])
+        vectors.append(list(map(float, embedding)))
     return vectors

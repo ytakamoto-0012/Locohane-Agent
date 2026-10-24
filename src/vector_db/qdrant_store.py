@@ -107,6 +107,14 @@ def shared_client(url: str, api_key: str, timeout: float) -> httpx.Client:
         return client
 
 
+def _delete_operation(source_path: str) -> dict:
+    return {"delete": {"filter": {"must": [{"key": "source_path", "match": {"value": source_path}}]}}}
+
+
+def _point_count(operation: dict) -> int:
+    return len(operation["upsert"]["points"]) if "upsert" in operation else 0
+
+
 def _collection_distance(info: dict) -> str | None:
     vectors = info.get("result", {}).get("config", {}).get("params", {}).get("vectors", {})
     return vectors.get("distance") if isinstance(vectors, dict) else None
@@ -138,6 +146,10 @@ class QdrantStore:
         self._preset = QDRANT_PRESETS.get(preset)
         # 検索したコレクションの距離関数（作ったときの設定。今の [vector_db].distance と違うことがある）。
         self._distances: dict[str, str | None] = {}
+        # begin_batch() から commit() までにためた更新（Qdrant 上のコレクション名 → points/batch の operations）。
+        self._batching = False
+        self._pending: dict[str, list[dict]] = {}
+        self._pending_points = 0
 
     def close(self) -> None:
         if self._owns_client:
@@ -201,19 +213,70 @@ class QdrantStore:
 
     def drop_collection(self, name: str) -> None:
         self._distances.pop(name, None)
+        self._pending.pop(self._name(name), None)
         self._request("DELETE", f"/collections/{self._name(name)}", allow_404=True)
 
-    def delete_source(self, name: str, source_path: str) -> None:
+    # --- 更新（削除・追加）は POST /collections/{name}/points/batch でまとめて送る ---
+
+    def begin_batch(self) -> None:
+        """以後の delete_source・replace_source を commit() までためて、まとめて送る（取り込み用）。
+
+        ためたポイントが _UPSERT_BATCH 件を超えたら commit() を待たずに送る。同じコレクションへの更新は
+        ためた順に送るため、削除と追加の順序は変わらない。
+        """
+        self._batching = True
+
+    def commit(self) -> None:
+        """ためた更新を送り、反映されるまで待つ（wait=true）。"""
+        pending, self._pending, self._pending_points = self._pending, {}, 0
+        for qname, operations in pending.items():
+            self._send_operations(qname, operations)
+
+    def rollback(self) -> None:
+        """まだ送っていない更新を捨てる（既に送った分は戻らない）。"""
+        self._pending, self._pending_points = {}, 0
+
+    def end_batch(self) -> None:
+        self.commit()
+        self._batching = False
+
+    def _queue(self, name: str, operations: list[dict]) -> None:
+        qname = self._name(name)
+        if not self._batching:
+            self._send_operations(qname, operations)
+            return
+        self._pending.setdefault(qname, []).extend(operations)
+        self._pending_points += sum(_point_count(op) for op in operations)
+        if self._pending_points >= _UPSERT_BATCH:
+            self.commit()
+
+    def _send_operations(self, qname: str, operations: list[dict]) -> None:
+        """operations を、1リクエストあたりのポイントが _UPSERT_BATCH 件程度になるよう分けて順に送る。
+
+        削除だけのリクエストはコレクションが無ければ何もしない（404 を無視する）。
+        """
+        group: list[dict] = []
+        count = 0
+        for op in operations:
+            n = _point_count(op)
+            if group and count + n > _UPSERT_BATCH:
+                self._send_batch(qname, group)
+                group, count = [], 0
+            group.append(op)
+            count += n
+        if group:
+            self._send_batch(qname, group)
+
+    def _send_batch(self, qname: str, operations: list[dict]) -> None:
+        only_deletes = all("delete" in op for op in operations)
         self._request(
-            "POST",
-            f"/collections/{self._name(name)}/points/delete",
-            allow_404=True,
-            params={"wait": "true"},
-            json={"filter": {"must": [{"key": "source_path", "match": {"value": source_path}}]}},
+            "POST", f"/collections/{qname}/points/batch", allow_404=only_deletes, params={"wait": "true"}, json={"operations": operations}
         )
 
+    def delete_source(self, name: str, source_path: str) -> None:
+        self._queue(name, [_delete_operation(source_path)])
+
     def replace_source(self, name: str, source_path: str, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
-        self.delete_source(name, source_path)
         points = [
             {
                 "id": str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")),
@@ -222,13 +285,9 @@ class QdrantStore:
             }
             for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True))
         ]
-        for start in range(0, len(points), _UPSERT_BATCH):
-            self._request(
-                "PUT",
-                f"/collections/{self._name(name)}/points",
-                params={"wait": "true"},
-                json={"points": points[start : start + _UPSERT_BATCH]},
-            )
+        operations = [_delete_operation(source_path)]
+        operations += [{"upsert": {"points": points[i : i + _UPSERT_BATCH]}} for i in range(0, len(points), _UPSERT_BATCH)]
+        self._queue(name, operations)
 
     def _search_distance(self, name: str) -> str | None:
         """コレクション name の距離関数（無ければ None）。同じストアでは1回だけ問い合わせる。"""

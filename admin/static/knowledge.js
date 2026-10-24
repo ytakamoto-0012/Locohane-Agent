@@ -95,7 +95,8 @@ function knowledgeScheduleCell(c, enabled) {
 
 function knowledgeJobCell(job, maxFileMb) {
   if (!job) return "-";
-  const label = KNOWLEDGE_JOB_LABELS[job.state] || job.state;
+  // 停止を求めた後は、処理中のファイルが終わるまで running のままのため「停止中」と出す。
+  const label = job.state === "running" && job.stop_requested ? "停止中" : KNOWLEDGE_JOB_LABELS[job.state] || job.state;
   const parts = [el("strong", { text: job.trigger === "schedule" ? `${label}（自動）` : label })];
   if (job.state === "running") {
     parts.push(knowledgeProgressBar(job.done, job.total));
@@ -123,6 +124,21 @@ function knowledgeJobCell(job, maxFileMb) {
       );
     }
   }
+  // ファイル数の上限超えも設定で対処できるため、上限の変え方まで出す（src/vector_db/ingest.py の _over_limit_hint と同じ内容）。
+  if (job.result && job.result.over_limit) {
+    const r = job.result;
+    parts.push(
+      el("div", {
+        class: "warn-box",
+        text:
+          `取り込み元に ${r.found_files} 件のファイルがあり、1コレクションの上限（config.ini [vector_db] max_files_per_collection = ${r.max_files}）を` +
+          `超えたため、${r.over_limit} 件は取り込んでいません（取り込み済みのファイルを優先し、残りはパス順の先頭から選んでいます）。` +
+          "config.ini タブ（「ベクターDB」プリセット）で max_files_per_collection を大きくしてから「取り込み（差分）」を実行し直すと取り込めます" +
+          "（取り込み中は対象のファイルの一覧をメモリーに持つため、管理ツールの PC のメモリーに注意してください）。" +
+          "コレクションを取り込み元のフォルダごとに分けることもできます。",
+      })
+    );
+  }
   if (job.error) parts.push(el("div", { class: "error", text: job.error }));
   if (job.finished_at) parts.push(el("div", { class: "hint", text: `終了 ${fmtTime(job.finished_at)}` }));
   return el("div", {}, parts);
@@ -143,14 +159,21 @@ function knowledgeActions(container, name, c, enabled) {
   const path = `/collections/${encodeURIComponent(c.name)}`;
   const buttons = [];
   if (running) {
-    buttons.push(
-      el("button", {
-        text: "停止",
-        onclick: async () => {
-          if (await knowledgeAction(() => api(knowledgePath(name, `${path}/stop`), { method: "POST" }))) renderKnowledgePanel(container, name);
-        },
-      })
-    );
+    // 停止はすぐには効かない（処理中のファイルの埋め込みを待つ）ため、押したらその場で「停止中…」にして押せなくする。
+    const stopBtn = el("button", {
+      text: c.job.stop_requested ? "停止中…" : "停止",
+      onclick: async () => {
+        stopBtn.disabled = true;
+        stopBtn.textContent = "停止中…";
+        if (await knowledgeAction(() => api(knowledgePath(name, `${path}/stop`), { method: "POST" }))) renderKnowledgePanel(container, name);
+        else {
+          stopBtn.disabled = false;
+          stopBtn.textContent = "停止";
+        }
+      },
+    });
+    stopBtn.disabled = !!c.job.stop_requested;
+    buttons.push(stopBtn);
   } else {
     const ingest = (rebuild) => async () => {
       if (rebuild && !confirm(`${c.name} のベクターをすべて消して、全ファイルを取り込み直します。よろしいですか？（埋め込みモデルを変えたときに必要です）`)) return;

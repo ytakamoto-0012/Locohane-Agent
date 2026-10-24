@@ -8,9 +8,15 @@ skills/ 配下の読み取りスクリプト（read_pdf.py 等）は CLI とし�
 from __future__ import annotations
 
 from dataclasses import dataclass
+import io
 from pathlib import Path
+import threading
 
 SUPPORTED_EXTENSIONS = (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".md", ".txt", ".csv")
+
+# PDFium（pypdfium2）は同じプロセスの複数スレッドからの同時呼び出しに対応していないため、PDF の本文の抽出と
+# ページの画像化（render.py）はこのロックで1つずつ行う（子プロセス（[vector_db].ingest_processes）同士は並列に動く）。
+PDFIUM_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -30,24 +36,27 @@ class ExtractError(Exception):
     """対応していない形式、またはファイルを読めなかった。"""
 
 
-def extract_segments(path: Path) -> list[Segment]:
+def extract_segments(path: Path, data: bytes | None = None) -> list[Segment]:
     """拡張子に応じてテキストを取り出す。本文が空の区切りは含めない。
+
+    data にファイルの中身を渡すと、ファイルを読み直さずにそれを使う（取り込みで SHA-256 の計算と読み取りを1回にするため）。
 
     Raises:
         ExtractError: 対応していない拡張子、またはファイルを読めなかった場合。
     """
     ext = path.suffix.lower()
     try:
+        source = str(path) if data is None else io.BytesIO(data)
         if ext == ".pdf":
-            segments = _extract_pdf(path)
+            segments = _extract_pdf(str(path) if data is None else data)
         elif ext == ".docx":
-            segments = _extract_docx(path)
+            segments = _extract_docx(source)
         elif ext in (".xlsx", ".xlsm"):
-            segments = _extract_xlsx(path)
+            segments = _extract_xlsx(source)
         elif ext == ".pptx":
-            segments = _extract_pptx(path)
+            segments = _extract_pptx(source)
         elif ext in (".md", ".txt", ".csv"):
-            segments = [Segment("", _read_text(path))]
+            segments = [Segment("", _decode_text(path.read_bytes() if data is None else data))]
         else:
             raise ExtractError(f"対応していない形式です: {ext}")
     except ExtractError:
@@ -57,9 +66,8 @@ def extract_segments(path: Path) -> list[Segment]:
     return [s for s in segments if s.text.strip()]
 
 
-def _read_text(path: Path) -> str:
+def _decode_text(data: bytes) -> str:
     """UTF-8（BOM 付き含む）で読み、失敗したら CP932 で読む。"""
-    data = path.read_bytes()
     for encoding in ("utf-8-sig", "cp932"):
         try:
             return data.decode(encoding)
@@ -68,22 +76,41 @@ def _read_text(path: Path) -> str:
     return data.decode("utf-8", errors="replace")
 
 
-def _extract_pdf(path: Path) -> list[Segment]:
-    from pypdf import PdfReader
+def _extract_pdf(source: str | bytes) -> list[Segment]:
+    """PDF のページごとの文字（PDFium は C の実装で、pypdf より大幅に速い）。
 
-    reader = PdfReader(str(path))
-    if reader.is_encrypted:
-        reader.decrypt("")
-    segments = []
-    for i, page in enumerate(reader.pages, start=1):
-        segments.append(Segment(f"p.{i}", page.extract_text() or ""))
-    return segments
+    空のパスワードで開ける暗号化 PDF（閲覧の制限だけのもの）はそのまま読める。
+    """
+    import pypdfium2 as pdfium
+
+    with PDFIUM_LOCK:
+        pdf = pdfium.PdfDocument(source)
+        try:
+            segments = []
+            for i in range(len(pdf)):
+                page = pdf[i]
+                try:
+                    textpage = page.get_textpage()
+                    try:
+                        text = textpage.get_text_bounded() or ""
+                    finally:
+                        textpage.close()
+                finally:
+                    page.close()
+                segments.append(Segment(f"p.{i + 1}", normalize_newlines(text)))
+            return segments
+        finally:
+            pdf.close()
 
 
-def _extract_docx(path: Path) -> list[Segment]:
+def normalize_newlines(text: str) -> str:
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
+def _extract_docx(source) -> list[Segment]:
     import docx
 
-    document = docx.Document(str(path))
+    document = docx.Document(source)
     lines = [p.text for p in document.paragraphs]
     for table in document.tables:
         for row in table.rows:
@@ -91,10 +118,10 @@ def _extract_docx(path: Path) -> list[Segment]:
     return [Segment("", "\n".join(lines))]
 
 
-def _extract_xlsx(path: Path) -> list[Segment]:
+def _extract_xlsx(source) -> list[Segment]:
     import openpyxl
 
-    workbook = openpyxl.load_workbook(str(path), read_only=True, data_only=True)
+    workbook = openpyxl.load_workbook(source, read_only=True, data_only=True)
     try:
         segments = []
         for sheet in workbook.worksheets:
@@ -109,10 +136,10 @@ def _extract_xlsx(path: Path) -> list[Segment]:
         workbook.close()
 
 
-def _extract_pptx(path: Path) -> list[Segment]:
+def _extract_pptx(source) -> list[Segment]:
     from pptx import Presentation
 
-    presentation = Presentation(str(path))
+    presentation = Presentation(source)
     segments = []
     for i, slide in enumerate(presentation.slides, start=1):
         lines = []

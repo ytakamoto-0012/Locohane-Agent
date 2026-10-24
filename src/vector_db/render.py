@@ -19,7 +19,7 @@ import tempfile
 import threading
 from typing import Callable
 
-from .extract import ExtractError
+from .extract import PDFIUM_LOCK, ExtractError, normalize_newlines
 
 # ページごとに画像にする文書の形式。
 PAGE_EXTENSIONS = (".pdf", ".docx", ".pptx", ".xlsx", ".xlsm")
@@ -33,9 +33,9 @@ _MULTI_PAGE_IMAGE_EXTENSIONS = (".tif", ".tiff")
 # A4 の長辺（インチ）。画像ファイルは、A4 の文書を image_dpi で画像化したときの長辺まで縮小する。
 _A4_LONG_SIDE_INCHES = 297 / 25.4
 
-# PDFium は複数スレッドからの同時呼び出しに対応していないため、取り込みを並列にしても
-# （[vector_db].ingest_workers）PDF の画像化は1つずつ行う。
-_PDFIUM_LOCK = threading.Lock()
+# 画像の PNG の圧縮レベル（0〜9）。埋め込みサーバーで展開されるだけで画質は変わらないため、
+# サイズより速さを優先する（既定の 6 より大幅に速い）。
+_PNG_COMPRESS_LEVEL = 1
 
 _PROG_ID = {
     ".docx": "Word.Application",
@@ -95,7 +95,7 @@ def render_pages(path: Path, dpi: int) -> list[PageImage]:
 def _render_pdf(pdf_path: Path, dpi: int, locate: Locate) -> list[PageImage]:
     import pypdfium2 as pdfium
 
-    with _PDFIUM_LOCK:
+    with PDFIUM_LOCK:
         pdf = pdfium.PdfDocument(str(pdf_path))
         try:
             total = len(pdf)
@@ -105,10 +105,10 @@ def _render_pdf(pdf_path: Path, dpi: int, locate: Locate) -> list[PageImage]:
                 try:
                     text = page.get_textpage().get_text_bounded() or ""
                     buffer = io.BytesIO()
-                    page.render(scale=dpi / 72).to_pil().save(buffer, format="PNG")
+                    page.render(scale=dpi / 72).to_pil().save(buffer, format="PNG", compress_level=_PNG_COMPRESS_LEVEL)
                 finally:
                     page.close()
-                pages.append(PageImage(locate(i + 1, total), _normalize_newlines(text), buffer.getvalue()))
+                pages.append(PageImage(locate(i + 1, total), normalize_newlines(text), buffer.getvalue()))
             return pages
         finally:
             pdf.close()
@@ -146,12 +146,8 @@ def _to_png(img, max_long_side: int) -> bytes:
         img = img.copy()
         img.thumbnail((max_long_side, max_long_side), Image.Resampling.LANCZOS)
     buffer = io.BytesIO()
-    img.save(buffer, format="PNG")
+    img.save(buffer, format="PNG", compress_level=_PNG_COMPRESS_LEVEL)
     return buffer.getvalue()
-
-
-def _normalize_newlines(text: str) -> str:
-    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _page_locator(page: int, total: int) -> str:
@@ -163,28 +159,104 @@ def _sheet_locator(sheet: str) -> Locate:
     return lambda page, total: f"シート: {sheet}" if total == 1 else f"シート: {sheet} p.{page}"
 
 
+# Office のアプリ（Word / PowerPoint / Excel）をスレッドごとに起動したまま使い回すための状態。
+# 1ファイルごとに起動・終了すると、それだけで数秒かかる。COM のオブジェクトは作ったスレッドでしか使えないため、
+# スレッドごとに持つ。keep_office_apps() を呼んだスレッドだけ使い回し、それ以外は従来どおり毎回終了する。
+_office = threading.local()
+
+
+def keep_office_apps() -> None:
+    """このスレッドで起動した Office のアプリを、close_office_apps() を呼ぶまで終了せずに使い回す。"""
+    _office.keep = True
+
+
+def close_office_apps() -> None:
+    """このスレッドで起動したままの Office のアプリを終了する（無ければ何もしない）。"""
+    apps = getattr(_office, "apps", None)
+    _office.keep = False
+    if apps is None:
+        return
+    import pythoncom
+
+    for app in apps.values():
+        _quit(app)
+    _office.apps = None
+    pythoncom.CoUninitialize()
+
+
+def _quit(app) -> None:
+    try:
+        app.Quit()
+    except Exception:  # noqa: BLE001 - 既に終了している等
+        pass
+
+
+def _office_app(prog_id: str):
+    """prog_id の Office のアプリ（このスレッドで起動済みならそれ）と、新しく起動したかを返す。"""
+    import pythoncom
+    import win32com.client as win32
+
+    apps = getattr(_office, "apps", None)
+    if apps is None:
+        pythoncom.CoInitialize()
+        apps = _office.apps = {}
+    app = apps.get(prog_id)
+    if app is not None:
+        return app, False
+    app = win32.DispatchEx(prog_id)
+    apps[prog_id] = app
+    # PowerPoint は Application.Visible = False の設定自体が COM エラーになる（Open(WithWindow=False) で隠す）。
+    if prog_id != "PowerPoint.Application":
+        app.Visible = False
+    app.DisplayAlerts = 0
+    return app, True
+
+
+def _release_office_app(prog_id: str, *, broken: bool) -> None:
+    """使い回さない（keep_office_apps() を呼んでいない）か、エラーで状態が分からなくなったアプリを終了する。"""
+    apps = getattr(_office, "apps", None)
+    if apps is None:
+        return
+    if prog_id in apps and (broken or not getattr(_office, "keep", False)):
+        _quit(apps.pop(prog_id))
+    if not apps and not getattr(_office, "keep", False):
+        import pythoncom
+
+        _office.apps = None
+        pythoncom.CoUninitialize()
+
+
 def _export_office_to_pdf(path: Path, out_dir: Path) -> list[tuple[Path, Locate]]:
     """Office ファイルを COM で PDF に書き出し、(PDF パス, ページ位置の付け方) のリストを返す。
 
     Excel は可視シートごとに、render 系スキルと同じく横1×縦1ページのフィット印刷にして
     1シート=1PDF で書き出す（印刷設定の変更は保存しない）。PowerPoint は非表示スライドを
     PDF に含めないため、ページ番号を表示スライドの番号へ対応させる。
-    """
-    import pythoncom
-    import win32com.client as win32
 
+    使い回しているアプリでエラーになったら（利用者が閉じた・応答しなくなった等）、そのアプリを終了し、
+    新しく起動して1回だけやり直す。
+    """
+    prog_id = _PROG_ID[path.suffix.lower()]
+    while True:
+        fresh = True
+        try:
+            app, fresh = _office_app(prog_id)
+            entries = _export_with(app, path, out_dir)
+        except Exception:
+            _release_office_app(prog_id, broken=True)
+            if fresh:
+                raise
+            continue
+        _release_office_app(prog_id, broken=False)
+        return entries
+
+
+def _export_with(app, path: Path, out_dir: Path) -> list[tuple[Path, Locate]]:
+    """起動済みの app で path を PDF に書き出す（_export_office_to_pdf 参照）。開いた文書は閉じ、アプリは終了しない。"""
     ext = path.suffix.lower()
     abs_path = os.path.abspath(path)
-    pythoncom.CoInitialize()
-    app = None
     doc = None
     try:
-        app = win32.DispatchEx(_PROG_ID[ext])
-        # PowerPoint は Application.Visible = False の設定自体が COM エラーになる（Open(WithWindow=False) で隠す）。
-        if ext != ".pptx":
-            app.Visible = False
-        app.DisplayAlerts = 0
-
         if ext == ".docx":
             pdf_path = out_dir / "document.pdf"
             doc = app.Documents.Open(abs_path, ReadOnly=True, AddToRecentFiles=False)
@@ -226,9 +298,3 @@ def _export_office_to_pdf(path: Path, out_dir: Path) -> list[tuple[Path, Locate]
                     doc.Close(SaveChanges=False)
             except Exception:  # noqa: BLE001
                 pass
-        if app is not None:
-            try:
-                app.Quit()
-            except Exception:  # noqa: BLE001
-                pass
-        pythoncom.CoUninitialize()

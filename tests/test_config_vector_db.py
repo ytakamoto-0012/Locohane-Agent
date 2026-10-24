@@ -185,3 +185,25 @@ def test_ingest_workers_default_and_validation(tmp_path):
     assert _load(tmp_path, {"ingest_workers": "4"}).vector_db_ingest_workers == 4
     with pytest.raises(ValueError, match="ingest_workers"):
         _load(tmp_path, {"ingest_workers": "0"})
+
+
+def test_embedding_encoding_format_and_ingest_processes(tmp_path):
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert (cfg.vector_db_embedding_encoding_format, cfg.vector_db_ingest_processes) == ("base64", 0)
+    cfg = _load(tmp_path, {"embedding_encoding_format": "FLOAT", "ingest_processes": "4"})
+    assert (cfg.vector_db_embedding_encoding_format, cfg.vector_db_ingest_processes) == ("float", 4)
+    with pytest.raises(ValueError, match="embedding_encoding_format"):
+        _load(tmp_path, {"embedding_encoding_format": "binary"})
+    with pytest.raises(ValueError, match="ingest_processes"):
+        _load(tmp_path, {"ingest_processes": "-1"})
+
+
+def test_scan_workers_and_max_files_per_collection(tmp_path):
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert (cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection) == (8, 1000000)
+    cfg = _load(tmp_path, {"scan_workers": "16", "max_files_per_collection": "5000"})
+    assert (cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection) == (16, 5000)
+    with pytest.raises(ValueError, match="scan_workers"):
+        _load(tmp_path, {"scan_workers": "0"})
+    with pytest.raises(ValueError, match="max_files_per_collection"):
+        _load(tmp_path, {"max_files_per_collection": "0"})

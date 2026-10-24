@@ -9,14 +9,18 @@
 from __future__ import annotations
 
 import argparse
-from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from collections import deque
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 import hashlib
+import heapq
 import logging
 import os
 import stat
 from pathlib import Path
-from typing import Callable
+import threading
+import time
+from typing import Callable, Collection
 
 import httpx
 
@@ -26,7 +30,7 @@ from .chunking import split_text
 from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_model, open_client
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
 from .keyword_index import KeywordIndex, open_keyword_index
-from .render import IMAGE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, PageImage, render_pages
+from .render import IMAGE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, PageImage, close_office_apps, keep_office_apps, render_pages
 from .store import ChunkRecord, image_collection_name, open_store, path_collection_name, storage_collection_names
 
 logger = logging.getLogger(__name__)
@@ -49,6 +53,10 @@ class IngestResult:
     failed: list[tuple[str, str]] = field(default_factory=list)
     # failed のうち [vector_db].max_file_mb を超えて取り込まなかったファイルの数（設定で対処できることを画面に出すため）。
     too_large: int = 0
+    # [vector_db].max_files_per_collection を超えたため取り込まなかったファイルの数と、そのときの上限・見つかったファイル数。
+    over_limit: int = 0
+    max_files: int = 0
+    found_files: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -59,7 +67,22 @@ class IngestResult:
             "chunks": self.chunks,
             "failed": [{"path": p, "reason": r} for p, r in self.failed],
             "too_large": self.too_large,
+            "over_limit": self.over_limit,
+            "max_files": self.max_files,
+            "found_files": self.found_files,
         }
+
+
+def _over_limit_hint(result: IngestResult) -> str:
+    """ファイル数の上限を超えたときの説明（CLI の表示用。画面は admin/static/knowledge.js が同じ内容を出す）。"""
+    return (
+        f"取り込み元に {result.found_files} 件のファイルがあり、1コレクションの上限（config.ini [vector_db] "
+        f"max_files_per_collection = {result.max_files}）を超えたため、{result.over_limit} 件は取り込んでいません"
+        "（取り込み済みのファイルを優先し、残りはパス順の先頭から選んでいます）。"
+        "config.ini [vector_db] max_files_per_collection を大きくしてから取り込み（差分）を実行し直すと取り込めます"
+        "（取り込み中は対象のファイルの一覧をメモリーに持つため、メモリーに注意してください）。"
+        "コレクションを取り込み元のフォルダごとに分けることもできます。"
+    )
 
 
 def _too_large_hint(cfg: Config, count: int) -> str:
@@ -70,12 +93,12 @@ def _too_large_hint(cfg: Config, count: int) -> str:
     )
 
 
-def _is_hidden(path: Path) -> bool:
-    """名前が "." で始まる、または Windows の隠し属性が付いているか。"""
+def _is_hidden(path: Path, st: os.stat_result | None = None) -> bool:
+    """名前が "." で始まる、または Windows の隠し属性が付いているか（st があればそれの属性を見る）。"""
     if path.name.startswith("."):
         return True
     try:
-        return bool(getattr(path.stat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_HIDDEN)
+        return bool(getattr(st or path.stat(), "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_HIDDEN)
     except OSError:
         return False
 
@@ -89,33 +112,143 @@ def effective_extensions(extensions: tuple[str, ...], image_input: bool) -> tupl
     return tuple(e for e in extensions if e in supported)
 
 
-def list_source_files(folder: Path, recursive: bool, extensions: tuple[str, ...], image_input: bool = False) -> list[Path]:
-    """取り込み対象のファイルをパス順に返す（Office の一時ファイル ~$*.docx 等と、隠しファイル・隠しフォルダ配下は除く）。
+@dataclass
+class ScanResult:
+    """scan_source_files() の結果。
+
+    files: 取り込むファイルとその stat（パス順。max_files を超えたら選んだ分だけ）。
+    total: 見つかった取り込み対象のファイルの数（max_files を超えた分も数える）。
+    found_known: 見つかったファイルのうち、known に含まれていたもののパス（選ばれなかったものも含む。
+        取り込み済みのファイルが消えたかの判定に使う）。
+    """
+
+    files: list[tuple[Path, os.stat_result]]
+    total: int
+    found_known: set[str]
+
+    @property
+    def over_limit(self) -> int:
+        """max_files を超えたため取り込まないファイルの数。"""
+        return self.total - len(self.files)
+
+
+class _Descending:
+    """heapq（小さい順）で「パス順で後ろのもの」を先頭にするためのキー（パス順で先頭の N 件を残すのに使う）。"""
+
+    __slots__ = ("key",)
+
+    def __init__(self, key: str):
+        self.key = key
+
+    def __lt__(self, other: "_Descending") -> bool:
+        return self.key > other.key
+
+
+def _read_directory(directory: Path, recursive: bool, allowed: set[str]) -> tuple[list[tuple[Path, os.stat_result]], list[Path]]:
+    """directory 直下の取り込み対象のファイルと、たどるサブフォルダを返す（読めなければ空）。"""
+    try:
+        entries = list(os.scandir(directory))
+    except OSError as e:
+        logger.warning("vector_db ingest: フォルダを読めません: %s: %s", directory, e)
+        return [], []
+    files: list[tuple[Path, os.stat_result]] = []
+    subdirectories: list[Path] = []
+    for entry in entries:
+        path = Path(entry.path)
+        try:
+            is_dir = entry.is_dir()
+            st = entry.stat()
+        except OSError:
+            continue
+        if is_dir:
+            if recursive and not _is_hidden(path, st):
+                subdirectories.append(path)
+        elif path.suffix.lower() in allowed and not entry.name.startswith("~$") and not _is_hidden(path, st):
+            files.append((path, st))
+    return files, subdirectories
+
+
+def scan_source_files(
+    folder: Path,
+    recursive: bool,
+    extensions: tuple[str, ...],
+    image_input: bool = False,
+    *,
+    workers: int = 1,
+    max_files: int | None = None,
+    known: Collection[str] = (),
+) -> ScanResult:
+    """取り込み対象のファイルとその stat を探す（Office の一時ファイル ~$*.docx 等と、隠しファイル・隠しフォルダ配下は除く）。
 
     取り込み元フォルダ自身が隠しフォルダでも対象にする（判定は取り込み元より下の名前だけ）。
-    拡張子は effective_extensions() で絞る。
+    拡張子は effective_extensions() で絞る。stat は os.scandir() のもの（Windows ではフォルダを読むときに
+    サイズ・更新日時・属性も得られるため、ファイルごとに問い合わせずに済む）。
+
+    workers が 2 以上なら、その数のスレッドで複数のフォルダを同時に読む（ファイルサーバー上のフォルダでは
+    フォルダを読む往復の待ち時間が大半を占めるため、並列にすると速い）。
+
+    max_files を超えるファイルがあれば、取り込みのたびに選ぶファイルが入れ替わらないよう、known（取り込み済み）の
+    ファイルを優先し、残りの枠を新しいファイルのパス順の先頭から埋める。メモリーに持つのは高々 max_files の
+    2倍程度のファイルまで。
     """
     allowed = set(effective_extensions(extensions, image_input))
-    files: list[Path] = []
-    for root, dirs, names in os.walk(folder):
-        root_path = Path(root)
-        if recursive:
-            dirs[:] = [d for d in dirs if not _is_hidden(root_path / d)]
-        else:
-            dirs[:] = []
-        for name in names:
-            path = root_path / name
-            if path.suffix.lower() in allowed and not name.startswith("~$") and not _is_hidden(path):
-                files.append(path)
-    return sorted(files, key=lambda p: str(p).lower())
+    known_files: list[tuple[str, Path, os.stat_result]] = []
+    found_known: set[str] = set()
+    # known に無いファイル。max_files があればパス順で先頭の max_files 件だけを残す（ヒープの先頭がパス順で最後のもの）。
+    new_files: list[tuple[_Descending, Path, os.stat_result]] = []
+    total = 0
+
+    def collect(found: list[tuple[Path, os.stat_result]]) -> None:
+        nonlocal total
+        for path, st in found:
+            total += 1
+            source = str(path)
+            if source in known:
+                found_known.add(source)
+                known_files.append((source.lower(), path, st))
+                continue
+            item = (_Descending(source.lower()), path, st)
+            if max_files is None or len(new_files) < max_files:
+                heapq.heappush(new_files, item)
+            elif new_files[0][0] < item[0]:
+                # パス順で今残しているものの最後より前なら入れ替える。
+                heapq.heapreplace(new_files, item)
+
+    if workers <= 1:
+        directories = [folder]
+        while directories:
+            found, subdirectories = _read_directory(directories.pop(), recursive, allowed)
+            collect(found)
+            directories.extend(subdirectories)
+    else:
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vector_db_scan") as pool:
+            running = {pool.submit(_read_directory, folder, recursive, allowed)}
+            try:
+                while running:
+                    done, running = wait(running, return_when=FIRST_COMPLETED)
+                    for future in done:
+                        found, subdirectories = future.result()
+                        collect(found)
+                        running |= {pool.submit(_read_directory, d, recursive, allowed) for d in subdirectories}
+            except BaseException:
+                for future in running:
+                    future.cancel()
+                raise
+
+    known_files.sort(key=lambda item: item[0])
+    selected = [(path, st) for _key, path, st in known_files]
+    new_sorted = sorted(((item[0].key, item[1], item[2]) for item in new_files), key=lambda item: item[0])
+    if max_files is not None:
+        selected = selected[:max_files]
+        new_sorted = new_sorted[: max_files - len(selected)]
+    selected += [(path, st) for _key, path, st in new_sorted]
+    selected.sort(key=lambda item: str(item[0]).lower())
+    return ScanResult(selected, total, found_known)
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+def list_source_files(folder: Path, recursive: bool, extensions: tuple[str, ...], image_input: bool = False) -> list[Path]:
+    """scan_source_files() のファイルのパスだけを返す。"""
+    return [path for path, _st in scan_source_files(folder, recursive, extensions, image_input).files]
 
 
 def file_mode(cfg: Config, path: Path) -> str:
@@ -124,7 +257,7 @@ def file_mode(cfg: Config, path: Path) -> str:
     [vector_db].image_input = true で画像化に対応した形式なら "text+image"（本文のチャンクに加えて
     ページ画像も埋め込む。画像ファイルは本文が無いため画像だけ）、それ以外は "text"。
     """
-    return "text+image" if cfg.vector_db_image_input and path.suffix.lower() in IMAGE_EXTENSIONS else "text"
+    return _file_mode(_LoadOptions.from_config(cfg), path)
 
 
 def _page_chunk_text(cfg: Config, path: Path, page: PageImage) -> str:
@@ -146,16 +279,6 @@ def relative_path_text(folder: Path, path: Path) -> str:
         return path.relative_to(folder).as_posix()
     except ValueError:
         return path.as_posix()
-
-
-def _chunk_file(cfg: Config, path: Path) -> list[ChunkRecord]:
-    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
-        return []  # 画像ファイルには本文が無い
-    chunks = []
-    for segment in extract_segments(path):
-        for text in split_text(segment.text, cfg.vector_db_chunk_size, cfg.vector_db_chunk_overlap):
-            chunks.append(ChunkRecord(locator=segment.locator, text=text))
-    return chunks
 
 
 def ingest_collection(
@@ -243,13 +366,13 @@ def ingest_collection(
 
 @dataclass
 class _Prepared:
-    """1ファイル分の、DB へ書き込む前までの処理結果（ワーカースレッドで作り、メインスレッドで書き込む）。
+    """1ファイル分の、DB へ書き込む前までの処理結果（_load() で作り、埋め込みを足してメインスレッドで書き込む）。
 
     kind:
         "unchanged" - 埋め込み直さない（keyword_chunks があればキーワード索引だけ埋める）。
         "touch"     - 内容（SHA-256）は同じで、サイズ・更新日時の記録だけ更新する。
         "failed"    - 取り込めなかった（reason に理由。too_large なら上限サイズ超え）。
-        "embed"     - chunks・pages を埋め込んだ（vectors・image_vectors）。
+        "embed"     - chunks・pages を埋め込む（vectors・image_vectors）。
 
     path_vector はファイルパス（path_text）のベクター。"embed" では常に、"unchanged"・"touch" では
     パスのベクターがまだ無いファイル（FileRecord.path_indexed = False）だけ埋め込む。
@@ -271,61 +394,98 @@ class _Prepared:
     path_text: str = ""
     path_vector: list[float] | None = None
 
+    def texts_to_embed(self) -> list[str]:
+        """埋め込むテキスト（本文のチャンク、続けてファイルパス）。"""
+        if self.kind == "embed":
+            return [c.text for c in self.chunks] + [self.path_text]
+        if self.kind in ("unchanged", "touch") and not (self.record is not None and self.record.path_indexed):
+            # パスのベクターの導入前に取り込んだファイルは、内容を埋め込み直さずにパスだけを埋め込む。
+            return [self.path_text]
+        return []
 
-def _keyword_chunks(cfg: Config, path: Path, needs_keywords: bool) -> list[ChunkRecord] | None:
+    def set_vectors(self, text_vectors: list[list[float]], image_vectors: list[list[float]]) -> None:
+        """texts_to_embed()・pages の順の埋め込みを受け取る。"""
+        if self.kind == "embed":
+            self.vectors, self.path_vector = text_vectors[:-1], text_vectors[-1]
+            self.image_vectors = image_vectors
+        elif text_vectors:
+            self.path_vector = text_vectors[0]
+
+
+@dataclass(frozen=True)
+class _LoadOptions:
+    """_load() に渡す設定（子プロセス（[vector_db].ingest_processes）へ送るため、Config ではなく必要な値だけを持つ）。"""
+
+    chunk_size: int
+    chunk_overlap: int
+    image_input: bool
+    image_dpi: int
+    max_file_mb: float
+
+    @classmethod
+    def from_config(cls, cfg: Config) -> "_LoadOptions":
+        return cls(cfg.vector_db_chunk_size, cfg.vector_db_chunk_overlap, cfg.vector_db_image_input, cfg.vector_db_image_dpi, cfg.vector_db_max_file_mb)
+
+    @property
+    def max_bytes(self) -> int:
+        return int(self.max_file_mb * 1024 * 1024)
+
+
+def _file_mode(options: _LoadOptions, path: Path) -> str:
+    return "text+image" if options.image_input and path.suffix.lower() in IMAGE_EXTENSIONS else "text"
+
+
+def _chunk_segments(options: _LoadOptions, path: Path, data: bytes | None = None) -> list[ChunkRecord]:
+    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+        return []  # 画像ファイルには本文が無い
+    chunks = []
+    for segment in extract_segments(path, data):
+        for text in split_text(segment.text, options.chunk_size, options.chunk_overlap):
+            chunks.append(ChunkRecord(locator=segment.locator, text=text))
+    return chunks
+
+
+def _keyword_chunks(options: _LoadOptions, path: Path, needs_keywords: bool) -> list[ChunkRecord] | None:
     """埋め込み直さないファイルがキーワード索引に無ければ（索引の導入前に取り込んだもの）、索引に入れる本文を返す。"""
     if not needs_keywords:
         return None
     try:
-        return _chunk_file(cfg, path)
+        return _chunk_segments(options, path)
     except (OSError, ExtractError):
         return []
 
 
-def _prepare(
-    cfg: Config,
-    folder: Path,
-    path: Path,
-    record: FileRecord | None,
-    needs_keywords: bool,
-    max_bytes: int,
-    embedding_client: httpx.Client,
-    should_stop: Callable[[], bool] | None = None,
-) -> _Prepared:
-    """path を読み、必要なら本文の抽出・ページの画像化・埋め込みまで行う（DB には触れない。ワーカースレッドで動く）。
+def _is_unchanged(record: FileRecord | None, mode: str, st: os.stat_result) -> bool:
+    return record is not None and record.mode == mode and record.size == st.st_size and record.mtime == st.st_mtime
 
-    読めないファイルは kind="failed" で返す。埋め込みサーバーに接続できない等の全体に関わるエラーは例外のまま投げる
-    （再試行を待つ間に should_stop() が True になったら EmbeddingStopped）。
+
+def _load(
+    options: _LoadOptions, folder: Path, path: Path, st: os.stat_result, record: FileRecord | None, needs_keywords: bool
+) -> _Prepared:
+    """path を読み、必要なら本文の抽出・ページの画像化まで行う（埋め込みと DB への書き込みはしない）。
+
+    ワーカースレッドか子プロセス（[vector_db].ingest_processes）で動く。読めないファイルは kind="failed" で返す。
     """
     # image_input を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
-    mode = file_mode(cfg, path)
+    mode = _file_mode(options, path)
     path_text = relative_path_text(folder, path)
-
-    def path_only() -> list[float] | None:
-        # パスのベクターの導入前に取り込んだファイルは、内容を埋め込み直さずにパスだけを埋め込む。
-        if record is not None and record.path_indexed:
-            return None
-        return embed_texts(cfg, [path_text], kind="document", client=embedding_client, should_stop=should_stop)[0]
-
+    if _is_unchanged(record, mode, st):
+        return _Prepared(path, record, mode, "unchanged", keyword_chunks=_keyword_chunks(options, path, needs_keywords), path_text=path_text)
+    if st.st_size > options.max_bytes:
+        reason = f"ファイルサイズが上限（{options.max_file_mb}MB）を超えています"
+        return _Prepared(path, record, mode, "failed", reason=reason, too_large=True)
     try:
-        st = path.stat()
-        same_mode = record is not None and record.mode == mode
-        if same_mode and record.size == st.st_size and record.mtime == st.st_mtime:
+        # SHA-256 の計算と本文の抽出で同じファイルを2回読まないよう、中身を1回だけ読む（上限サイズ以下のため）。
+        data = path.read_bytes()
+        sha = hashlib.sha256(data).hexdigest()
+        if record is not None and record.mode == mode and record.sha256 == sha:
             return _Prepared(
-                path, record, mode, "unchanged", keyword_chunks=_keyword_chunks(cfg, path, needs_keywords),
-                path_text=path_text, path_vector=path_only(),
+                path, record, mode, "touch", stat=st, sha=sha, keyword_chunks=_keyword_chunks(options, path, needs_keywords),
+                path_text=path_text,
             )
-        if st.st_size > max_bytes:
-            reason = f"ファイルサイズが上限（{cfg.vector_db_max_file_mb}MB）を超えています"
-            return _Prepared(path, record, mode, "failed", reason=reason, too_large=True)
-        sha = _sha256(path)
-        if same_mode and record.sha256 == sha:
-            return _Prepared(
-                path, record, mode, "touch", stat=st, sha=sha, keyword_chunks=_keyword_chunks(cfg, path, needs_keywords),
-                path_text=path_text, path_vector=path_only(),
-            )
-        chunks = _chunk_file(cfg, path)
-        pages = render_pages(path, cfg.vector_db_image_dpi) if mode == "text+image" else []
+        chunks = _chunk_segments(options, path, data)
+        del data
+        pages = render_pages(path, options.image_dpi) if mode == "text+image" else []
     except (OSError, ExtractError) as e:
         return _Prepared(path, record, mode, "failed", reason=str(e))
     if not chunks and not pages:
@@ -334,26 +494,90 @@ def _prepare(
         else:
             reason = "本文を取り出せませんでした（画像だけの PDF 等。[vector_db] image_input = true なら画像として取り込めます）"
         return _Prepared(path, record, mode, "failed", reason=reason)
-    # パスは本文のチャンクと同じリクエストでまとめて埋め込む（末尾の1件）。
-    text_vectors = embed_texts(
-        cfg, [c.text for c in chunks] + [path_text], kind="document", client=embedding_client, should_stop=should_stop
-    )
-    vectors, path_vector = text_vectors[:-1], text_vectors[-1]
-    image_vectors = embed_images(cfg, [p.png for p in pages], client=embedding_client, should_stop=should_stop) if pages else []
-    return _Prepared(
-        path, record, mode, "embed", stat=st, sha=sha, chunks=chunks, pages=pages, vectors=vectors, image_vectors=image_vectors,
-        path_text=path_text, path_vector=path_vector,
-    )
+    return _Prepared(path, record, mode, "embed", stat=st, sha=sha, chunks=chunks, pages=pages, path_text=path_text)
+
+
+def _load_in_thread(*args) -> _Prepared:
+    # 取り込みの間、このスレッドで起動した Office は終了せずに使い回す（_close_office_in_threads で終了する）。
+    keep_office_apps()
+    return _load(*args)
+
+
+def _init_load_process() -> None:
+    """子プロセス（[vector_db].ingest_processes）の初期化。Office を使い回し、プロセスの終了時に終了する。"""
+    import multiprocessing.util
+
+    keep_office_apps()
+    multiprocessing.util.Finalize(None, close_office_apps, exitpriority=10)
+
+
+def _close_office_in_threads(pool: ThreadPoolExecutor, workers: int) -> None:
+    """pool の各スレッドで使い回していた Office を終了する（COM のオブジェクトは作ったスレッドでしか扱えない）。
+
+    全スレッドがそろうまで待つ（Barrier）ことで、各スレッドに1つずつ終了の処理を割り当てる。
+    """
+    barrier = threading.Barrier(workers)
+
+    def close() -> None:
+        try:
+            barrier.wait(timeout=30)
+        except threading.BrokenBarrierError:
+            pass
+        close_office_apps()
+
+    wait([pool.submit(close) for _ in range(workers)])
 
 
 class _Writer:
-    """_Prepared をカタログ・保存先・キーワード索引へ書き込む（メインスレッドだけで使う）。"""
+    """_Prepared をカタログ・保存先・キーワード索引へ書き込む（メインスレッドだけで使う）。
+
+    書き込みは begin() から finish() まで、_COMMIT_INTERVAL_SECONDS 秒・_COMMIT_EVERY_FILES ファイルごとに
+    まとめてコミットする。保存先 → キーワード索引 → カタログの順にコミットするため、途中で止まっても
+    カタログに記録されたファイルのベクターは必ず保存されている（記録されていないファイルは次回取り込み直す）。
+    """
+
+    _COMMIT_INTERVAL_SECONDS = 2.0
+    _COMMIT_EVERY_FILES = 500
 
     def __init__(self, cfg: Config, catalog: Catalog, store, keywords: KeywordIndex, name: str, dim, model: str, result: IngestResult):
         self.cfg, self.catalog, self.store, self.keywords = cfg, catalog, store, keywords
         self.name, self.dim, self.model, self.result = name, dim, model, result
         self.image_collection_ready = False
         self.path_collection_ready = False
+        # キーワード索引に入っているファイル（has_source() をファイルごとに呼ばないよう、最初にまとめて読む）。
+        self.keyword_sources = keywords.sources(name)
+        self.path_keyword_sources = keywords.sources(path_collection_name(name))
+        self._uncommitted = 0
+        self._last_commit = time.monotonic()
+
+    def _parts(self):
+        # コミットの順（保存先 → キーワード索引 → カタログ）。
+        return (self.store, self.keywords, self.catalog)
+
+    def begin(self) -> None:
+        for part in self._parts():
+            part.begin_batch()
+
+    def finish(self) -> None:
+        for part in self._parts():
+            part.end_batch()
+
+    def abort(self) -> None:
+        """コミットしていない書き込みを捨てる（エラーで止めるとき）。"""
+        for part in self._parts():
+            try:
+                part.rollback()
+            except Exception:  # noqa: BLE001 - 元のエラーを優先する
+                logger.exception("vector_db ingest: ロールバックに失敗しました")
+            part._batching = False
+
+    def _maybe_commit(self) -> None:
+        self._uncommitted += 1
+        if self._uncommitted >= self._COMMIT_EVERY_FILES or time.monotonic() - self._last_commit >= self._COMMIT_INTERVAL_SECONDS:
+            for part in self._parts():
+                part.commit()
+            self._uncommitted = 0
+            self._last_commit = time.monotonic()
 
     def _write_path(self, source: str, prepared: _Prepared) -> None:
         """ファイルパスのベクターを1ファイル1件で入れ替える（store.path_collection_name 参照）。"""
@@ -371,15 +595,19 @@ class _Writer:
         検索結果に出す相対パスは拡張子付きのまま。
         only_missing なら索引に無いときだけ入れる（パスのキーワード検索の導入前に取り込んだファイル用）。
         """
-        keyword_collection = path_collection_name(self.name)
-        if only_missing and self.keywords.has_source(keyword_collection, source):
+        if only_missing and source in self.path_keyword_sources:
             return
         index_text = prepared.path_text.removesuffix(prepared.path.suffix)
         self.keywords.replace_source(
-            keyword_collection, source, [ChunkRecord("", prepared.path_text)], index_texts=[index_text]
+            path_collection_name(self.name), source, [ChunkRecord("", prepared.path_text)], index_texts=[index_text]
         )
+        self.path_keyword_sources.add(source)
 
     def write(self, prepared: _Prepared) -> None:
+        self._write(prepared)
+        self._maybe_commit()
+
+    def _write(self, prepared: _Prepared) -> None:
         catalog, store, keywords, name, result = self.catalog, self.store, self.keywords, self.name, self.result
         path, record, mode = prepared.path, prepared.record, prepared.mode
         source = str(path)
@@ -389,8 +617,13 @@ class _Writer:
                 result.too_large += 1
             return
         if prepared.kind in ("unchanged", "touch"):
+            # 保存先 → キーワード索引 → カタログの順に書く（同時に動く別の取り込みとロックを取る順をそろえ、待ち合いで止まらないため）。
             if prepared.path_vector is not None:
                 self._write_path(source, prepared)
+            if prepared.keyword_chunks is not None:
+                keywords.replace_source(name, source, prepared.keyword_chunks)
+                self.keyword_sources.add(source)
+            self._write_path_keywords(source, prepared, only_missing=True)
             path_indexed = record.path_indexed or prepared.path_vector is not None
             if prepared.kind == "touch":
                 st = prepared.stat
@@ -399,9 +632,6 @@ class _Writer:
                 )
             elif prepared.path_vector is not None:
                 catalog.mark_path_indexed(name, source)
-            if prepared.keyword_chunks is not None:
-                keywords.replace_source(name, source, prepared.keyword_chunks)
-            self._write_path_keywords(source, prepared, only_missing=True)
             result.unchanged += 1
             return
         chunks, pages, vectors, image_vectors = prepared.chunks, prepared.pages, prepared.vectors, prepared.image_vectors
@@ -415,7 +645,6 @@ class _Writer:
             store.replace_source(name, source, chunks, vectors)
         else:
             store.delete_source(name, source)
-        keywords.replace_source(name, source, chunks)
         if pages:
             if not self.image_collection_ready:
                 store.ensure_collection(image_collection_name(name), self.dim)
@@ -425,6 +654,8 @@ class _Writer:
         else:
             store.delete_source(image_collection_name(name), source)
         self._write_path(source, prepared)
+        keywords.replace_source(name, source, chunks)
+        self.keyword_sources.add(source)
         self._write_path_keywords(source, prepared, only_missing=False)
         chunk_count = len(chunks) + len(pages)
         st = prepared.stat
@@ -435,75 +666,215 @@ class _Writer:
         else:
             result.updated += 1
 
+    def remove(self, source: str) -> None:
+        """フォルダから消えたファイルのチャンク・記録を消す。"""
+        for storage in storage_collection_names(self.name):
+            self.store.delete_source(storage, source)
+        self.keywords.delete_source(self.name, source)
+        self.keywords.delete_source(path_collection_name(self.name), source)
+        self.catalog.delete_file(self.name, source)
+        self.result.removed += 1
+        self._maybe_commit()
+
+
+class _Job:
+    """埋め込みを待っている1ファイル。texts_to_embed()・pages の各埋め込みが返るたびに埋め、全部そろったら書き込む。"""
+
+    def __init__(self, prepared: _Prepared):
+        self.prepared = prepared
+        self.texts = prepared.texts_to_embed()
+        self.text_vectors: list[list[float] | None] = [None] * len(self.texts)
+        self.image_vectors: list[list[float] | None] = [None] * len(prepared.pages)
+        self.remaining = len(self.texts) + len(prepared.pages)
+
+    def finish(self) -> _Prepared:
+        self.prepared.set_vectors(self.text_vectors, self.image_vectors)
+        return self.prepared
+
+
+class _Pipeline:
+    """取り込み元のファイルを、準備（読み取り・抽出・画像化）→ 埋め込み → 書き込みの流れで処理する。
+
+    - 準備: [vector_db].ingest_workers 個のスレッド（ingest_processes が 1 以上なら、その数の子プロセス）で並列に行う。
+    - 埋め込み: 複数のファイルのテキスト（本文のチャンクとファイルパス）を embedding_batch_size 件ずつにまとめ、
+      ingest_workers 個まで同時に送る。大きいファイルのチャンクも複数のバッチに分けて同時に送る。画像は1枚ずつ送る。
+      埋め込みのリクエストが1つも動いていないとき、または準備中のファイルが無いときは、件数が足りなくても送る
+      （埋め込みサーバーを遊ばせないため。埋め込みが追いつかないときほど、まとまったバッチになる）。
+    - 書き込み: SQLite（カタログ・sqlite-vec・キーワード索引）の接続はスレッド間で共有できないため、メインスレッドで
+      1ファイルずつ書き、まとめてコミットする（_Writer）。
+
+    メモリーを使いすぎないよう、準備済みで埋め込みを待っているファイルは _max_waiting 個までにする。
+    """
+
+    def __init__(self, cfg: Config, folder: Path, known: dict[str, FileRecord], writer: _Writer, embedding_client, should_stop, progress):
+        self.cfg, self.folder, self.known, self.writer = cfg, folder, known, writer
+        self.embedding_client, self.should_stop, self.progress = embedding_client, should_stop, progress
+        self.options = _LoadOptions.from_config(cfg)
+        self.workers = cfg.vector_db_ingest_workers
+        self.processes = cfg.vector_db_ingest_processes
+        self.batch_size = cfg.vector_db_embedding_batch_size
+        self.load_limit = self.processes or self.workers
+        self._max_waiting = max(self.batch_size, 2 * max(self.workers, self.load_limit))
+        self.loads: dict[Future, None] = {}
+        self.embeds: dict[Future, tuple[str, list[tuple[_Job, int]]]] = {}
+        self.text_queue: deque[tuple[_Job, int]] = deque()
+        self.image_queue: deque[tuple[_Job, int]] = deque()
+        self.waiting = 0
+        self.completed = 0
+        self.stopped = False
+
+    def run(self, files: list[tuple[Path, os.stat_result]]) -> None:
+        """files を処理する（停止したら self.stopped が True）。"""
+        if self.workers > 1 or self.processes > 1:
+            # 大きいファイルから始め、最後に大きいファイルが1つだけ残って待つのを避ける。
+            files = sorted(files, key=lambda item: item[1].st_size, reverse=True)
+        self.total = len(files)
+        self.pending = iter(files)
+        self.exhausted = False
+        if self.processes:
+            load_pool = ProcessPoolExecutor(max_workers=self.processes, initializer=_init_load_process)
+        else:
+            load_pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="vector_db_load")
+        embed_pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="vector_db_embed")
+        try:
+            while True:
+                self._start_loads(load_pool)
+                self._start_embeds(embed_pool)
+                if not self.loads and not self.embeds:
+                    if self.stopped or self.exhausted:
+                        break
+                    continue
+                done, _ = wait(list(self.loads) + list(self.embeds), return_when=FIRST_COMPLETED)
+                for future in done:
+                    if future in self.loads:
+                        del self.loads[future]
+                        self._loaded(future.result())
+                    else:
+                        self._embedded(future, *self.embeds.pop(future))
+        except BaseException:
+            # 埋め込みサーバーに接続できない等で止めるときは、まだ始まっていない処理を始めない。
+            for future in list(self.loads) + list(self.embeds):
+                future.cancel()
+            raise
+        finally:
+            embed_pool.shutdown(wait=True, cancel_futures=True)
+            if not self.processes and self.cfg.vector_db_image_input:
+                _close_office_in_threads(load_pool, self.workers)
+            load_pool.shutdown(wait=True, cancel_futures=True)
+
+    def _start_loads(self, pool) -> None:
+        while not self.stopped and not self.exhausted and len(self.loads) < self.load_limit and self.waiting < self._max_waiting:
+            item = next(self.pending, None)
+            if item is None:
+                self.exhausted = True
+                return
+            if self.should_stop is not None and self.should_stop():
+                self.stopped = True
+                return
+            path, st = item
+            source = str(path)
+            if self.progress is not None:
+                self.progress(self.completed, self.total, source)
+            record = self.known.get(source)
+            needs_keywords = source not in self.writer.keyword_sources
+            if not needs_keywords and _is_unchanged(record, _file_mode(self.options, path), st):
+                # 変わっていないファイルは読まないため、スレッド・子プロセスに渡さずにここで済ませる。
+                mode = _file_mode(self.options, path)
+                self._loaded(_Prepared(path, record, mode, "unchanged", path_text=relative_path_text(self.folder, path)))
+                continue
+            args = (self.options, self.folder, path, st, record, needs_keywords)
+            future = pool.submit(_load, *args) if self.processes else pool.submit(_load_in_thread, *args)
+            self.loads[future] = None
+
+    def _loaded(self, prepared: _Prepared) -> None:
+        job = _Job(prepared)
+        if not job.remaining:
+            self._write(job)
+            return
+        self.waiting += 1
+        self.text_queue.extend((job, i) for i in range(len(job.texts)))
+        self.image_queue.extend((job, i) for i in range(len(prepared.pages)))
+
+    def _start_embeds(self, pool) -> None:
+        while not self.stopped and len(self.embeds) < self.workers:
+            if len(self.text_queue) >= self.batch_size:
+                self._submit_texts(pool, self.batch_size)
+            elif self.image_queue:
+                job, index = item = self.image_queue.popleft()
+                future = pool.submit(
+                    embed_images, self.cfg, [job.prepared.pages[index].png], client=self.embedding_client, should_stop=self.should_stop
+                )
+                self.embeds[future] = ("image", [item])
+            elif self.text_queue and (not self.embeds or not self.loads):
+                self._submit_texts(pool, len(self.text_queue))
+            else:
+                return
+
+    def _submit_texts(self, pool, count: int) -> None:
+        items = [self.text_queue.popleft() for _ in range(count)]
+        future = pool.submit(
+            embed_texts,
+            self.cfg,
+            [job.texts[i] for job, i in items],
+            kind="document",
+            client=self.embedding_client,
+            should_stop=self.should_stop,
+        )
+        self.embeds[future] = ("text", items)
+
+    def _embedded(self, future: Future, kind: str, items: list[tuple[_Job, int]]) -> None:
+        try:
+            vectors = future.result()
+        except EmbeddingStopped:
+            # 埋め込みの再試行中に停止を求められた。このファイルは記録せず、次回の取り込みで処理する。
+            self.stopped = True
+            return
+        for (job, index), vector in zip(items, vectors, strict=True):
+            (job.text_vectors if kind == "text" else job.image_vectors)[index] = vector
+            job.remaining -= 1
+            if not job.remaining:
+                self.waiting -= 1
+                self._write(job)
+
+    def _write(self, job: _Job) -> None:
+        self.writer.write(job.finish())
+        self.completed += 1
+
 
 def _ingest(
     cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folder, recursive, result, progress, should_stop, embedding_client
 ) -> None:
-    """取り込み元のファイルを [vector_db].ingest_workers 個のスレッドで並列に処理する。
+    """取り込み元のファイルを _Pipeline で処理し、フォルダから消えたファイルを消す。
 
-    ファイルの読み取り・本文の抽出・画像化・埋め込みはワーカースレッドで行い、SQLite（カタログ・
-    sqlite-vec・キーワード索引）と保存先への書き込みは接続をスレッド間で共有できないため、メインスレッドで
-    1件ずつ行う。同時に処理するファイルはワーカー数までに抑え（ページ画像でメモリーを使いすぎないため・
-    停止を早く効かせるため）、1つ終わるごとに次のファイルを始める。ワーカー数 1 なら従来どおりパス順に1つずつ処理する。
+    停止したときは、埋め込みまで終わったファイルだけを記録する（途中のファイルは次回の取り込みで処理する）。
     """
-    files = list_source_files(folder, recursive, cfg.vector_db_include_extensions, cfg.vector_db_image_input)
     known = catalog.files(name)
-    max_bytes = int(cfg.vector_db_max_file_mb * 1024 * 1024)
-    workers = cfg.vector_db_ingest_workers
+    max_files = cfg.vector_db_max_files_per_collection
+    scan = scan_source_files(
+        folder, recursive, cfg.vector_db_include_extensions, cfg.vector_db_image_input,
+        workers=cfg.vector_db_scan_workers, max_files=max_files, known=known,
+    )
+    files = scan.files
+    result.found_files, result.max_files, result.over_limit = scan.total, max_files, scan.over_limit
+    if scan.over_limit:
+        logger.warning("vector_db ingest: collection=%s %s", name, _over_limit_hint(result))
     writer = _Writer(cfg, catalog, store, keywords, name, dim, model, result)
-    seen: set[str] = set()
-    pending = iter(files)
-    in_flight: set[Future] = set()
-    completed = 0
-    stopped = False
-    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vector_db_ingest") as pool:
-        try:
-            while True:
-                while not stopped and len(in_flight) < workers:
-                    path = next(pending, None)
-                    if path is None:
-                        break
-                    if should_stop is not None and should_stop():
-                        stopped = True
-                        break
-                    source = str(path)
-                    seen.add(source)
-                    if progress is not None:
-                        progress(completed, len(files), source)
-                    needs_keywords = not keywords.has_source(name, source)
-                    in_flight.add(
-                        pool.submit(_prepare, cfg, folder, path, known.get(source), needs_keywords, max_bytes, embedding_client, should_stop)
-                    )
-                if not in_flight:
-                    break
-                done, in_flight = wait(in_flight, return_when=FIRST_COMPLETED)
-                for future in done:
-                    try:
-                        prepared = future.result()
-                    except EmbeddingStopped:
-                        # 埋め込みの再試行中に停止を求められた。このファイルは記録せず、次回の取り込みで処理する。
-                        stopped = True
-                        continue
-                    writer.write(prepared)
-                    completed += 1
-        except BaseException:
-            # 埋め込みサーバーに接続できない等で止めるときは、まだ始まっていないファイルを始めない。
-            for future in in_flight:
-                future.cancel()
-            raise
+    writer.begin()
+    try:
+        pipeline = _Pipeline(cfg, folder, known, writer, embedding_client, should_stop, progress)
+        pipeline.run(files)
+        if not pipeline.stopped:
+            # 停止したときは、未処理のファイルを「消えた」と誤って削除しないよう消さない。
+            # 上限を超えて選ばれなかったファイルも、フォルダにある限り消さない（found_known で判定する）。
+            for source in sorted(set(known) - scan.found_known):
+                writer.remove(source)
+        writer.finish()
+    except BaseException:
+        writer.abort()
+        raise
     # 並列だと終わった順に記録されるため、失敗一覧はパス順にそろえる。
     result.failed.sort(key=lambda item: item[0].lower())
-    if stopped:
-        # 未処理のファイルを「消えた」と誤って削除しないよう、ここで抜ける。
-        return
-    for source in sorted(set(known) - seen):
-        for storage in storage_collection_names(name):
-            store.delete_source(storage, source)
-        keywords.delete_source(name, source)
-        keywords.delete_source(path_collection_name(name), source)
-        catalog.delete_file(name, source)
-        result.removed += 1
-    if progress is not None:
+    if progress is not None and not pipeline.stopped:
         progress(len(files), len(files), "")
 
 
@@ -538,6 +909,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"  失敗: {item['path']}: {item['reason']}")
     if summary["too_large"]:
         print(f"  {_too_large_hint(cfg, summary['too_large'])}")
+    if result.over_limit:
+        print(f"  {_over_limit_hint(result)}")
     return 0
 
 

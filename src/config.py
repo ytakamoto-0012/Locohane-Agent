@@ -59,6 +59,8 @@ VECTOR_DB_SQLITE_VEC_DISTANCES = ("Cosine", "Euclid", "Manhattan")
 # [vector_db].qdrant_preset の選択肢（中身は src/vector_db/qdrant_store.py の QDRANT_PRESETS。
 # admin/ini_catalog.py の _KEY_CHOICES と一致させる）。none は Qdrant の既定のまま。
 VECTOR_DB_QDRANT_PRESETS = ("none", "1m", "2m", "3m", "4m")
+# [vector_db].embedding_encoding_format の選択肢（/v1/embeddings の encoding_format）。
+VECTOR_DB_EMBEDDING_ENCODING_FORMATS = ("base64", "float")
 
 # reasoning_format が取りうる値（llama-server の --reasoning-format と同じ）。
 LLM_REASONING_FORMATS = frozenset({"none", "deepseek", "deepseek-legacy"})
@@ -488,6 +490,8 @@ class Config:
         vector_db_search_embedding_max_retries: 検索語の埋め込みで同じく試し直す回数。
             検索が止まらなくならないよう、0 は「試し直さない」（無制限は指定できない）。
         vector_db_embedding_retry_interval_seconds: 上記の試し直しの間隔（秒。取り込み・検索で共通）。
+        vector_db_embedding_encoding_format: 埋め込みの受け取り方（VECTOR_DB_EMBEDDING_ENCODING_FORMATS の
+            いずれか）。base64 は応答が小さく解析が速い。対応しない接続先は自動で float に切り替える。
         vector_db_query_prefix / vector_db_document_prefix: 検索語・文書の先頭に
             付ける文字列（e5 系モデルの "query: " / "passage: " 等）。設定値が auto なら
             埋め込みモデル名から決めた値（auto_embedding_prefixes()）が入る。
@@ -500,7 +504,12 @@ class Config:
             画像にし、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
             （マルチモーダルの埋め込みモデルが必要）。
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
-        vector_db_ingest_workers: 取り込みで並列に処理するファイル数（ワーカースレッド数）。
+        vector_db_ingest_workers: 取り込みで並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。
+        vector_db_ingest_processes: 取り込みで本文の抽出・ページの画像化を行う子プロセスの数。
+            0 なら子プロセスを使わず、ワーカースレッドで行う。
+        vector_db_scan_workers: 取り込み元フォルダを走査するときに、同時に読むフォルダの数（スレッド数）。
+        vector_db_max_files_per_collection: 1コレクションで取り込む最大ファイル数。超えた分は取り込まず、
+            ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ）。
         vector_db_top_k: search_documents の既定の返却件数。
         vector_db_max_result_chars: search_documents の結果全体の最大文字数。
         vector_db_min_score: search_documents の結果に出す類似度の下限（本文のチャンク）。
@@ -1055,6 +1064,7 @@ class Config:
     vector_db_embedding_max_retries: int
     vector_db_search_embedding_max_retries: int
     vector_db_embedding_retry_interval_seconds: float
+    vector_db_embedding_encoding_format: str
     vector_db_query_prefix: str
     vector_db_document_prefix: str
     vector_db_chunk_size: int
@@ -1064,6 +1074,9 @@ class Config:
     vector_db_image_input: bool
     vector_db_image_dpi: int
     vector_db_ingest_workers: int
+    vector_db_ingest_processes: int
+    vector_db_scan_workers: int
+    vector_db_max_files_per_collection: int
     vector_db_top_k: int
     vector_db_max_result_chars: int
     vector_db_min_score: float
@@ -1869,6 +1882,16 @@ def _as_vector_db_qdrant_preset(value: str | None) -> str:
     text = str(value or "").strip().lower()
     if text not in VECTOR_DB_QDRANT_PRESETS:
         raise ValueError(f"[vector_db].qdrant_preset は {'/'.join(VECTOR_DB_QDRANT_PRESETS)} のいずれかにしてください: {value!r}")
+    return text
+
+
+def _as_vector_db_encoding_format(value: str | None) -> str:
+    """[vector_db].embedding_encoding_format の値を検証する（VECTOR_DB_EMBEDDING_ENCODING_FORMATS のいずれか）。"""
+    text = str(value or "").strip().lower()
+    if text not in VECTOR_DB_EMBEDDING_ENCODING_FORMATS:
+        raise ValueError(
+            f"[vector_db].embedding_encoding_format は {'/'.join(VECTOR_DB_EMBEDDING_ENCODING_FORMATS)} のいずれかにしてください: {value!r}"
+        )
     return text
 
 
@@ -3071,6 +3094,9 @@ def load_config(
             os.getenv("VECTOR_DB_EMBEDDING_RETRY_INTERVAL_SECONDS", vector_db.get("embedding_retry_interval_seconds", 10)),
             "[vector_db].embedding_retry_interval_seconds",
         ),
+        vector_db_embedding_encoding_format=_as_vector_db_encoding_format(
+            os.getenv("VECTOR_DB_EMBEDDING_ENCODING_FORMAT", vector_db.get("embedding_encoding_format", "base64"))
+        ),
         vector_db_query_prefix=_as_embedding_prefix(
             os.getenv("VECTOR_DB_QUERY_PREFIX", vector_db.get("query_prefix", "auto")), vector_db_embedding_endpoints, "query"
         ),
@@ -3087,6 +3113,16 @@ def load_config(
         vector_db_image_dpi=_positive_int(os.getenv("VECTOR_DB_IMAGE_DPI", vector_db.get("image_dpi", 100)), "[vector_db].image_dpi"),
         vector_db_ingest_workers=_positive_int(
             os.getenv("VECTOR_DB_INGEST_WORKERS", vector_db.get("ingest_workers", 1)), "[vector_db].ingest_workers"
+        ),
+        vector_db_ingest_processes=_non_negative_int(
+            os.getenv("VECTOR_DB_INGEST_PROCESSES", vector_db.get("ingest_processes", 0)), "[vector_db].ingest_processes"
+        ),
+        vector_db_scan_workers=_positive_int(
+            os.getenv("VECTOR_DB_SCAN_WORKERS", vector_db.get("scan_workers", 8)), "[vector_db].scan_workers"
+        ),
+        vector_db_max_files_per_collection=_positive_int(
+            os.getenv("VECTOR_DB_MAX_FILES_PER_COLLECTION", vector_db.get("max_files_per_collection", 1000000)),
+            "[vector_db].max_files_per_collection",
         ),
         vector_db_top_k=_positive_int(os.getenv("VECTOR_DB_TOP_K", vector_db.get("top_k", 5)), "[vector_db].top_k"),
         vector_db_max_result_chars=_positive_int(

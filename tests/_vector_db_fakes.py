@@ -10,6 +10,7 @@ import base64
 import dataclasses
 import json
 import math
+import struct
 from pathlib import Path
 
 import httpx
@@ -45,19 +46,26 @@ def _input_text(item) -> str:
 class FakeEmbeddingServer:
     """/v1/embeddings の偽物。受け取った入力を requests に記録する。"""
 
-    def __init__(self, *, fail_hosts: tuple[str, ...] = (), two_dimensional: bool = False):
+    def __init__(self, *, fail_hosts: tuple[str, ...] = (), two_dimensional: bool = False, reject_base64: bool = False):
         self.requests: list[dict] = []
         self.fail_hosts = fail_hosts
         self.two_dimensional = two_dimensional
+        # True なら encoding_format（base64）に対応していないサーバーとして 400 を返す。
+        self.reject_base64 = reject_base64
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.host in self.fail_hosts:
             raise httpx.ConnectError("refused", request=request)
         body = json.loads(request.content)
         self.requests.append({"url": str(request.url), **body})
+        if self.reject_base64 and "encoding_format" in body:
+            return httpx.Response(400, json={"error": "unknown field encoding_format"})
         data = []
         for i, item in enumerate(body["input"]):
             vec = fake_vector(_input_text(item))
+            if body.get("encoding_format") == "base64":
+                data.append({"index": i, "embedding": base64.b64encode(struct.pack(f"<{len(vec)}f", *vec)).decode("ascii")})
+                continue
             data.append({"index": i, "embedding": [vec, vec] if self.two_dimensional else vec})
         return httpx.Response(200, json={"data": data, "model": body["model"]})
 
@@ -121,14 +129,19 @@ class FakeQdrant:
         if rest == ["index"]:
             return httpx.Response(200, json={"result": {}})
         if rest == ["points"] and request.method == "PUT":
-            for p in body["points"]:
-                assert len(p["vector"]) == coll["size"]
-                coll["points"][p["id"]] = p
+            self._upsert(coll, body["points"])
             return httpx.Response(200, json={"result": {}})
         if rest == ["points", "delete"]:
-            value = body["filter"]["must"][0]["match"]["value"]
-            coll["points"] = {k: p for k, p in coll["points"].items() if p["payload"]["source_path"] != value}
+            self._delete(coll, body["filter"])
             return httpx.Response(200, json={"result": {}})
+        if rest == ["points", "batch"] and request.method == "POST":
+            # 実際の Qdrant と同じく、operations を順に適用する（削除と追加の順序が保たれる）。
+            for op in body["operations"]:
+                if "upsert" in op:
+                    self._upsert(coll, op["upsert"]["points"])
+                else:
+                    self._delete(coll, op["delete"]["filter"])
+            return httpx.Response(200, json={"result": [{"status": "completed"}] * len(body["operations"])})
         if rest == ["points", "query"]:
             self.queries.append(body)
             q = body["query"]
@@ -141,6 +154,17 @@ class FakeQdrant:
             scored.sort(key=lambda s: s["score"], reverse=coll["distance"] not in ("Euclid", "Manhattan"))
             return httpx.Response(200, json={"result": {"points": scored[: body["limit"]]}})
         return httpx.Response(400, json={"status": {"error": f"unexpected {request.method} {path}"}})
+
+    @staticmethod
+    def _upsert(coll: dict, points: list[dict]) -> None:
+        for p in points:
+            assert len(p["vector"]) == coll["size"]
+            coll["points"][p["id"]] = p
+
+    @staticmethod
+    def _delete(coll: dict, filter_: dict) -> None:
+        value = filter_["must"][0]["match"]["value"]
+        coll["points"] = {k: p for k, p in coll["points"].items() if p["payload"]["source_path"] != value}
 
     @property
     def transport(self) -> httpx.MockTransport:
@@ -159,6 +183,9 @@ def make_config(tmp_path: Path, **changes):
         "vector_db_embedding_max_retries": 3,
         "vector_db_search_embedding_max_retries": 2,
         "vector_db_embedding_retry_interval_seconds": 10.0,
+        # base64 は専用のテストで確かめる（既存のテストの偽物のサーバーは数値の配列で返す）。
+        "vector_db_embedding_encoding_format": "float",
+        "vector_db_ingest_processes": 0,
         "vector_db_min_score": 0.0,
         "vector_db_image_min_score": 0.0,
         "vector_db_path_min_score": 0.0,

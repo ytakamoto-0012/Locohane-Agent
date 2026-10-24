@@ -11,6 +11,8 @@ from pathlib import Path
 import re
 import sqlite3
 
+from .sqlite_batch import SqliteBatchMixin, configure_connection
+
 CATALOG_FILENAME = "catalog.sqlite"
 
 # コレクション名は Qdrant のコレクション名・ログ・URL にそのまま使うため ASCII に限る。
@@ -124,7 +126,7 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-class Catalog:
+class Catalog(SqliteBatchMixin):
     """catalog.sqlite への読み書き。1インスタンスを1スレッドで使う。"""
 
     def __init__(self, directory: Path):
@@ -132,7 +134,7 @@ class Catalog:
         self.path = directory / CATALOG_FILENAME
         self._conn = sqlite3.connect(str(self.path), timeout=30)
         self._conn.row_factory = sqlite3.Row
-        self._conn.execute("PRAGMA journal_mode=WAL")
+        configure_connection(self._conn)
         self._conn.executescript(_SCHEMA)
         # mode 列の無い旧版の catalog.sqlite に列を足す（既存の記録はテキストとして取り込んだもの）。
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)")}
@@ -238,7 +240,7 @@ class Catalog:
             self._conn.execute("DELETE FROM collections WHERE name = ?", (name,))
 
     def set_model(self, name: str, model: str | None, dim: int | None, document_prefix: str | None = None) -> None:
-        with self._conn:
+        with self._transaction():
             self._conn.execute(
                 "UPDATE collections SET model = ?, dim = ?, document_prefix = ? WHERE name = ?", (model, dim, document_prefix, name)
             )
@@ -256,7 +258,7 @@ class Catalog:
         return {r["source_path"]: FileRecord(**{**dict(r), "path_indexed": bool(r["path_indexed"])}) for r in rows}
 
     def upsert_file(self, name: str, record: FileRecord) -> None:
-        with self._conn:
+        with self._transaction():
             self._conn.execute(
                 """
                 INSERT INTO files (collection, source_path, size, mtime, sha256, chunk_count, mode, path_indexed)
@@ -272,11 +274,11 @@ class Catalog:
             )
 
     def mark_path_indexed(self, name: str, source_path: str) -> None:
-        with self._conn:
+        with self._transaction():
             self._conn.execute("UPDATE files SET path_indexed = 1 WHERE collection = ? AND source_path = ?", (name, source_path))
 
     def delete_file(self, name: str, source_path: str) -> None:
-        with self._conn:
+        with self._transaction():
             self._conn.execute("DELETE FROM files WHERE collection = ? AND source_path = ?", (name, source_path))
 
     def clear_files(self, name: str) -> None:

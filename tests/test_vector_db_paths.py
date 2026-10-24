@@ -74,9 +74,9 @@ def test_ingest_backfills_paths_for_files_ingested_before_path_vectors(env):
 
     result = ingest.ingest_collection(cfg, "docs", **kwargs)
     assert result.unchanged == 2
-    # 本文は埋め込み直さず、パスだけを埋め込む
-    assert sorted(r["input"][0] for r in env["embed"].requests[before:]) == ["会議資料/議事録.md", "配管図面/系統A.md"]
-    assert all(len(r["input"]) == 1 for r in env["embed"].requests[before:])
+    # 本文は埋め込み直さず、パスだけを埋め込む（複数のファイルのパスを1リクエストにまとめる）
+    [request] = env["embed"].requests[before:]
+    assert sorted(request["input"]) == ["会議資料/議事録.md", "配管図面/系統A.md"]
     assert _path_points(env) == ["会議資料/議事録.md", "配管図面/系統A.md"]
     with vcat.open_catalog(cfg.vector_db_dir) as catalog:
         assert all(r.path_indexed for r in catalog.files("docs").values())

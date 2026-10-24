@@ -84,6 +84,7 @@ _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("vector_db", "distance"): ("Cosine", "Euclid", "Dot", "Manhattan"),
     # src/config.py の VECTOR_DB_QDRANT_PRESETS と同じ値・順序。
     ("vector_db", "qdrant_preset"): ("none", "1m", "2m", "3m", "4m"),
+    ("vector_db", "embedding_encoding_format"): ("base64", "float"),
     ("thinking_loop_guard", "target"): ("all", "content_only", "thinking_only"),
     ("thinking_control", "default_level"): _THINKING_LEVEL_CHOICES,
     # rule_* は false＝ルール無効。

@@ -433,6 +433,7 @@ Locohane/
 │   │   ├── catalog.py        # コレクション定義・取り込み済みファイルの記録（catalog.sqlite）
 │   │   ├── store.py / sqlite_vec_store.py / qdrant_store.py # ベクターの保存先（sqlite-vec / Qdrant）
 │   │   ├── keyword_index.py  # 本文のキーワード索引（keywords.sqlite、SQLite FTS5 の BM25）
+│   │   ├── sqlite_batch.py   # SQLite の書き込みのまとめコミット（取り込み用。WAL・synchronous=NORMAL）
 │   │   └── ingest.py / search.py # 差分取り込み（CLI: python -m src.vector_db.ingest）・検索
 │   ├── project_instructions.py # .locohane/LOCOHANE.md の読込
 │   ├── graph.py             # ReAct ループ（handwritten / prebuilt を切替）
@@ -1258,12 +1259,35 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
 - 設定は `catalog.sqlite` の `collections` 表（`schedule_enabled`・`schedule_times`・`schedule_weekdays`）に保存する
   （旧版の `catalog.sqlite` には列を自動で追加する）。自動取り込みの開始は変更履歴（監査ログ）に操作者 `scheduler` で残る。
 
-`[vector_db] ingest_workers`（既定1）を2以上にすると、複数のファイルを並列に処理する。並列にするのはファイルの読み取り・
-本文の抽出・画像化・埋め込みの計算で、カタログ・ベクター・キーワード索引への書き込みはメインスレッドで1件ずつ行う
-（同時に処理するのはワーカー数までのファイルで、1つ終わるごとに次を始める）。埋め込みが速くなるのは推論サーバーが
-同時に複数のリクエストを処理できる場合だけで、llama-server なら `--parallel`（`-np`）を `ingest_workers` 以上にして起動する。
-`image_input = true` の Office ファイルはワーカーごとに Word / PowerPoint / Excel を別に起動するため、メモリーに注意する。
-PDF のページの画像化（pypdfium2）はスレッドから同時に呼べないため、ワーカー数によらず1つずつ行う。
+取り込みは `src/vector_db/ingest.py` の `_Pipeline` で、走査 → 準備 → 埋め込み → 書き込みの流れで進める。
+
+- **走査**: 差分取り込みでは毎回、取り込み元の全フォルダを読んで変わったファイルを探す。`[vector_db] scan_workers`（既定8）個の
+  スレッドで複数のフォルダを同時に読む（ファイルサーバー上のフォルダは1フォルダごとの往復の待ち時間が大きいため）。
+  見つかったファイルが `max_files_per_collection`（既定100万）を超えたら、上限までのファイルだけを取り込み、ナレッジ画面に
+  警告（見つかった件数・取り込まなかった件数と、config.ini の `max_files_per_collection` で上限を変えられること）を出す。
+  選ぶファイルは取り込み済みのものを優先し、残りの枠は新しいファイルのパス順の先頭から埋めるため、取り込みのたびに入れ替わらない。
+  上限を超えて取り込まなかったファイルは、フォルダにある限り削除扱いにしない。取り込み中は対象のファイル・取り込み済みの
+  記録をメモリーに持つため（100万件で数 GB 程度）、大きな文書群はコレクションを取り込み元のフォルダごとに分けるとよい。
+- **準備**（ファイルの読み取り・本文の抽出・ページの画像化）: `[vector_db] ingest_workers`（既定1）個のスレッドで並列に行う。
+  `ingest_processes`（既定0）を1以上にすると、その数の子プロセスで行う（抽出・画像化は CPU を使い、Python のスレッドでは
+  同時に1つしか進まないため、PDF・Excel 等が多く CPU のコアに余裕があるときに速くなる。子プロセスの起動に数秒かかる）。
+  サイズ・更新日時が前回と同じファイルは読まずに済ませ、変わったファイルは中身を1回だけ読んで SHA-256 の計算と本文の抽出に使う。
+  `ingest_workers` か `ingest_processes` が2以上のときは、大きいファイルから始める。PDF の本文・ページの画像化は pypdfium2 で行い、
+  同じプロセスの中では1つずつ行う（PDFium は複数スレッドから同時に呼べない）。`image_input = true` の Office ファイルは、
+  スレッド（子プロセス）ごとに Word / PowerPoint / Excel を1つずつ起動して取り込みの間使い回し、終わったら終了する。
+- **埋め込み**: 複数のファイルのテキスト（本文のチャンクとファイルパス）を `embedding_batch_size` 件ずつにまとめ、
+  `ingest_workers` 個まで同時に送る（大きいファイルのチャンクも複数のバッチを同時に送る。画像は1枚ずつ）。埋め込みの
+  リクエストが1つも動いていないとき、または準備中のファイルが無いときは件数が足りなくても送るため、埋め込みサーバーを
+  遊ばせず、埋め込みが追いつかないときほどまとまったバッチになる。同時に送って速くなるのは推論サーバーが同時に複数の
+  リクエストを処理できる場合だけで、llama-server なら `--parallel`（`-np`）を `ingest_workers` 以上にして起動する。
+  埋め込みは `embedding_encoding_format = base64`（既定）で float32 のバイト列として受け取る（数値の JSON より小さく解析が速い。
+  対応しない接続先は自動で数値の配列に切り替える）。
+- **書き込み**: カタログ・ベクター（sqlite-vec / Qdrant）・キーワード索引への書き込みはメインスレッドで1ファイルずつ行い、
+  約2秒（または500ファイル）ごとにまとめてコミットする（SQLite は WAL・`synchronous=NORMAL`。Qdrant は `points/batch` で
+  削除と追加をまとめて送る）。ベクター → キーワード索引 → カタログの順にコミットするため、途中で止まってもカタログに
+  記録されたファイルのベクターは必ず保存されている（記録されていないファイルは次回の取り込みで処理する）。
+- **停止**: 「停止」を押すと新しいファイル・バッチを始めず、送信中の埋め込みが返るのを待って、埋め込みまで終わったファイルだけを
+  記録して止まる（ボタンは押した時点で「停止中…」になる）。
 
 取り込みは対象インスタンスの設定（`config_overrides.json` を重ねたもの）で行う。本体インスタンスが起動中でも
 取り込みと検索は同時に行え、本体の再起動は不要。コレクションの作成・取り込み・削除は変更履歴（監査ログ）に残る。
@@ -1523,7 +1547,8 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedding_max_retries` | 取り込みで全接続先がエラーになったとき試し直す回数（既定3）。`0` なら成功するまで無制限。408・429 以外の 4xx だけなら試し直さない | `VECTOR_DB_EMBEDDING_MAX_RETRIES` |
 | `[vector_db]` | `search_embedding_max_retries` | 検索（`search_documents`）で同じく試し直す回数（既定2）。`0` は試し直さない（無制限は指定できない） | `VECTOR_DB_SEARCH_EMBEDDING_MAX_RETRIES` |
 | `[vector_db]` | `embedding_retry_interval_seconds` | 上記の試し直しの間隔（秒、既定10。取り込み・検索で共通） | `VECTOR_DB_EMBEDDING_RETRY_INTERVAL_SECONDS` |
-| `[vector_db]` | `embedding_batch_size` | 埋め込み1リクエストあたりのチャンク数（既定16） | `VECTOR_DB_EMBEDDING_BATCH_SIZE` |
+| `[vector_db]` | `embedding_batch_size` | 埋め込み1リクエストあたりのチャンク数（既定16。取り込みでは複数のファイルのチャンクをまとめる） | `VECTOR_DB_EMBEDDING_BATCH_SIZE` |
+| `[vector_db]` | `embedding_encoding_format` | 埋め込みの受け取り方（`base64` 既定・`float`）。`base64` は応答が小さく解析が速い。対応しない接続先（400・422 を返す）は自動で `float` に切り替える | `VECTOR_DB_EMBEDDING_ENCODING_FORMAT` |
 | `[vector_db]` | `embedding_timeout_seconds` | 埋め込み1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS` |
 | `[vector_db]` | `query_prefix` / `document_prefix` | 検索語・文書の先頭に付ける文字列（既定 `auto` で `model` の名前から決める。空欄で付けない、それ以外はその値。末尾の空白を残すならダブルクォートで囲む。`document_prefix` を変えたら再構築が必要。「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_QUERY_PREFIX` / `VECTOR_DB_DOCUMENT_PREFIX` |
 | `[vector_db]` | `chunk_size` / `chunk_overlap` | チャンク1つの最大文字数（既定800）と、隣り合うチャンクで重ねる文字数（既定100、`chunk_size` 未満） | `VECTOR_DB_CHUNK_SIZE` / `VECTOR_DB_CHUNK_OVERLAP` |
@@ -1531,7 +1556,10 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `max_file_mb` | 取り込む1ファイルの上限サイズ（MB、既定50。超えると失敗一覧に載る） | `VECTOR_DB_MAX_FILE_MB` |
 | `[vector_db]` | `image_input` | 埋め込みに画像を入力するか（既定 false）。true なら `.pdf .docx .pptx .xlsx .xlsm` は本文に加えてページごとの画像も埋め込み、画像ファイル（`.png .jpg .heic` 等）も画像として埋め込む。画像入力に対応した埋め込みモデルと、Office ファイルには Windows・Microsoft Office が必要（「ページを画像として取り込む（image_input）」参照） | `VECTOR_DB_IMAGE_INPUT` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
-| `[vector_db]` | `ingest_workers` | 取り込みで並列に処理するファイル数（ワーカースレッド数、既定1）。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照） | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照） | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `scan_workers` | 取り込み元フォルダの走査で同時に読むフォルダの数（スレッド数、既定8）。ファイルサーバー上のフォルダで効く | `VECTOR_DB_SCAN_WORKERS` |
+| `[vector_db]` | `max_files_per_collection` | 1コレクションで取り込む最大ファイル数（既定1000000）。超えた分は取り込まず、ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ。「文書の取り込み」参照） | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
+| `[vector_db]` | `ingest_processes` | 取り込みで本文の抽出・ページの画像化を行う子プロセスの数（既定0＝子プロセスを使わず `ingest_workers` のスレッドで行う）。CPU のコアに余裕があり PDF・Excel 等が多いときに 2 以上にする | `VECTOR_DB_INGEST_PROCESSES` |
 | `[vector_db]` | `top_k` | `search_documents`・`search_document_paths` が既定で返す件数（既定5） | `VECTOR_DB_TOP_K` |
 | `[vector_db]` | `max_result_chars` | `search_documents`・`search_document_paths` の結果全体の最大文字数（既定6000） | `VECTOR_DB_MAX_RESULT_CHARS` |
 | `[vector_db]` | `min_score` | 結果に出す本文のチャンクの類似度（0.0〜1.0、コサイン類似度）の下限（既定0.3） | `VECTOR_DB_MIN_SCORE` |
@@ -1709,7 +1737,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`ingest_processes`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 
