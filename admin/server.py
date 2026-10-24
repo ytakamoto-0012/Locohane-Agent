@@ -30,6 +30,7 @@ from src.version import __version__
 
 from . import api_docs, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
 from . import instances as inst
+from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
 from .ini_catalog import parse_file as parse_ini_file
 
@@ -1079,6 +1080,21 @@ app.include_router(
         audit_log_path=AUDIT_LOG_PATH,
         client_ip=_client_ip,
         backup_keep=_cfg.admin_backup_keep,
+    )
+)
+
+
+# ---------------------------------------------------------------------------
+# ナレッジ（ベクターDB のコレクションと取り込み。admin/knowledge.py）
+# ---------------------------------------------------------------------------
+
+app.include_router(
+    knowledge_api.build_router(
+        require_login=require_login,
+        require_csrf=require_csrf,
+        instances_root=INSTANCES_ROOT,
+        audit_log_path=AUDIT_LOG_PATH,
+        client_ip=_client_ip,
     )
 )
 

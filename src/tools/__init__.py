@@ -38,6 +38,8 @@ LangChain の @tool として定義する。read_skill/read_skill_file/run_scrip
 - create_memory / update_memory / delete_memory / read_memory / search_memory /
   list_memories … スレッドをまたぐ永続メモリー（src/memory.py）の読み書き。
   主エージェントのみに公開し、dispatch_agent のサブエージェントには渡さない。
+- list_document_collections / search_documents … ベクターDB（src/vector_db/）に
+  取り込んだ社内文書の意味検索（読み取り専用。[vector_db] enabled = false なら無効の旨を返す）。
 
 セキュリティ: read_skill_file / run_script / get_tool_source は必ず skills
 ディレクトリ配下に限定する（_safe_path でディレクトリトラバーサルを拒否）。保存・実行の
@@ -103,6 +105,7 @@ from .registry import (  # noqa: F401
     glob_tool,
     grep_tool,
     json_query,
+    list_document_collections,
     list_memories,
     search_path_memory,
     list_thread_notes,
@@ -115,6 +118,7 @@ from .registry import (  # noqa: F401
     read_tool,
     run_script,
     run_script_background,
+    search_documents,
     search_memory,
     show_help,
     stop_dispatch_agent_job,

@@ -50,6 +50,8 @@ LLM_ROUTING_STRATEGIES = frozenset({"round_robin", "random", "priority_failover"
 # 選択候補にする際 GET /slots で実際に空きスロットがあるか確認する対象になる
 # （src/llm/routing.py の _probe_llama_cpp_slots_available() 参照）。
 LLM_PROVIDERS = frozenset({"openai_compatible", "llama_cpp", "vllm"})
+# [vector_db].backend の選択肢（admin/ini_catalog.py の _KEY_CHOICES と一致させる）。
+VECTOR_DB_BACKENDS = ("sqlite_vec", "qdrant")
 
 # reasoning_format が取りうる値（llama-server の --reasoning-format と同じ）。
 LLM_REASONING_FORMATS = frozenset({"none", "deepseek", "deepseek-legacy"})
@@ -451,6 +453,30 @@ class Config:
         path_memory_search_filename_weight: パスメモリー類似検索で、検索語が
             フルパスの場合にファイル名部分を重視する割合（残りはフォルダ部分
             同士の類似度）。
+        vector_db_enabled: ベクターDB（src/vector_db/、社内文書の意味検索）の
+            有効/無効。False の場合 search_documents / list_document_collections
+            は「無効です」を返すのみ。
+        vector_db_backend: ベクターの保存先（VECTOR_DB_BACKENDS のいずれか）。
+        vector_db_dir: catalog.sqlite（コレクション定義・取り込み済みファイル）と
+            backend=sqlite_vec 時の vectors.sqlite を置くディレクトリ。
+        vector_db_qdrant_url: backend=qdrant 時の Qdrant サーバー URL。
+        vector_db_qdrant_api_key: Qdrant の API キー（.env の QDRANT_API_KEY のみ）。
+        vector_db_qdrant_collection_prefix: Qdrant のコレクション名の接頭辞
+            （${instance} 展開済み）。
+        vector_db_qdrant_timeout_seconds: Qdrant への1リクエストのタイムアウト秒数。
+        vector_db_embedding_endpoints: 埋め込みを計算する接続先（/v1/embeddings）。
+            enabled=False のときは空でもよい。
+        vector_db_embedding_batch_size: 埋め込み1リクエストあたりのチャンク数。
+        vector_db_embedding_timeout_seconds: 埋め込み1リクエストのタイムアウト秒数。
+        vector_db_query_prefix / vector_db_document_prefix: 検索語・文書の先頭に
+            付ける文字列（e5 系モデルの "query: " / "passage: " 等）。
+        vector_db_chunk_size / vector_db_chunk_overlap: チャンク分割の目安文字数と
+            隣り合うチャンクの重複文字数。
+        vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。
+        vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。
+        vector_db_top_k: search_documents の既定の返却件数。
+        vector_db_max_result_chars: search_documents の結果全体の最大文字数。
+        vector_db_min_score: search_documents の結果に出す類似度の下限。
         script_timeout: run_script の実行タイムアウト秒数。
         script_python: run_script が .py スクリプトを起動する際に使う
             Python 実行ファイル。
@@ -976,6 +1002,27 @@ class Config:
     path_memory_max_entries: int
     path_memory_search_min_score: float
     path_memory_search_filename_weight: float
+
+    # --- ベクターDB（[vector_db]、src/vector_db/） ---
+    vector_db_enabled: bool
+    vector_db_backend: str
+    vector_db_dir: Path
+    vector_db_qdrant_url: str
+    vector_db_qdrant_api_key: str
+    vector_db_qdrant_collection_prefix: str
+    vector_db_qdrant_timeout_seconds: float
+    vector_db_embedding_endpoints: tuple[LLMEndpoint, ...]
+    vector_db_embedding_batch_size: int
+    vector_db_embedding_timeout_seconds: float
+    vector_db_query_prefix: str
+    vector_db_document_prefix: str
+    vector_db_chunk_size: int
+    vector_db_chunk_overlap: int
+    vector_db_include_extensions: tuple[str, ...]
+    vector_db_max_file_mb: float
+    vector_db_top_k: int
+    vector_db_max_result_chars: int
+    vector_db_min_score: float
 
     # --- ログファイル（app_*.log）の行数ベースローテーション・自動削除 ---
     log_max_lines: int
@@ -1642,13 +1689,14 @@ def _validate_poll_message_template(text: str) -> str:
     return text
 
 
-def _as_llm_endpoint_time(value: Any, key_name: str, field_name: str) -> float | None:
+def _as_llm_endpoint_time(value: Any, key_name: str, field_name: str, section: str = "llm") -> float | None:
     """[llm].main_url / sub_url の各要素の start/end キーを検証してfloatへ変換する。
 
     Args:
         value: item.get("start") / item.get("end") の生値。未指定または空文字は
             None（常時使用可能）として扱う。
         key_name: エラーメッセージに使う設定キー名（例: "main_url"）。
+        section: エラーメッセージに使うセクション名（既定 "llm"。[vector_db].embedding_url では "vector_db"）。
         field_name: エラーメッセージに使うフィールド名（"start" または "end"）。
 
     Returns:
@@ -1662,13 +1710,13 @@ def _as_llm_endpoint_time(value: Any, key_name: str, field_name: str) -> float |
     try:
         hour = float(value)
     except (TypeError, ValueError) as e:
-        raise ValueError(f"[llm].{key_name} の {field_name} は数値（時間、分は小数で指定）にしてください: {value!r}") from e
+        raise ValueError(f"[{section}].{key_name} の {field_name} は数値（時間、分は小数で指定）にしてください: {value!r}") from e
     if not (0.0 <= hour <= 24.0):
-        raise ValueError(f"[llm].{key_name} の {field_name} は0〜24の範囲で指定してください: {value!r}")
+        raise ValueError(f"[{section}].{key_name} の {field_name} は0〜24の範囲で指定してください: {value!r}")
     return hour
 
 
-def _as_llm_endpoints(value: str | None, key_name: str) -> tuple[LLMEndpoint, ...]:
+def _as_llm_endpoints(value: str | None, key_name: str, section: str = "llm") -> tuple[LLMEndpoint, ...]:
     """[llm].main_url / sub_url のJSON/Python風リスト値を LLMEndpoint のタプルに変換する。
 
     例: '[{"base_url": "http://localhost:8080/v1", "api_key": "dummy-not-used",
@@ -1688,6 +1736,7 @@ def _as_llm_endpoints(value: str | None, key_name: str) -> tuple[LLMEndpoint, ..
     Args:
         value: config.ini から得たリスト形式の文字列、または環境変数由来の文字列。
         key_name: エラーメッセージに使う設定キー名（例: "main_url"）。
+        section: エラーメッセージに使うセクション名（既定 "llm"。[vector_db].embedding_url では "vector_db"）。
 
     Returns:
         パースした LLMEndpoint のタプル（1件以上、うち最低1件は start/end 未指定）。
@@ -1701,29 +1750,29 @@ def _as_llm_endpoints(value: str | None, key_name: str) -> tuple[LLMEndpoint, ..
     """
     text = str(value or "").strip()
     if not text:
-        raise ValueError(f"[llm].{key_name} は最低1件の接続先を指定してください: {value!r}")
+        raise ValueError(f"[{section}].{key_name} は最低1件の接続先を指定してください: {value!r}")
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"[llm].{key_name} はJSON/Pythonのリスト（配列）形式で指定してください: {text!r}") from e
+        raise ValueError(f"[{section}].{key_name} はJSON/Pythonのリスト（配列）形式で指定してください: {text!r}") from e
     if not isinstance(parsed, list) or not parsed:
-        raise ValueError(f"[llm].{key_name} は最低1件を含むリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"[{section}].{key_name} は最低1件を含むリスト（配列）形式で指定してください: {text!r}")
     endpoints: list[LLMEndpoint] = []
     for item in parsed:
         if not isinstance(item, dict):
-            raise ValueError(f"[llm].{key_name} の各要素は " '{"base_url":..., "api_key":..., "model":...} の' f"dict にしてください: {item!r}")
+            raise ValueError(f"[{section}].{key_name} の各要素は " '{"base_url":..., "api_key":..., "model":...} の' f"dict にしてください: {item!r}")
         if not item.get("base_url") or not item.get("model"):
-            raise ValueError(f"[llm].{key_name} の各要素には base_url と model が必須です: {item!r}")
-        start = _as_llm_endpoint_time(item.get("start"), key_name, "start")
-        end = _as_llm_endpoint_time(item.get("end"), key_name, "end")
+            raise ValueError(f"[{section}].{key_name} の各要素には base_url と model が必須です: {item!r}")
+        start = _as_llm_endpoint_time(item.get("start"), key_name, "start", section)
+        end = _as_llm_endpoint_time(item.get("end"), key_name, "end", section)
         if (start is None) != (end is None):
-            raise ValueError(f"[llm].{key_name} の各要素は start と end をどちらも指定するか、どちらも省略してください: {item!r}")
+            raise ValueError(f"[{section}].{key_name} の各要素は start と end をどちらも指定するか、どちらも省略してください: {item!r}")
         if start is not None and end is not None and start == end:
-            raise ValueError(f"[llm].{key_name} の start と end が同じ値です（使用可能な時間帯が無くなります）: {item!r}")
+            raise ValueError(f"[{section}].{key_name} の start と end が同じ値です（使用可能な時間帯が無くなります）: {item!r}")
         provider = str(item.get("provider") or "openai_compatible").strip()
         if provider not in LLM_PROVIDERS:
             choices = "/".join(sorted(LLM_PROVIDERS))
-            raise ValueError(f"[llm].{key_name} の provider は {choices} のいずれかにしてください: {item!r}")
+            raise ValueError(f"[{section}].{key_name} の provider は {choices} のいずれかにしてください: {item!r}")
         endpoints.append(
             LLMEndpoint(
                 base_url=str(item["base_url"]),
@@ -1735,8 +1784,85 @@ def _as_llm_endpoints(value: str | None, key_name: str) -> tuple[LLMEndpoint, ..
             )
         )
     if not any(e.start is None and e.end is None for e in endpoints):
-        raise ValueError(f"[llm].{key_name} には start/end を両方省略した（常時使用可能な）接続先が最低1件必要です: {text!r}")
+        raise ValueError(f"[{section}].{key_name} には start/end を両方省略した（常時使用可能な）接続先が最低1件必要です: {text!r}")
     return tuple(endpoints)
+
+
+def _as_embedding_endpoints(value: str | None) -> tuple[LLMEndpoint, ...]:
+    """[vector_db].embedding_url を LLMEndpoint のタプルに変換する（空欄・[] なら空タプル）。
+
+    形式は [llm].main_url と同じ（_as_llm_endpoints() 参照）。埋め込みは接続先ごとに
+    同じベクターを返す必要があるため、全要素の model が同じであることと、
+    時間帯で切り替える start/end を使わないことを追加で要求する。
+
+    Raises:
+        ValueError: _as_llm_endpoints() の検証エラー、model が混在している、
+            または start/end が指定されている場合。
+    """
+    if str(value or "").strip() in ("", "[]"):
+        return ()
+    endpoints = _as_llm_endpoints(value, "embedding_url", section="vector_db")
+    if any(e.start is not None for e in endpoints):
+        raise ValueError(f"[vector_db].embedding_url には start/end を指定できません（時間帯で埋め込みモデルが変わると検索できなくなるため）: {value!r}")
+    if len({e.model.lower() for e in endpoints}) > 1:
+        raise ValueError(f"[vector_db].embedding_url の model はすべて同じにしてください（接続先ごとにベクターが変わると検索できなくなるため）: {value!r}")
+    return endpoints
+
+
+def _as_vector_db_backend(value: str | None) -> str:
+    """[vector_db].backend の値を検証する（VECTOR_DB_BACKENDS のいずれか）。"""
+    text = str(value or "").strip().lower()
+    if text not in VECTOR_DB_BACKENDS:
+        raise ValueError(f"[vector_db].backend は {'/'.join(VECTOR_DB_BACKENDS)} のいずれかにしてください: {value!r}")
+    return text
+
+
+def _as_extension_list(value: str | None) -> tuple[str, ...]:
+    """カンマ区切りの拡張子リストを、小文字・"." 付きに正規化したタプルにする。"""
+    result: list[str] = []
+    for item in str(value or "").split(","):
+        ext = item.strip().lower()
+        if not ext:
+            continue
+        if not ext.startswith("."):
+            ext = "." + ext
+        if ext not in result:
+            result.append(ext)
+    return tuple(result)
+
+
+def _unquote(value: str | None) -> str:
+    """値全体がダブルクォートで囲まれていれば外す。
+
+    configparser は値の末尾の空白を落とすため、"query: " のように空白を残したい値は
+    クォートで囲んで書けるようにする。
+    """
+    stripped = str(value or "").strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] == '"':
+        return stripped[1:-1]
+    return stripped
+
+
+def _validate_vector_db(cfg: "Config") -> None:
+    """[vector_db] のキー同士の組み合わせを検証する。
+
+    Raises:
+        ValueError: chunk_overlap が 0〜chunk_size-1 の範囲外、min_score が 0〜1 の範囲外、
+            または enabled=true なのに embedding_url が空・backend=qdrant なのに
+            qdrant_url が空の場合。
+    """
+    if not (0 <= cfg.vector_db_chunk_overlap < cfg.vector_db_chunk_size):
+        raise ValueError(
+            f"[vector_db].chunk_overlap は 0 以上 chunk_size（{cfg.vector_db_chunk_size}）未満にしてください: {cfg.vector_db_chunk_overlap}"
+        )
+    if not (0.0 <= cfg.vector_db_min_score <= 1.0):
+        raise ValueError(f"[vector_db].min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_min_score}")
+    if not cfg.vector_db_enabled:
+        return
+    if not cfg.vector_db_embedding_endpoints:
+        raise ValueError("[vector_db].enabled = true のときは embedding_url を指定してください。")
+    if cfg.vector_db_backend == "qdrant" and not cfg.vector_db_qdrant_url:
+        raise ValueError("[vector_db].backend = qdrant のときは qdrant_url を指定してください。")
 
 
 def _as_routing_strategy(value: str | None, key_name: str) -> str:
@@ -2425,6 +2551,7 @@ def load_config(
     skill_lab_section = parser["skill_lab"] if parser.has_section("skill_lab") else {}
     skill_lab_worker_section = parser["skill_lab_worker"] if parser.has_section("skill_lab_worker") else {}
     path_memory = parser["path_memory"] if parser.has_section("path_memory") else {}
+    vector_db = parser["vector_db"] if parser.has_section("vector_db") else {}
     log_section = parser["log"] if parser.has_section("log") else {}
     chat_log = parser["chat_log"] if parser.has_section("chat_log") else {}
     thread_store = parser["thread_store"] if parser.has_section("thread_store") else {}
@@ -2765,6 +2892,44 @@ def load_config(
         path_memory_search_filename_weight=float(
             os.getenv("PATH_MEMORY_SEARCH_FILENAME_WEIGHT", path_memory.get("search_filename_weight", 0.7))
         ),
+        vector_db_enabled=_as_bool(os.getenv("VECTOR_DB_ENABLED", vector_db.get("enabled", False))),
+        vector_db_backend=_as_vector_db_backend(os.getenv("VECTOR_DB_BACKEND", vector_db.get("backend", "sqlite_vec"))),
+        vector_db_dir=_resolve(
+            PROJECT_ROOT,
+            _sub_common_data_dir(
+                os.getenv("VECTOR_DB_DIR", vector_db.get("dir", "${common_data_dir}/vector_db")), common_data_dir, resolved_instance_name
+            ),
+        ),
+        vector_db_qdrant_url=str(os.getenv("VECTOR_DB_QDRANT_URL", vector_db.get("qdrant_url", ""))).strip(),
+        vector_db_qdrant_api_key=os.getenv("QDRANT_API_KEY", ""),
+        vector_db_qdrant_collection_prefix=_sub_instance(
+            str(os.getenv("VECTOR_DB_QDRANT_COLLECTION_PREFIX", vector_db.get("qdrant_collection_prefix", "locohane_${instance}_"))).strip(),
+            resolved_instance_name,
+        ),
+        vector_db_qdrant_timeout_seconds=_positive_float(
+            os.getenv("VECTOR_DB_QDRANT_TIMEOUT_SECONDS", vector_db.get("qdrant_timeout_seconds", 30)), "[vector_db].qdrant_timeout_seconds"
+        ),
+        vector_db_embedding_endpoints=_as_embedding_endpoints(os.getenv("VECTOR_DB_EMBEDDING_URL", vector_db.get("embedding_url", ""))),
+        vector_db_embedding_batch_size=_positive_int(
+            os.getenv("VECTOR_DB_EMBEDDING_BATCH_SIZE", vector_db.get("embedding_batch_size", 16)), "[vector_db].embedding_batch_size"
+        ),
+        vector_db_embedding_timeout_seconds=_positive_float(
+            os.getenv("VECTOR_DB_EMBEDDING_TIMEOUT_SECONDS", vector_db.get("embedding_timeout_seconds", 120)),
+            "[vector_db].embedding_timeout_seconds",
+        ),
+        vector_db_query_prefix=_unquote(os.getenv("VECTOR_DB_QUERY_PREFIX", vector_db.get("query_prefix", ""))),
+        vector_db_document_prefix=_unquote(os.getenv("VECTOR_DB_DOCUMENT_PREFIX", vector_db.get("document_prefix", ""))),
+        vector_db_chunk_size=_positive_int(os.getenv("VECTOR_DB_CHUNK_SIZE", vector_db.get("chunk_size", 800)), "[vector_db].chunk_size"),
+        vector_db_chunk_overlap=int(os.getenv("VECTOR_DB_CHUNK_OVERLAP", vector_db.get("chunk_overlap", 100))),
+        vector_db_include_extensions=_as_extension_list(
+            os.getenv("VECTOR_DB_INCLUDE_EXTENSIONS", vector_db.get("include_extensions", ".pdf, .docx, .xlsx, .xlsm, .pptx, .md, .txt, .csv"))
+        ),
+        vector_db_max_file_mb=_positive_float(os.getenv("VECTOR_DB_MAX_FILE_MB", vector_db.get("max_file_mb", 50)), "[vector_db].max_file_mb"),
+        vector_db_top_k=_positive_int(os.getenv("VECTOR_DB_TOP_K", vector_db.get("top_k", 5)), "[vector_db].top_k"),
+        vector_db_max_result_chars=_positive_int(
+            os.getenv("VECTOR_DB_MAX_RESULT_CHARS", vector_db.get("max_result_chars", 6000)), "[vector_db].max_result_chars"
+        ),
+        vector_db_min_score=float(os.getenv("VECTOR_DB_MIN_SCORE", vector_db.get("min_score", 0.3))),
         log_max_lines=int(os.getenv("LOG_MAX_LINES", log_section.get("max_lines", 5000))),
         log_retention_days=int(os.getenv("LOG_RETENTION_DAYS", log_section.get("retention_days", 7))),
         log_cleanup_interval_hours=float(os.getenv("LOG_CLEANUP_INTERVAL_HOURS", log_section.get("cleanup_interval_hours", 1))),
@@ -3275,6 +3440,7 @@ def load_config(
         )
 
     _validate_skill_draft_dir(cfg)
+    _validate_vector_db(cfg)
 
     # data 配下のディレクトリを確実に用意する（checkpoint_db は親ディレクトリを作る）。
     cfg.checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
@@ -3282,6 +3448,8 @@ def load_config(
     cfg.elements_dir.mkdir(parents=True, exist_ok=True)
     cfg.log_dir.mkdir(parents=True, exist_ok=True)
     cfg.path_memory_dir.mkdir(parents=True, exist_ok=True)
+    if cfg.vector_db_enabled:
+        cfg.vector_db_dir.mkdir(parents=True, exist_ok=True)
     cfg.default_workdir.mkdir(parents=True, exist_ok=True)
     cfg.plans_dir.mkdir(parents=True, exist_ok=True)
     cfg.skill_draft_dir.mkdir(parents=True, exist_ok=True)
