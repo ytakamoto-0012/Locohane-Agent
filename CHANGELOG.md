@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-24
+
 ### 追加
 
 - **ベクターDB（社内文書の意味検索）**: 規程・手順書等の文書（PDF・Word・Excel・PowerPoint・Markdown・テキスト・CSV）を
@@ -124,7 +126,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.1.0...v0.1.1
