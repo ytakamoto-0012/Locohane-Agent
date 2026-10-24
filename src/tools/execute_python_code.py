@@ -105,7 +105,7 @@ async def execute_python_code(code: str) -> str:
     workdir = _resolve_exec_workdir()
 
     if not cl.user_session.get("plan_approved"):
-        logger.info("execute_python_code: 計画未承認のためブロック")
+        logger.info("execute_python_code: blocked because the plan is not approved")
         return (
             "エラー: 計画が未承認のため実行できません。"
             "create_plan で計画を作成し、approve_plan でユーザーの承認を得てから"

@@ -47,7 +47,7 @@ async def approve_plan() -> str:
             message.content = _render_plan_payload(plan, approved=True)
             await message.update()
         await cl.Message(content=t("plan.auto_approved")).send()
-        logger.info("approve_plan: auto_approve=true のため自動承認しました")
+        logger.info("approve_plan: approved automatically because auto_approve=true")
         return "config.ini の [plan].auto_approve が有効なため、ユーザーへの確認をスキップして自動承認しました。書き込み系ツール（run_script/execute_python_code）を実行できます。"
     content = _render_plan(plan, heading=t("plan.heading")) + "\n\n" + t("plan.approve_question")
     actions = [
@@ -72,17 +72,17 @@ async def approve_plan() -> str:
         message.content = _render_plan_payload(plan, approved=approved)
         await message.update()
     if approved:
-        logger.info("approve_plan: 承認されました")
+        logger.info("approve_plan: approved")
         return "ユーザーが計画を承認しました。書き込み系ツール（run_script/execute_python_code）を実行できます。"
     if res is None:
-        logger.info("approve_plan: 応答なし（タイムアウト）")
+        logger.info("approve_plan: no response (timeout)")
         return (
             f"ユーザーからの応答が{_state._APPROVAL_TIMEOUT_SECONDS}秒間ありませんでした"
             "（離席中の可能性があります）。計画自体はそのまま保持されているので、"
             "作り直す必要はありません。少し時間を置いてから改めて approve_plan を"
             "呼び直してください。"
         )
-    logger.info("approve_plan: 明示的に却下されました")
+    logger.info("approve_plan: explicitly rejected")
     # app.py の on_tool_end がこのフラグを見て、ツール呼び出しを続けさせず
     # このターンの処理を強制的に打ち切る（LLMが「計画を微修正して続行しよう」
     # と自己判断してしまうのを、プロンプト指示だけに頼らずコード側で確実に防ぐため）。

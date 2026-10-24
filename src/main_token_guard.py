@@ -60,13 +60,12 @@ def maybe_append_token_guard(
         # 文言を読めないことで会話を止めてしまう方が損失が大きいため、
         # 記録だけ残して通常どおり続行する。
         logger.exception(
-            "引継ぎプロンプトの読み込みに失敗しました: %s", config.graph_handoff_prompt_path
+            "Failed to load the handoff prompt: %s", config.graph_handoff_prompt_path
         )
         return messages
 
     logger.warning(
-        "メインエージェントのトークン使用量が閾値(%d)に達しました"
-        "(直近の応答: %dトークン)。引継ぎプロンプトの生成を促します",
+        "Main agent token usage reached the threshold (%d) (last response: %d tokens). Prompting it to generate a handoff prompt",
         config.graph_token_guard_soft_threshold,
         total,
     )

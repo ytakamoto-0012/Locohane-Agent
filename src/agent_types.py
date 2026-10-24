@@ -75,7 +75,7 @@ def _parse_frontmatter(text: str) -> dict | None:
     try:
         data = yaml.safe_load(parts[1])
     except yaml.YAMLError as e:
-        logger.warning("frontmatter の YAML パースに失敗: %s", e)
+        logger.warning("Failed to parse frontmatter YAML: %s", e)
         return None
     return (data, parts[2]) if isinstance(data, dict) else None
 
@@ -154,7 +154,7 @@ def _scan_one(root: Path) -> list[AgentType]:
         text = entry.read_text(encoding="utf-8")
         parsed = _parse_frontmatter(text)
         if parsed is None:
-            logger.warning("frontmatter を読めないためスキップ: %s", entry.name)
+            logger.warning("Skipping because the frontmatter cannot be read: %s", entry.name)
             continue
         fm, body = parsed
 
@@ -162,7 +162,7 @@ def _scan_one(root: Path) -> list[AgentType]:
         description = fm.get("description")
         error = _validate(name, description, entry.stem)
         if error:
-            logger.warning("仕様違反のためスキップ (%s): %s", entry.name, error)
+            logger.warning("Skipping because it violates the spec (%s): %s", entry.name, error)
             continue
 
         agent_types.append(
@@ -174,7 +174,7 @@ def _scan_one(root: Path) -> list[AgentType]:
                 model=_parse_model_field(fm.get("model")),
             )
         )
-        logger.info("エージェント種別発見: %s", name)
+        logger.info("Discovered agent type: %s", name)
 
     return agent_types
 
@@ -207,11 +207,11 @@ def scan_agent_types(agents_dirs: Path | str | Sequence[Path | str]) -> list[Age
     for agents_dir in agents_dirs:
         root = Path(agents_dir)
         if not root.is_dir():
-            logger.debug("agents ディレクトリが存在しない（任意）: %s", root)
+            logger.debug("agents directory does not exist (optional): %s", root)
             continue
         for agent_type in _scan_one(root):
             if agent_type.name in merged:
-                logger.info("エージェント種別 '%s' を %s の定義で上書き", agent_type.name, root)
+                logger.info("Agent type '%s' overridden by the definition in %s", agent_type.name, root)
             merged[agent_type.name] = agent_type
 
     return sorted(merged.values(), key=lambda a: a.name)

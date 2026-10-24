@@ -258,7 +258,7 @@ async def _push_batch_progress(jobs: list[tuple[str, _DispatchAgentJob]], starte
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 - 進捗表示の失敗でfire-and-forgetタスクの例外警告を残さない
-        logger.debug("dispatch_agent_batch: 進捗pushに失敗しました", exc_info=True)
+        logger.debug("dispatch_agent_batch: failed to push progress", exc_info=True)
 
 
 async def _run_group_runnable(
@@ -354,7 +354,7 @@ def _save_interrupted_note(
         )
         write_thread_note.invoke({"topic": interrupted_note_topic(tool_call_id), "content": "\n\n".join([head, *full_lines])})
     except Exception:  # noqa: BLE001 - 中断処理そのものは止めない
-        logger.exception("dispatch_agent_batch: 中断時の結果を thread note へ保存できませんでした")
+        logger.exception("dispatch_agent_batch: could not save the results at interruption to the thread note")
 
 
 @tool
@@ -545,7 +545,7 @@ async def dispatch_agent_batch(
         try:
             note_result = write_thread_note.invoke({"topic": topic, "content": "\n\n".join(full_lines)})
         except Exception as e:  # noqa: BLE001 - 保存失敗で集計結果そのものを失わない
-            logger.exception("dispatch_agent_batch: thread note への保存に失敗しました")
+            logger.exception("dispatch_agent_batch: failed to save to the thread note")
             note_result = f"エラー: thread note への保存に失敗しました: {e}"
         note_line = f'終了した各グループの最終回答の全文は thread note "{topic}" に保存しました。' if not note_result.startswith("エラー:") else note_result
 
@@ -566,7 +566,7 @@ async def dispatch_agent_batch(
             "再委任の前に、LLMサーバーの状態をユーザーに確認すること。"
         )
     if pending:
-        logger.warning("dispatch_agent_batch: 安全上限(%s秒)に達したため job_id を返します: %s", wait_timeout, pending)
+        logger.warning("dispatch_agent_batch: reached the safety limit (%s seconds), returning job_id: %s", wait_timeout, pending)
         head += f"安全上限（{wait_timeout}秒）に達したため、まだ実行中の {len(pending)} グループを残していったんこのターンを終えて制御を返します（ジョブ自体は裏側で動き続けます）。"
         tail.append(
             f"実行中の job_id: {', '.join(pending)}\n"

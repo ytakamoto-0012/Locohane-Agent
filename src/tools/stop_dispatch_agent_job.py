@@ -40,7 +40,7 @@ async def stop_dispatch_agent_job(job_id: str) -> str:
 
     job.status = "killed"
     logger.warning(
-        "dispatch_agent: 停止指示により強制終了します (run_id=%s, job_id=%s, iter=%d/%d)",
+        "dispatch_agent: force-stopping on a stop instruction (run_id=%s, job_id=%s, iter=%d/%d)",
         job.run_id,
         job_id,
         job.current_iteration,

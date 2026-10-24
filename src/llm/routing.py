@@ -132,7 +132,7 @@ def notify_llm_wait(waiting: bool) -> None:
     try:
         listener(waiting)
     except Exception:  # noqa: BLE001 - 進捗表示の失敗で生成を止めない
-        logger.debug("LLM空き待ちの通知に失敗しました", exc_info=True)
+        logger.debug("Failed to notify about waiting for a free LLM", exc_info=True)
 
 
 def set_current_session(session_id: str | None, *, tab_id: str | None = None) -> None:
@@ -222,7 +222,7 @@ async def aclose_active_llm_clients(session_id: str) -> None:
             # 呼び出し元へ伝播する）。ここで即raiseしない。
             pending_cancel = exc
         except Exception:  # noqa: BLE001 - 1件の失敗が残りのcloseを妨げないようにする
-            logger.debug("httpx.AsyncClient のクローズ中に例外が発生しました", exc_info=True)
+            logger.debug("Exception while closing httpx.AsyncClient", exc_info=True)
     if pending_cancel is not None:
         raise pending_cancel
 
@@ -261,7 +261,7 @@ async def aclose_model_client(model: ChatOpenAI) -> None:
     try:
         await client.aclose()
     except Exception:  # noqa: BLE001 - 1回のクローズ失敗でリトライ自体を止めない
-        logger.debug("モデル専用クライアントのクローズ中に例外が発生しました", exc_info=True)
+        logger.debug("Exception while closing a model-specific client", exc_info=True)
 
 
 # --- LLM接続先の簡易ルーティング ([llm].main_url / sub_url が複数件のとき) ---
@@ -390,7 +390,7 @@ async def _probe_llama_cpp_slots_available(base_url: str, timeout_seconds: float
             response.raise_for_status()
             slots = response.json()
     except (httpx.TransportError, httpx.HTTPStatusError, ValueError) as exc:
-        logger.debug("GET %s の確認に失敗しました（空きありとみなします）", slots_url, exc_info=exc)
+        logger.debug("Checking GET %s failed (treating it as free)", slots_url, exc_info=exc)
         return None
     if not isinstance(slots, list) or not slots:
         return None
@@ -522,8 +522,7 @@ def _priority_failover_order(role: str, eligible_indices: list[int]) -> list[int
     now = time.time()
     order = [i for i in eligible_indices if _ENDPOINT_COOLDOWN_UNTIL.get((role, i), 0.0) <= now]
     logger.info(
-        "接続先選択[priority_failover]: role=%s eligible_indices=%s "
-        "cooldown_until(role別全件)=%s now=%.3f -> order=%s",
+        "Endpoint selection [priority_failover]: role=%s eligible_indices=%s cooldown_until(all per role)=%s now=%.3f -> order=%s",
         role,
         eligible_indices,
         {k: v for k, v in _ENDPOINT_COOLDOWN_UNTIL.items() if k[0] == role},
@@ -594,8 +593,7 @@ async def _select_endpoint_with_slots_probe(
             endpoint = endpoints[index]
             if endpoint.provider != "llama_cpp":
                 logger.info(
-                    "接続先選択[%s]: role=%s order=%s -> index=%d "
-                    "(理由: provider=%s のため空き確認なしで選択)",
+                    "Endpoint selection [%s]: role=%s order=%s -> index=%d (reason: chosen without a free-slot check because provider=%s)",
                     strategy,
                     role,
                     order,
@@ -606,8 +604,7 @@ async def _select_endpoint_with_slots_probe(
             counts = await _probe_llama_cpp_slots_available(endpoint.base_url, probe_timeout_seconds)
             if counts is None:
                 logger.info(
-                    "接続先選択[%s]: role=%s order=%s -> index=%d base_url=%s "
-                    "(理由: GET /slots で確認できないためフェイルセーフで選択)",
+                    "Endpoint selection [%s]: role=%s order=%s -> index=%d base_url=%s (reason: chosen as a fail-safe because GET /slots could not be checked)",
                     strategy,
                     role,
                     order,
@@ -620,8 +617,7 @@ async def _select_endpoint_with_slots_probe(
             reserved = _active_reservations(_server_key(endpoint.base_url) or "")
             if counts.free - reserved > 0:
                 logger.info(
-                    "接続先選択[%s]: role=%s order=%s -> index=%d base_url=%s "
-                    "(理由: GET /slots 空き=%d/%d、自プロセスの未送信予約=%d)",
+                    "Endpoint selection [%s]: role=%s order=%s -> index=%d base_url=%s (reason: GET /slots free=%d/%d, unsent reservations in this process=%d)",
                     strategy,
                     role,
                     order,
@@ -633,8 +629,7 @@ async def _select_endpoint_with_slots_probe(
                 )
                 return index
             logger.info(
-                "接続先選択[%s]: role=%s index=%d base_url=%s は空きスロットが無いためスキップ "
-                "(空き=%d/%d、自プロセスの未送信予約=%d)",
+                "Endpoint selection [%s]: role=%s index=%d base_url=%s skipped because it has no free slot (free=%d/%d, unsent reservations in this process=%d)",
                 strategy,
                 role,
                 index,
@@ -647,8 +642,7 @@ async def _select_endpoint_with_slots_probe(
         if not wait_when_busy:
             index = order[0]
             logger.warning(
-                "接続先選択[%s]: role=%s 候補%s全ての空きスロットが無いですが、"
-                "wait_when_busy=False のため待機せず index=%d を暫定選択します",
+                "Endpoint selection [%s]: role=%s no free slot on any candidate %s, but wait_when_busy=False so index=%d is chosen provisionally without waiting",
                 strategy,
                 role,
                 order,
@@ -656,8 +650,7 @@ async def _select_endpoint_with_slots_probe(
             )
             return index
         logger.warning(
-            "接続先選択[%s]: role=%s 候補%s全ての空きスロットが無いため%.1f秒待機します"
-            "（試行%d回目、次回は使用可能時間帯を再確認します）",
+            "Endpoint selection [%s]: role=%s no free slot on any candidate %s, waiting %.1f seconds (attempt %d; the available time windows are checked again next time)",
             strategy,
             role,
             order,
@@ -744,8 +737,7 @@ async def _select_endpoint(
     state_key = (role, tab_id)
 
     logger.info(
-        "接続先選択[開始]: role=%s strategy=%s session_id=%r inherit_from_role=%r preferred_model=%r "
-        "fallback_model=%r endpoints_total=%d endpoints=%s",
+        "Endpoint selection [start]: role=%s strategy=%s session_id=%r inherit_from_role=%r preferred_model=%r fallback_model=%r endpoints_total=%d endpoints=%s",
         role,
         strategy,
         session_id,
@@ -760,7 +752,7 @@ async def _select_endpoint(
     # 無いものは除く。model_labels は model_candidates と同じ並びのログ用ラベル。
     model_candidates: list[list[int]] = []
     model_labels: list[str] = []
-    for kind, name in (("指定", preferred_model), ("既定", fallback_model)):
+    for kind, name in (("preferred", preferred_model), ("default", fallback_model)):
         if not name:
             continue
         indices = _model_matching_indices(endpoints, name)
@@ -768,8 +760,8 @@ async def _select_endpoint(
             # 指定モデル（LLM・定義ファイル由来）の誤りは WARNING、既定モデル
             # （設定値由来）は app.py が起動時に1回だけ WARNING を出すため INFO。
             logger.log(
-                logging.WARNING if kind == "指定" else logging.INFO,
-                "接続先選択: role=%s session_id=%r %sモデル %r の接続先が無いため、この指定を無視します",
+                logging.WARNING if kind == "preferred" else logging.INFO,
+                "Endpoint selection: role=%s session_id=%r no endpoint for the %s model %r, ignoring this setting",
                 role,
                 session_id,
                 kind,
@@ -777,7 +769,7 @@ async def _select_endpoint(
             )
         elif indices not in model_candidates:
             model_candidates.append(indices)
-            model_labels.append(f"{kind}モデル {name!r}")
+            model_labels.append(f"{kind} model {name!r}")
 
     # round_robin/priority_failover戦略はこのあと _select_endpoint_with_slots_probe 内で待機の
     # 周回ごとに自前で再計算するため、ここでの eligible_indices は
@@ -787,20 +779,19 @@ async def _select_endpoint(
     for skipped in range(len(model_candidates) if position is None else position):
         # 指定モデルの時間帯外は WARNING、既定モデル（時間帯指定の運用上の正常状態）は INFO。
         logger.log(
-            logging.WARNING if model_labels[skipped].startswith("指定") else logging.INFO,
-            "接続先選択: role=%s session_id=%r %s の接続先が全て時間帯外のため、%sに従います",
+            logging.WARNING if model_labels[skipped].startswith("preferred") else logging.INFO,
+            "Endpoint selection: role=%s session_id=%r all endpoints for %s are outside their time windows, falling back to %s",
             role,
             session_id,
             model_labels[skipped],
-            f"{model_labels[position]} のルーティング" if position is not None else "モデル指定を無視して通常のルーティング",
+            f"routing for the {model_labels[position]}" if position is not None else "normal routing, ignoring the model setting",
         )
 
     if inherit_from_role is not None:
         inherited_index = _LAST_SELECTED_INDEX.get((inherit_from_role, tab_id))
         if inherited_index is not None and position is not None and inherited_index not in model_candidates[position]:
             logger.info(
-                "接続先選択: role=%s session_id=%r inherit_from_role=%s の直近選択 index=%d はモデル %r でないため、"
-                "継承せずそのモデルの接続先から選びます",
+                "Endpoint selection: role=%s session_id=%r the last selection of inherit_from_role=%s (index=%d) is not for the %s, so choosing from that model's endpoints instead of inheriting",
                 role,
                 session_id,
                 inherit_from_role,
@@ -810,8 +801,7 @@ async def _select_endpoint(
         elif inherited_index is not None and inherited_index < len(endpoints):
             _LAST_SELECTED_INDEX[state_key] = inherited_index
             logger.info(
-                "接続先選択[結果]: role=%s session_id=%r -> index=%d base_url=%s model=%s "
-                "(理由: inherit_from_role=%s の直近選択を継承)",
+                "Endpoint selection [result]: role=%s session_id=%r -> index=%d base_url=%s model=%s (reason: inherited the last selection of inherit_from_role=%s)",
                 role,
                 session_id,
                 inherited_index,
@@ -822,8 +812,7 @@ async def _select_endpoint(
             return endpoints[inherited_index]
         else:
             logger.info(
-                "接続先選択: role=%s session_id=%r inherit_from_role=%s の直近選択が無いため通常ロジックへフォールバック "
-                "(_LAST_SELECTED_INDEX に (%s, %r) が未登録)",
+                "Endpoint selection: role=%s session_id=%r no last selection for inherit_from_role=%s, falling back to the normal logic ((%s, %r) is not in _LAST_SELECTED_INDEX)",
                 role,
                 session_id,
                 inherit_from_role,
@@ -834,8 +823,7 @@ async def _select_endpoint(
     excluded_indices = [i for i in range(len(endpoints)) if i not in time_eligible_indices]
     if excluded_indices:
         logger.info(
-            "接続先選択: role=%s session_id=%r 時間帯外のため除外されたインデックス=%s "
-            "（%sのstart/end設定を確認）",
+            "Endpoint selection: role=%s session_id=%r indices excluded because they are outside their time windows=%s (check the start/end settings of %s)",
             role,
             session_id,
             excluded_indices,
@@ -846,8 +834,7 @@ async def _select_endpoint(
         index = eligible_indices[0]
         _LAST_SELECTED_INDEX[state_key] = index
         logger.info(
-            "接続先選択[結果]: role=%s strategy=%s session_id=%r -> index=%d/%d base_url=%s model=%s "
-            "(理由: 使用可能な接続先が1件しかないためstrategyに関わらず強制選択。endpoints_total=%d)",
+            "Endpoint selection [result]: role=%s strategy=%s session_id=%r -> index=%d/%d base_url=%s model=%s (reason: only one endpoint is available, so it is chosen regardless of the strategy. endpoints_total=%d)",
             role,
             strategy,
             session_id,
@@ -862,7 +849,7 @@ async def _select_endpoint(
     if strategy == "random":
         index = random.choice(eligible_indices)
         logger.info(
-            "接続先選択[random]: role=%s session_id=%r candidates=%s -> index=%d",
+            "Endpoint selection [random]: role=%s session_id=%r candidates=%s -> index=%d",
             role,
             session_id,
             eligible_indices,
@@ -883,8 +870,7 @@ async def _select_endpoint(
 
     _LAST_SELECTED_INDEX[state_key] = index
     logger.info(
-        "接続先選択[最終結果]: role=%s strategy=%s session_id=%r -> index=%d/%d base_url=%s model=%s "
-        "state_key=%r _LAST_SELECTED_INDEX(role別全件)=%s",
+        "Endpoint selection [final result]: role=%s strategy=%s session_id=%r -> index=%d/%d base_url=%s model=%s state_key=%r _LAST_SELECTED_INDEX(all per role)=%s",
         role,
         strategy,
         session_id,
@@ -924,7 +910,7 @@ def mark_last_endpoint_failed(role: str) -> None:
         return
     _ENDPOINT_COOLDOWN_UNTIL[(role, index)] = time.time() + _ENDPOINT_FAILOVER_COOLDOWN_SECONDS
     logger.warning(
-        "LLM接続失敗を検知したため接続先を一時的に避けます（role=%s, index=%d, %.0f秒間）",
+        "Detected an LLM connection failure, temporarily avoiding the endpoint (role=%s, index=%d, for %.0f seconds)",
         role,
         index,
         _ENDPOINT_FAILOVER_COOLDOWN_SECONDS,

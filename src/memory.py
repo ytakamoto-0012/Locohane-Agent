@@ -136,7 +136,7 @@ def _split_frontmatter(text: str) -> tuple[dict | None, str]:
     try:
         data = yaml.safe_load(parts[1])
     except yaml.YAMLError as e:
-        logger.warning("メモリー frontmatter の YAML パースに失敗: %s", e)
+        logger.warning("Failed to parse memory frontmatter YAML: %s", e)
         return None, text
     if not isinstance(data, dict):
         return None, text
@@ -166,13 +166,13 @@ def _load(path: Path) -> Memory | None:
     text = path.read_text(encoding="utf-8")
     frontmatter, body = _split_frontmatter(text)
     if frontmatter is None:
-        logger.warning("メモリー frontmatter を読めないためスキップ: %s", path)
+        logger.warning("Skipping because the memory frontmatter cannot be read: %s", path)
         return None
     name = frontmatter.get("name")
     description = frontmatter.get("description")
     memory_type = frontmatter.get("type")
     if not isinstance(name, str) or not isinstance(description, str) or memory_type not in MEMORY_TYPES:
-        logger.warning("メモリーの frontmatter が不正なためスキップ: %s", path)
+        logger.warning("Skipping because the memory frontmatter is invalid: %s", path)
         return None
     return Memory(name=name, description=description, memory_type=memory_type, content=body.rstrip("\n"), path=path)
 

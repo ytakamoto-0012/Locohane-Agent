@@ -301,9 +301,9 @@ def main() -> int:
     parser.add_argument("--llm-from-instance", help="run_case.py の --llm-from-instance へ渡す")
     args = parser.parse_args()
     if not args.target and not args.cases_dir:
-        parser.error("target か --cases-dir のどちらかを指定してください")
+        parser.error("Specify either target or --cases-dir")
     if args.repeat < 1:
-        parser.error("--repeat は1以上の整数で指定してください")
+        parser.error("--repeat must be an integer of 1 or more")
     cases_dir = args.cases_dir.resolve() if args.cases_dir else None
     case_ids = args.case_ids
     if cases_dir:

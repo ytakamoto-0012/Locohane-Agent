@@ -13,35 +13,45 @@ from admin import monitor
 from src import runtime_status
 
 
-def _token_line(ts: str, thread_id: str, call_in: int, cum: int, cum_main: int) -> str:
+def _token_line(ts: str, thread_id: str, call_in: int, cum: int, cum_main: int, label: str = "token usage") -> str:
     return (
-        f"{ts},123 [thread={thread_id}] INFO app.py: トークン使用量 thread_id={thread_id} "
+        f"{ts},123 [thread={thread_id}] INFO app.py: {label} thread_id={thread_id} "
         f"call(in={call_in},out=10,total={call_in + 10}) turn(in=1,out=1,total=2) "
         f"cumulative(in=1,out=1,total={cum}) cumulative_main(in=1,out=1,total={cum_main})\n"
     )
 
 
-def test_token_history_cumulative_never_drops_and_marks_real_compaction(tmp_path: Path):
+# 現在の英語の書式と、v0.3 までの日本語の書式（ローテーションで消えるまで残るログ）。
+LOG_LABELS = [
+    ("token usage", "compaction token usage", "context compacted"),
+    ("トークン使用量", "圧縮処理トークン使用量", "コンテキスト圧縮を実行しました"),
+]
+
+
+@pytest.mark.parametrize(("token", "compaction_usage", "compaction_done"), LOG_LABELS)
+def test_token_history_cumulative_never_drops_and_marks_real_compaction(
+    tmp_path: Path, token: str, compaction_usage: str, compaction_done: str
+):
     log_dir = tmp_path / "logs"
     log_dir.mkdir()
     tid = "t-1"
     (log_dir / "app_20261001_000000.log").write_text(
         # メイン（total=110）
-        _token_line("2026-10-01 00:00:01", tid, 100, 110, 110)
-        + _token_line("2026-10-01 00:00:02", "other", 999, 999, 999)
+        _token_line("2026-10-01 00:00:01", tid, 100, 110, 110, token)
+        + _token_line("2026-10-01 00:00:02", "other", 999, 999, 999, token)
         # サブエージェント（total=60）: cumulative_main が増えない
-        + _token_line("2026-10-01 00:00:03", tid, 50, 170, 110)
+        + _token_line("2026-10-01 00:00:03", tid, 50, 170, 110, token)
         # 生成中の切断→再開で本体のカウンタが 0 に戻った後のメイン（total=40）
-        + _token_line("2026-10-01 00:00:04", tid, 30, 40, 40),
+        + _token_line("2026-10-01 00:00:04", tid, 30, 40, 40, token),
         encoding="utf-8",
     )
     # 後のファイル。圧縮処理自身の呼び出し → 圧縮実行 → 圧縮後のメイン（total=20）
     (log_dir / "app_20261001_120000.log").write_text(
         f"2026-10-01 12:00:00,1 [thread={tid}] INFO src.context_compaction: "
-        "圧縮処理トークン使用量 kind=summary role=main call(in=500,out=50,total=550)\n"
+        f"{compaction_usage} kind=summary role=main call(in=500,out=50,total=550)\n"
         f"2026-10-01 12:00:01,1 [thread={tid}] WARNING app.py: "
-        f"コンテキスト圧縮を実行しました thread_id={tid} messages=40->6\n"
-        + _token_line("2026-10-01 12:00:02", tid, 10, 20, 20),
+        f"{compaction_done} thread_id={tid} messages=40->6\n"
+        + _token_line("2026-10-01 12:00:02", tid, 10, 20, 20, token),
         encoding="utf-8",
     )
     points = monitor.token_history(log_dir, tid)

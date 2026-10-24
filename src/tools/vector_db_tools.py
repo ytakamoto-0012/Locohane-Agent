@@ -28,7 +28,7 @@ def _unexpected_error(tool_name: str, e: Exception) -> str:
     langgraph の ToolNode は既定で ToolInvocationError 以外の例外を投げ直し、会話のターンごと止めるため、
     ベクターDB の一時的な不具合（取り込みの「再構築」と同時の検索で表が消えた等）は文字列で返す。
     """
-    logger.exception("%s: 想定外のエラー", tool_name)
+    logger.exception("%s: unexpected error", tool_name)
     return f"エラー: 社内文書の検索で想定外のエラーが起きました（{type(e).__name__}: {e}）。時間を置いて試し直してください。"
 
 

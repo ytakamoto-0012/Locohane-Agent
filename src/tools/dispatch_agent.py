@@ -217,7 +217,7 @@ async def dispatch_agent(
         # 代入が間に合う。
         job.turn_still_waiting = False
         logger.warning(
-            "dispatch_agent: 安全上限(%s秒)に達したため job_id を返してターンを終えます: job_id=%s",
+            "dispatch_agent: reached the safety limit (%s seconds), returning job_id and ending the turn: job_id=%s",
             wait_timeout,
             job_id,
         )

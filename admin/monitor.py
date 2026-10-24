@@ -48,8 +48,12 @@ _INTERNAL_TYPES = ("tool", "llm")
 MAX_FIELD_CHARS = 20000
 
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ \[thread=([^\]]*)\] (\w+) (\S+): (.*)$")
+# アプリログの書式（app.py・src/context_compaction.py）。v0.3 までの日本語の行も、
+# ローテーションで消えるまでは読めるよう両方を受け付ける。
+_TOKEN_USAGE_LABELS = ("token usage", "トークン使用量")
+_COMPACTION_DONE_LABELS = ("context compacted", "コンテキスト圧縮を実行しました")
 _TOKEN_RE = re.compile(
-    r"トークン使用量 thread_id=(\S+) "
+    r"(?:token usage|トークン使用量) thread_id=(\S+) "
     r"call\(in=(\d+),out=(\d+),total=(\d+)\) "
     r"turn\(in=(\d+),out=(\d+),total=(\d+)\) "
     r"cumulative\(in=(\d+),out=(\d+),total=(\d+)\) "
@@ -57,7 +61,7 @@ _TOKEN_RE = re.compile(
 )
 # src/context_compaction.py の _log_compaction_usage が出す行。
 _COMPACTION_USAGE_RE = re.compile(
-    r"圧縮処理トークン使用量 kind=(\S+) role=(\S+) call\(in=(\d+),out=(\d+),total=(\d+)\)"
+    r"(?:compaction token usage|圧縮処理トークン使用量) kind=(\S+) role=(\S+) call\(in=(\d+),out=(\d+),total=(\d+)\)"
 )
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
@@ -343,7 +347,7 @@ def live_context_series(log_dir: Path, generating: list[dict]) -> list[dict]:
             except OSError:
                 continue
         for line in _read_lines(path):
-            if "トークン使用量" not in line:
+            if not any(label in line for label in _TOKEN_USAGE_LABELS):
                 continue
             head = _LOG_LINE_RE.match(line.rstrip("\n"))
             if not head:
@@ -402,8 +406,8 @@ def token_history(log_dir: Path, thread_id: str) -> list[dict]:
     compacted: この点の直前でメインエージェントのコンテキスト圧縮が実行された
         （app.py の「コンテキスト圧縮を実行しました」行）。
     """
-    token_needle = f"トークン使用量 thread_id={thread_id} "
-    compaction_done_needle = f"コンテキスト圧縮を実行しました thread_id={thread_id} "
+    token_needles = tuple(f"{label} thread_id={thread_id} " for label in _TOKEN_USAGE_LABELS)
+    compaction_done_needles = tuple(f"{label} thread_id={thread_id} " for label in _COMPACTION_DONE_LABELS)
     points: list[dict] = []
     prev_main_logged: int | None = None
     cum_all = 0
@@ -419,11 +423,11 @@ def token_history(log_dir: Path, thread_id: str) -> list[dict]:
             # 各行はメッセージ先頭で照合する（DEBUG ログに出た会話内容等に同じ文字列が
             # 含まれていても、偽の呼び出し・圧縮として拾わない）。
             message = head.group(5)
-            if message.startswith(compaction_done_needle):
+            if message.startswith(compaction_done_needles):
                 pending_compaction = True
                 continue
             ts = head.group(1).replace(" ", "T")
-            if message.startswith(token_needle):
+            if message.startswith(token_needles):
                 m = _TOKEN_RE.match(message)
                 if not m or m.group(1) != thread_id:
                     continue

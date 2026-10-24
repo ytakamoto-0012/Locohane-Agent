@@ -68,7 +68,7 @@ def _log_compaction_usage(kind: str, role: str, response) -> dict | None:
     if not isinstance(usage, dict) or not usage:
         return None
     logger.info(
-        "圧縮処理トークン使用量 kind=%s role=%s call(in=%d,out=%d,total=%d)",
+        "compaction token usage kind=%s role=%s call(in=%d,out=%d,total=%d)",
         kind,
         role,
         usage.get("input_tokens", 0) or 0,
@@ -89,7 +89,7 @@ async def _record_compaction_usage(kind: str, role: str, response) -> None:
     try:
         await _usage_listener(kind, role, usage)
     except Exception:  # noqa: BLE001 - 付帯の集計で圧縮を止めない
-        logger.warning("圧縮処理のトークン使用量の集計に失敗しました", exc_info=True)
+        logger.warning("Failed to tally compaction token usage", exc_info=True)
 
 
 _SUMMARY_HEADER = "[自動要約: コンテキスト圧縮のため、以前の会話の一部を要約しました。" "この内容を踏まえて続きの作業を行ってください]\n"
@@ -146,8 +146,7 @@ def maybe_append_precompact_note_nudge(messages: list[BaseMessage], config: Conf
         return messages
 
     logger.warning(
-        "メインエージェントのトークン使用量がコンテキスト圧縮の予告閾値(%d)に達しました"
-        "(直近の応答: %dトークン)。write_thread_noteへの書き出しを促します",
+        "Main agent token usage reached the context compaction warning threshold (%d) (last response: %d tokens). Prompting it to write to write_thread_note",
         config.context_compaction_pre_note_threshold,
         total,
     )
@@ -320,15 +319,15 @@ async def force_write_thread_note(
         # RunnableBinding ではなく素の model（httpx.AsyncClient を保持して
         # いるのはこちら）。
         await aclose_model_client(model)
-        logger.exception("write_thread_note の強制実行が要約LLMのループ検知で失敗しました")
+        logger.exception("Forced write_thread_note failed: loop detected in the summarizer LLM")
         return None
     except Exception:
-        logger.exception("write_thread_note の強制実行に失敗しました（LLM呼び出しエラー）")
+        logger.exception("Forced write_thread_note failed (LLM call error)")
         return None
 
     tool_calls = getattr(response, "tool_calls", None) or []
     if not tool_calls:
-        logger.warning("write_thread_note の強制実行でtool_callsが空の応答が返りました")
+        logger.warning("Forced write_thread_note returned a response with empty tool_calls")
         return None
 
     # tool_choice="required" でツールを1件に絞っていても、モデルが
@@ -344,13 +343,13 @@ async def force_write_thread_note(
         topic = args.get("topic")
         content = args.get("content")
         if not topic or not content:
-            logger.warning("write_thread_note の強制実行でtopic/content引数が不足していました: %r", args)
+            logger.warning("Forced write_thread_note was missing topic/content arguments: %r", args)
             result_text = "エラー: topic/content が不足していたため書き込みませんでした。"
         else:
             try:
                 result_text = await write_thread_note.ainvoke({"topic": topic, "content": content})
             except Exception:
-                logger.exception("write_thread_note の強制実行でツール本体の実行に失敗しました")
+                logger.exception("Forced write_thread_note failed to run the tool itself")
                 result_text = "エラー: thread note への書き込みに失敗しました。"
             else:
                 written_topics.append(topic)
@@ -361,7 +360,7 @@ async def force_write_thread_note(
         # フォールバックする（呼び出し元は skip_count を進める）。
         return None
 
-    logger.warning("write_thread_note の強制実行に成功しました (topics=%r)", written_topics)
+    logger.warning("Forced write_thread_note succeeded (topics=%r)", written_topics)
     return response, tool_messages
 
 
@@ -660,7 +659,7 @@ async def maybe_compact(
     try:
         prompt = config.context_compaction_prompt_path.read_text(encoding="utf-8")
     except OSError:
-        logger.exception("要約プロンプトの読み込みに失敗しました: %s", config.context_compaction_prompt_path)
+        logger.exception("Failed to load the summary prompt: %s", config.context_compaction_prompt_path)
         return None
 
     summary_prompt = prompt + "\n\n---\n\n# 要約対象の会話履歴\n\n" + text
@@ -685,11 +684,11 @@ async def maybe_compact(
             )
             if connection_attempt >= connection_max_retries:
                 # 要約自体の失敗で本編の会話を壊さないよう、失敗時は元の履歴のまま続行する。
-                logger.exception("会話履歴の自動要約が通信エラーで失敗しました。今回は圧縮をスキップします")
+                logger.exception("Automatic conversation summary failed with a communication error. Skipping compaction this time")
                 return None
             connection_attempt += 1
             logger.warning(
-                "要約LLM呼び出しが通信エラーのため接続先を切り替えて再試行します" "(%d/%d回目, role=%s): %s",
+                "Summarizer LLM call hit a communication error, switching endpoints and retrying (%d/%d, role=%s): %s",
                 connection_attempt,
                 connection_max_retries,
                 role,
@@ -714,13 +713,13 @@ async def maybe_compact(
             loop_max_retries = config.thinking_loop_guard_max_retries
             if loop_attempt >= loop_max_retries:
                 logger.warning(
-                    "要約LLM応答がループし、%d回リトライしましたが改善しなかったため" "今回は圧縮をスキップします",
+                    "Summarizer LLM response kept looping after %d retries, skipping compaction this time",
                     loop_max_retries,
                 )
                 return None
             loop_attempt += 1
             logger.warning(
-                "要約LLM応答のループを検知したため再試行します" "(%d/%d回目, client_broken=%s): %r",
+                "Detected a loop in the summarizer LLM response, retrying (%d/%d, client_broken=%s): %r",
                 loop_attempt,
                 loop_max_retries,
                 exc.client_broken,
@@ -730,12 +729,12 @@ async def maybe_compact(
             local_input = [HumanMessage(content=summary_prompt), HumanMessage(content=_LOOP_NUDGE_TEXT)]
         except Exception:
             # 要約自体の失敗で本編の会話を壊さないよう、失敗時は元の履歴のまま続行する。
-            logger.exception("会話履歴の自動要約に失敗しました。今回は圧縮をスキップします")
+            logger.exception("Automatic conversation summary failed. Skipping compaction this time")
             return None
 
     summary_text = response.content if isinstance(response.content, str) else str(response.content)
     if not summary_text.strip():
-        logger.warning("会話履歴の自動要約結果が空だったため、今回は圧縮をスキップします")
+        logger.warning("Automatic conversation summary was empty. Skipping compaction this time")
         return None
 
     summary_content = _SUMMARY_HEADER + summary_text
@@ -788,7 +787,7 @@ async def maybe_compact(
     ]
 
     logger.warning(
-        "会話履歴を圧縮しました: %d件 -> 要約1件 + 直近%d件",
+        "Compacted the conversation history: %d messages -> 1 summary + last %d",
         len(old_messages),
         len(kept_messages),
     )

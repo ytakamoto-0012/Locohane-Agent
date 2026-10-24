@@ -74,7 +74,7 @@ class Worker:
                     continue
                 cfg = load_config(overrides_path=inst.overrides_path(self.instances_root, name), instance_name=name)
             except Exception as e:  # noqa: BLE001 - 1インスタンスの設定エラーで全体を止めない
-                logger.warning("インスタンス %s の設定を読めないため飛ばします: %s", name, e)
+                logger.warning("Skipping instance %s because its settings cannot be read: %s", name, e)
                 continue
             for directory in themes.list_theme_dirs(themes.themes_root(cfg.common_data_dir)):
                 # データフォルダを共有しているインスタンスがあっても、テーマは作ったインスタンス
@@ -84,7 +84,7 @@ class Worker:
                 except Exception as e:  # noqa: BLE001 - 壊れたテーマ1件で他のテーマを止めない
                     if directory not in self._broken:
                         self._broken.add(directory)
-                        logger.warning("テーマ %s の theme.json を読めないため飛ばします: %s", directory, e)
+                        logger.warning("Skipping theme %s because its theme.json cannot be read: %s", directory, e)
                     continue
                 if directory.resolve() in seen or owner != name:
                     continue
@@ -129,10 +129,10 @@ class Worker:
                         t["status"] = "queued"
 
             themes.update(directory, _apply)
-            logger.info("テーマ %s の中断していたタスクを待ちに戻しました。", directory.name)
+            logger.info("Returned the interrupted tasks of theme %s to the queue.", directory.name)
 
     def run_forever(self) -> None:
-        logger.info("スキル調整ワーカー %s を開始しました。", self.lab)
+        logger.info("Skill tuning worker %s started.", self.lab)
         recovered = False
         while not self.shutdown:
             try:
@@ -143,11 +143,11 @@ class Worker:
                 if not self.shutdown:
                     worked = self.process_one_theme() or worked
             except Exception as e:  # noqa: BLE001 - 1件の想定外の失敗（壊れた theme.json 等）でワーカーを止めない
-                logger.error("処理中に想定外のエラーが起きました（少し待って続けます）: %s\n%s", e, traceback.format_exc())
+                logger.error("Unexpected error during processing (continuing after a short wait): %s\n%s", e, traceback.format_exc())
                 worked = False
             if not worked:
                 self._sleep(self.config.skill_lab_poll_interval_seconds)
-        logger.info("スキル調整ワーカー %s を終了します。", self.lab)
+        logger.info("Skill tuning worker %s is exiting.", self.lab)
 
     def _sleep(self, seconds: float) -> None:
         end = time.monotonic() + seconds
@@ -232,7 +232,7 @@ class Worker:
         except evaluation.EvaluationStopped:
             self._set_task(directory, task["id"], status="queued")
         except Exception as e:  # noqa: BLE001 - タスクの失敗は画面に理由を出して続ける
-            logger.warning("タスク %s（%s）に失敗しました: %s", task["id"], task["type"], e)
+            logger.warning("Task %s (%s) failed: %s", task["id"], task["type"], e)
             self._set_task(directory, task["id"], status="error", finished_at=themes.now_iso(), error=str(e)[:2000])
 
     def _trial(self, instance: str, directory: Path, case_id: str, task_id: str) -> dict:
@@ -333,7 +333,7 @@ class Worker:
             else:
                 self._finish(directory, themes.STATUS_STOPPED, "停止の要求により中断")
         except Exception as e:  # noqa: BLE001 - テーマ単位で失敗させ、ワーカーは続ける
-            logger.error("テーマ %s の処理に失敗しました: %s\n%s", directory.name, e, traceback.format_exc())
+            logger.error("Processing of theme %s failed: %s\n%s", directory.name, e, traceback.format_exc())
             self._finish(directory, themes.STATUS_ERROR, f"{type(e).__name__}: {e}"[:2000])
 
     def _finish(self, directory: Path, status: str, detail: str) -> None:
@@ -519,7 +519,7 @@ def main() -> int:
     worker = Worker(lab, base_env)
 
     def _on_signal(signum, _frame):
-        logger.info("停止の要求を受けました（signal %s）。今の処理を止めて終了します。", signum)
+        logger.info("Received a stop request (signal %s). Stopping the current work and exiting.", signum)
         worker.shutdown = True
 
     for sig in ("SIGBREAK", "SIGINT", "SIGTERM"):

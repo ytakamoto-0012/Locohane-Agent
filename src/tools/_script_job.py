@@ -123,7 +123,7 @@ def _prepare_script_execution(skill_name: str, script_filename: str, script_args
         skill_name, script_filename
     )
     if not is_plan_exempt and not cl.user_session.get("plan_approved"):
-        logger.info("run_script: 計画未承認のためブロック skill=%s script=%s", skill_name, script_filename)
+        logger.info("run_script: blocked because the plan is not approved skill=%s script=%s", skill_name, script_filename)
         return (
             "エラー: 計画が未承認のため実行できません"
             f"（skill={skill_name}, script={script_filename}）。"
@@ -475,7 +475,7 @@ async def cancel_background_script_jobs_for_thread(thread_id: str) -> bool:
     for job_id, job in targets:
         job.status = "killed"
         logger.warning(
-            "run_script_background: 停止ボタンにより強制終了します (job_id=%s, skill=%s, script=%s)",
+            "run_script_background: force-stopping because of the stop button (job_id=%s, skill=%s, script=%s)",
             job_id,
             job.skill_name,
             job.script_filename,
@@ -490,7 +490,7 @@ async def cancel_background_script_jobs_for_thread(thread_id: str) -> bool:
         for (job_id, _), result in zip(runner_tasks, results):
             if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
                 logger.debug(
-                    "run_script_background強制終了中に例外が発生しました (job_id=%s)",
+                    "Exception while force-stopping run_script_background (job_id=%s)",
                     job_id,
                     exc_info=result,
                 )

@@ -89,9 +89,9 @@ async def _lifespan(_app: FastAPI):
         if status.state == supervisor.InstanceState.STOPPED:
             try:
                 _supervisor.start(name)
-                logger.info("autostart: インスタンス %r を起動しました。", name)
+                logger.info("autostart: started instance %r.", name)
             except supervisor.SupervisorError as exc:
-                logger.warning("autostart: インスタンス %r の起動に失敗しました: %s", name, exc)
+                logger.warning("autostart: failed to start instance %r: %s", name, exc)
     _knowledge_router.ingest_scheduler.start()
     yield
     _knowledge_router.ingest_scheduler.stop()
@@ -960,7 +960,7 @@ def get_monitor_overview(user: str = Depends(require_login)):
         try:
             series = monitor.live_context_series(cfg.log_dir, view["generating"])
         except Exception:  # noqa: BLE001 - グラフ用の付帯情報のため、失敗してもカードの稼働状況は返す
-            logger.warning("インスタンス %s の入力トークン推移を取得できませんでした", name, exc_info=True)
+            logger.warning("Could not get the input token history of instance %s", name, exc_info=True)
             series = []
         context_series = [
             {**s, "thread_name": generating[s["thread_id"]].get("thread_name"), "owner": generating[s["thread_id"]].get("owner")}
@@ -1169,7 +1169,7 @@ def _assistant_embedding(target: str, llm_instance: str):
         try:
             cfg = monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name)
         except monitor.MonitorError as exc:
-            logger.warning("管理アシスタント: インスタンス %r の設定を読めないため、埋め込みの接続先の候補から外します: %s", name, exc)
+            logger.warning("Admin assistant: cannot read the settings of instance %r, excluding it from embedding endpoint candidates: %s", name, exc)
             continue
         provider = assistant_index.provider_from_config(cfg, name)
         if provider is not None:

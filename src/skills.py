@@ -94,7 +94,7 @@ def _parse_frontmatter(text: str) -> dict | None:
     try:
         data = yaml.safe_load(parts[1])
     except yaml.YAMLError as e:
-        logger.warning("frontmatter の YAML パースに失敗: %s", e)
+        logger.warning("Failed to parse frontmatter YAML: %s", e)
         return None
     return data if isinstance(data, dict) else None
 
@@ -197,22 +197,22 @@ def _scan_one(root: Path) -> list[Skill]:
         skill_md = entry / "SKILL.md"
         if not skill_md.is_file():
             if entry.name in _KNOWN_NON_SKILL_DIRS:
-                logger.debug("SKILL.md が無いためスキップ（共用コードディレクトリ、想定通り）: %s", entry.name)
+                logger.debug("Skipping because there is no SKILL.md (shared code directory, as expected): %s", entry.name)
             else:
-                logger.warning("SKILL.md が無いためスキップ: %s", entry.name)
+                logger.warning("Skipping because there is no SKILL.md: %s", entry.name)
             continue
 
         text = skill_md.read_text(encoding="utf-8")
         fm = _parse_frontmatter(text)
         if fm is None:
-            logger.warning("frontmatter を読めないためスキップ: %s", entry.name)
+            logger.warning("Skipping because the frontmatter cannot be read: %s", entry.name)
             continue
 
         name = fm.get("name")
         description = fm.get("description")
         error = _validate(name, description, entry.name)
         if error:
-            logger.warning("仕様違反のためスキップ (%s): %s", entry.name, error)
+            logger.warning("Skipping because it violates the spec (%s): %s", entry.name, error)
             continue
 
         skills.append(
@@ -224,7 +224,7 @@ def _scan_one(root: Path) -> list[Skill]:
                 has_scripts=_skill_has_scripts(entry),
             )
         )
-        logger.info("スキル発見: %s", name)
+        logger.info("Discovered skill: %s", name)
 
     return skills
 
@@ -258,11 +258,11 @@ def scan_skills(skills_dirs: Path | str | Sequence[Path | str]) -> list[Skill]:
     for skills_dir in skills_dirs:
         root = Path(skills_dir)
         if not root.is_dir():
-            logger.debug("skills ディレクトリが存在しない（任意）: %s", root)
+            logger.debug("skills directory does not exist (optional): %s", root)
             continue
         for skill in _scan_one(root):
             if skill.name in merged:
-                logger.info("スキル '%s' を %s の定義で上書き", skill.name, root)
+                logger.info("Skill '%s' overridden by the definition in %s", skill.name, root)
             merged[skill.name] = skill
 
     return sorted(merged.values(), key=lambda s: s.name)

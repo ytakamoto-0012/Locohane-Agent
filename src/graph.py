@@ -427,7 +427,7 @@ async def ainvoke_ensuring_final_text(
                 await _remove_message_ids_if_present(graph, run_config, remove_ids)
                 raise
             logger.warning(
-                "LLM応答のループを検知（%d回目の再試行）: 直近テキスト=%r",
+                "Detected an LLM response loop (retry %d): recent text=%r",
                 loop_attempt + 1,
                 exc.snippet,
             )

@@ -396,11 +396,11 @@ def build_router(
             try:
                 system, docs, mode, n_keys = await asyncio.to_thread(build_context)
             except Exception as exc:  # noqa: BLE001
-                logger.exception("管理アシスタントの検索に失敗しました。")
+                logger.exception("Admin assistant search failed.")
                 yield _ndjson({"type": "error", "message": _t("関係する設定・説明を検索できませんでした: {0}", exc)})
                 return
             logger.info(
-                "管理アシスタント: user=%s instance=%s llm=%s messages=%d keys=%d docs=%d search=%s",
+                "Admin assistant: user=%s instance=%s llm=%s messages=%d keys=%d docs=%d search=%s",
                 user, body.instance, llm_instance, len(messages), n_keys, len(docs), mode,
             )
             yield _ndjson({"type": "status", "text": _t("回答を考えています…")})
@@ -421,7 +421,7 @@ def build_router(
                     answer.append(rest)
                     yield _ndjson({"type": "delta", "text": rest})
             except Exception as exc:  # noqa: BLE001 - 接続失敗等は画面に出して終える
-                logger.warning("管理アシスタントの応答に失敗しました（llm=%s）: %s", llm_instance, exc)
+                logger.warning("Admin assistant response failed (llm=%s): %s", llm_instance, exc)
                 yield _ndjson(
                     {
                         "type": "error",

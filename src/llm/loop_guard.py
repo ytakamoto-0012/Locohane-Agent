@@ -229,7 +229,7 @@ class _ThinkingLoopDetector:
             # 断片を残しておけば、強制中断されても暴走時に実際どんな内容が
             # 生成されていたか事後に追跡できる。
             logger.debug(
-                "ループ検知チェック: buffer_len=%d match_ratio=%.3f " "consecutive_hits=%d 直近テキスト=%r",
+                "Loop detection check: buffer_len=%d match_ratio=%.3f consecutive_hits=%d recent text=%r",
                 len(self._buffer),
                 match_ratio,
                 self._consecutive_hits,

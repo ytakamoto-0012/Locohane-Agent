@@ -188,7 +188,7 @@ def _read_directory(directory: Path, recursive: bool, allowed: set[str]) -> tupl
     try:
         entries = list(os.scandir(directory))
     except OSError as e:
-        logger.warning("vector_db ingest: フォルダを読めません: %s: %s", directory, e)
+        logger.warning("vector_db ingest: cannot read folder: %s: %s", directory, e)
         return [], []
     files: list[tuple[Path, os.stat_result]] = []
     subdirectories: list[_Subdirectory] = []
@@ -231,13 +231,13 @@ class _LinkGuard:
             return True
         target = target.rstrip("\\/")
         if self._root is not None and _is_same_or_inside(target, self._root):
-            logger.info("vector_db ingest: 取り込み元フォルダの中を指すリンクのためたどりません: %s", subdirectory.path)
+            logger.info("vector_db ingest: not following a link that points inside the source folder: %s", subdirectory.path)
             return False
         if self._root is not None and _is_same_or_inside(self._root, target):
-            logger.info("vector_db ingest: 取り込み元フォルダを含むフォルダを指すリンクのためたどりません: %s", subdirectory.path)
+            logger.info("vector_db ingest: not following a link that points to a folder containing the source folder: %s", subdirectory.path)
             return False
         if target in self._visited:
-            logger.info("vector_db ingest: 既にたどったフォルダを指すリンクのためたどりません: %s", subdirectory.path)
+            logger.info("vector_db ingest: not following a link to an already visited folder: %s", subdirectory.path)
             return False
         self._visited.add(target)
         return True
@@ -684,7 +684,7 @@ class _Writer:
             try:
                 part.rollback()
             except Exception:  # noqa: BLE001 - 元のエラーを優先する
-                logger.exception("vector_db ingest: ロールバックに失敗しました")
+                logger.exception("vector_db ingest: rollback failed")
             part._batching = False
 
     def _maybe_commit(self) -> None:
@@ -826,7 +826,7 @@ class _Writer:
         self._write_path_keywords(source, prepared, only_missing=False)
         st = prepared.stat
         self.catalog.upsert_file(self.name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, 0, prepared.mode, True))
-        logger.info("vector_db ingest: パスだけを登録しました（%s）: %s", prepared.reason, source)
+        logger.info("vector_db ingest: registered the path only (%s): %s", prepared.reason, source)
         self.result.path_only += 1
         if prepared.record is None:
             self.result.added += 1
@@ -963,7 +963,7 @@ class _Pipeline:
         """
         path, record = args[2], args[4]
         if isolated:
-            logger.warning("vector_db ingest: 子プロセスが異常終了したファイルを飛ばします: %s", path)
+            logger.warning("vector_db ingest: skipping a file whose child process crashed: %s", path)
             reason = "本文の抽出・画像化の子プロセスが異常終了しました（壊れたファイル等）"
             self._loaded(_Prepared(path, record, _file_mode(self.options, path), "failed", reason=reason))
         else:

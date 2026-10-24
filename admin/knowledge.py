@@ -217,7 +217,7 @@ class IngestScheduler:
             try:
                 self.tick(datetime.now())
             except Exception:  # noqa: BLE001 - 1回の失敗でスケジューラーを止めない
-                logger.exception("ナレッジの自動取り込みの確認に失敗しました。")
+                logger.exception("Failed to check scheduled knowledge ingestion.")
 
     def tick(self, now: datetime) -> list[tuple[str, str]]:
         """前回から now までに来た時刻の取り込みを始め、始めた (インスタンス名, コレクション名) を返す。"""
@@ -239,7 +239,7 @@ class IngestScheduler:
                     continue
                 cfg = self._loader(name)
             except Exception as exc:  # noqa: BLE001 - 設定の読めないインスタンスは飛ばして他を続ける
-                logger.warning("自動取り込み: インスタンス %r の設定を読めません: %s", name, exc)
+                logger.warning("Scheduled ingestion: cannot read the settings of instance %r: %s", name, exc)
                 continue
             if not cfg.vector_db_enabled or not vcat.catalog_exists(cfg.vector_db_dir):
                 continue
@@ -250,7 +250,7 @@ class IngestScheduler:
                     continue
                 job = IngestJob(collection=c.name, rebuild=False, actor=SCHEDULER_ACTOR, trigger="schedule")
                 if not self._jobs.start(name, job):
-                    logger.info("自動取り込み: %s/%s は取り込み中のため、今回は実行しません。", name, c.name)
+                    logger.info("Scheduled ingestion: %s/%s is already ingesting, skipping this run.", name, c.name)
                     continue
                 threading.Thread(
                     target=run_ingest_job,
@@ -271,7 +271,7 @@ class IngestScheduler:
                         "trigger": "schedule",
                     },
                 )
-                logger.info("自動取り込み: %s/%s の差分取り込みを始めました。", name, c.name)
+                logger.info("Scheduled ingestion: started diff ingestion of %s/%s.", name, c.name)
                 started.append((name, c.name))
         return started
 

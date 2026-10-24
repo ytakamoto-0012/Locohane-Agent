@@ -313,14 +313,14 @@ class AssistantIndex:
         self._bigram = _BigramIndex([f"{p.title}\n{p.text}" for p in passages])
         self._embedded = {}
         self._signature = signature
-        logger.info("管理アシスタントの索引を作りました（%d 件）。", len(passages))
+        logger.info("Built the admin assistant index (%d entries).", len(passages))
 
     @staticmethod
     def _read(path: Path) -> str:
         try:
             return path.read_text(encoding="utf-8")
         except OSError:
-            logger.warning("管理アシスタントの索引に使う %s を読めません。", path)
+            logger.warning("Cannot read %s for the admin assistant index.", path)
             return ""
 
     def _cache_path(self, cache_id: str) -> Path | None:
@@ -342,7 +342,7 @@ class AssistantIndex:
         hashes = [_sha1(t) for t in texts]
         missing = sorted({h: t for h, t in zip(hashes, texts) if h not in cached}.items())
         if missing:
-            logger.info("管理アシスタント: %d 件の段落を埋め込みます（%s）。", len(missing), provider.label)
+            logger.info("Admin assistant: embedding %d paragraphs (%s).", len(missing), provider.label)
             vectors = provider.embed([t for _, t in missing], "document")
             cached.update({h: v for (h, _), v in zip(missing, vectors)})
             if cache_path is not None:
@@ -382,7 +382,7 @@ class AssistantIndex:
                     scores = [_dot(q, v) + BIGRAM_WEIGHT_WITH_EMBEDDING * s for v, s in zip(matrix, scores)]
                     mode = "embedding"
                 except Exception as exc:  # noqa: BLE001 - 埋め込みが使えなくても2-gram で答える
-                    logger.warning("管理アシスタント: 埋め込みを使えないため文字2-gram だけで検索します（%s）: %s", embedding.label, exc)
+                    logger.warning("Admin assistant: embeddings unavailable, searching with character 2-grams only (%s): %s", embedding.label, exc)
         order = sorted(range(len(passages)), key=lambda i: -scores[i])
         keys: list[tuple[str, str]] = []
         docs: list[Passage] = []

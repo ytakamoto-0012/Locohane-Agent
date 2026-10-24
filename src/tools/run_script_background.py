@@ -103,7 +103,7 @@ async def run_script_background(skill_name: str, script_filename: str, script_ar
         await asyncio.wait_for(asyncio.shield(job.runner_task), timeout=wait_timeout)
     except asyncio.TimeoutError:
         logger.warning(
-            "run_script_background: 安全上限(%s秒)に達したため job_id を返してターンを終えます: job_id=%s",
+            "run_script_background: reached the safety limit (%s seconds), returning job_id and ending the turn: job_id=%s",
             wait_timeout,
             job_id,
         )

@@ -82,7 +82,7 @@ def _make_rescue_on_cancelled(job: "_DispatchAgentJob"):
                 f.write("\n")
         except Exception:  # noqa: BLE001 - パス解決・書き込みいずれの失敗でもCancelledErrorの伝播を妨げない
             logger.exception(
-                "dispatch_agent: 強制停止時の会話履歴退避に失敗しました (run_id=%s)",
+                "dispatch_agent: failed to save the conversation history on forced stop (run_id=%s)",
                 job.run_id,
             )
 
@@ -382,7 +382,7 @@ async def _run_dispatch_agent_job(
     except asyncio.CancelledError:
         raise
     except Exception as e:  # noqa: BLE001 - fire-and-forgetタスクの例外を消さず確定的に捕捉する
-        logger.exception("dispatch_agent 失敗 (run_id=%s)", job.run_id)
+        logger.exception("dispatch_agent failed (run_id=%s)", job.run_id)
         if job.status != "killed":
             job.status = "error"
             # str(e) が空文字列になる例外がある（例: asyncio.TimeoutError()）。
@@ -511,7 +511,7 @@ async def cancel_dispatch_agent_jobs_for_thread(thread_id: str) -> bool:
         job.status = "killed"
         job.turn_still_waiting = False
         logger.warning(
-            "dispatch_agent: 停止ボタンにより強制終了します (run_id=%s, job_id=%s, iter=%d/%d)",
+            "dispatch_agent: force-stopping because of the stop button (run_id=%s, job_id=%s, iter=%d/%d)",
             job.run_id,
             job_id,
             job.current_iteration,
@@ -525,7 +525,7 @@ async def cancel_dispatch_agent_jobs_for_thread(thread_id: str) -> bool:
         for (job_id, _), result in zip(runner_tasks, results):
             if isinstance(result, BaseException) and not isinstance(result, asyncio.CancelledError):
                 logger.debug(
-                    "dispatch_agent強制終了中に例外が発生しました (job_id=%s)",
+                    "Exception while force-stopping dispatch_agent (job_id=%s)",
                     job_id,
                     exc_info=result,
                 )

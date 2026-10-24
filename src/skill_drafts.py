@@ -273,11 +273,11 @@ def _scan_owner_dir(owner_dir: Path) -> list[Skill]:
         except OSError:
             continue
         if fm is None:
-            logger.warning("ドラフト %s/%s: frontmatter を読めないためスキップ", owner_dir.name, entry.name)
+            logger.warning("Draft %s/%s: skipping because the frontmatter cannot be read", owner_dir.name, entry.name)
             continue
         error = _validate(fm.get("name"), fm.get("description"), entry.name)
         if error:
-            logger.warning("ドラフト %s/%s: 仕様違反のためスキップ（%s）", owner_dir.name, entry.name, error)
+            logger.warning("Draft %s/%s: skipping because it violates the spec (%s)", owner_dir.name, entry.name, error)
             continue
         skills.append(
             Skill(

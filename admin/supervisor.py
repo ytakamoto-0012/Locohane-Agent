@@ -108,7 +108,7 @@ class Supervisor:
             try:
                 locked = instance_lock.is_locked(self._lock_path_for(name))
             except Exception as exc:  # noqa: BLE001 - 設定が壊れていても一覧表示自体は継続させる
-                logger.warning("インスタンス %r の設定解決に失敗しました: %s", name, exc)
+                logger.warning("Failed to resolve the settings of instance %r: %s", name, exc)
                 return InstanceStatus(state=InstanceState.ERROR)
             if locked:
                 return InstanceStatus(state=InstanceState.EXTERNAL)
@@ -193,9 +193,9 @@ class Supervisor:
             self._processes[name] = proc
             self._crashed_exit_codes.pop(name, None)
             if meta.is_skill_lab:
-                logger.info("スキル研究室 %r を起動しました（pid=%d）。", name, proc.pid)
+                logger.info("Started skill lab %r (pid=%d).", name, proc.pid)
             else:
-                logger.info("インスタンス %r を起動しました（pid=%d, %s:%d）。", name, proc.pid, meta.app_host, meta.app_port)
+                logger.info("Started instance %r (pid=%d, %s:%d).", name, proc.pid, meta.app_host, meta.app_port)
             return InstanceStatus(state=InstanceState.RUNNING, pid=proc.pid)
 
     @staticmethod
@@ -246,11 +246,11 @@ class Supervisor:
             try:
                 proc.wait(timeout=timeout_seconds)
             except subprocess.TimeoutExpired:
-                logger.warning("インスタンス %r が %.0f 秒以内に終了しなかったため強制終了します。", name, timeout_seconds)
+                logger.warning("Instance %r did not exit within %.0f seconds; killing it.", name, timeout_seconds)
                 proc.kill()
                 proc.wait(timeout=timeout_seconds)
             self._processes.pop(name, None)
-            logger.info("インスタンス %r を停止しました。", name)
+            logger.info("Stopped instance %r.", name)
 
     def restart(self, name: str, timeout_seconds: float = 15.0) -> InstanceStatus:
         with self._lock:

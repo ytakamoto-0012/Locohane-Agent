@@ -106,7 +106,7 @@ async def execute_python_code_background(code: str) -> str:
     workdir = _resolve_exec_workdir()
 
     if not cl.user_session.get("plan_approved"):
-        logger.info("execute_python_code_background: 計画未承認のためブロック")
+        logger.info("execute_python_code_background: blocked because the plan is not approved")
         return (
             "エラー: 計画が未承認のため実行できません。"
             "create_plan で計画を作成し、approve_plan でユーザーの承認を得てから"
@@ -172,7 +172,7 @@ async def execute_python_code_background(code: str) -> str:
         await asyncio.wait_for(asyncio.shield(job.runner_task), timeout=wait_timeout)
     except asyncio.TimeoutError:
         logger.warning(
-            "execute_python_code_background: 安全上限(%s秒)に達したため job_id を返してターンを終えます: job_id=%s",
+            "execute_python_code_background: reached the safety limit (%s seconds), returning job_id and ending the turn: job_id=%s",
             wait_timeout,
             job_id,
         )

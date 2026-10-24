@@ -3807,16 +3807,14 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
             raise ValueError(f"{path}: セクション {section!r} の値はオブジェクト（キー名をキーとするdict）である必要があります。")
         if section == _ADMIN_OVERRIDE_EXEMPT_SECTION:
             logger.warning(
-                "%s: [%s] セクションは上書き対象外のため無視します（管理ツール自身の起動設定は "
-                "config.ini を直接編集してください）。",
+                "%s: ignoring section [%s] because it cannot be overridden (edit config.ini directly for the admin tool's own startup settings).",
                 path,
                 section,
             )
             continue
         if not parser.has_section(section):
             logger.warning(
-                "%s: config.ini に存在しないセクション [%s] が指定されているため無視します"
-                "（タイプミス、または廃止されたキーの可能性があります）。",
+                "%s: ignoring section [%s] because it does not exist in config.ini (possibly a typo or a removed key).",
                 path,
                 section,
             )
@@ -3824,7 +3822,7 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
         for key, value in section_values.items():
             if not parser.has_option(section, key):
                 logger.warning(
-                    "%s: config.ini に存在しないキー [%s].%s が指定されているため無視します。",
+                    "%s: ignoring key [%s].%s because it does not exist in config.ini.",
                     path,
                     section,
                     key,

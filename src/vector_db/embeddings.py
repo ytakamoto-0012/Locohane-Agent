@@ -243,13 +243,13 @@ def _embed_batch(
             try:
                 response = _post(cfg, client, endpoint, url, batch)
             except httpx.TransportError as e:
-                logger.warning("embeddings: %s に接続できません: %s", url, e)
+                logger.warning("embeddings: cannot connect to %s: %s", url, e)
                 errors.append(f"{url} に接続できません（{e}）")
                 retryable = True
                 _mark_failed(endpoint)
                 continue
             if response.status_code != 200:
-                logger.warning("embeddings: %s がエラーを返しました（HTTP %d）: %s", url, response.status_code, response.text[:300])
+                logger.warning("embeddings: %s returned an error (HTTP %d): %s", url, response.status_code, response.text[:300])
                 errors.append(f"{url} がエラーを返しました（HTTP {response.status_code}）: {response.text[:300]}")
                 if _retryable_status(response.status_code):
                     retryable = True
@@ -263,7 +263,7 @@ def _embed_batch(
         retries += 1
         interval = cfg.vector_db_embedding_retry_interval_seconds
         logger.warning(
-            "embeddings: すべての接続先でエラーになりました。%g秒後に再試行します（%d/%s回目）: %s",
+            "embeddings: every endpoint returned an error. Retrying in %g seconds (%d/%s): %s",
             interval,
             retries,
             "無制限" if max_retries is None else max_retries,
@@ -285,7 +285,7 @@ def _post(cfg: Config, client: httpx.Client, endpoint: LLMEndpoint, url: str, ba
     response = client.post(url, json={**body, "encoding_format": "base64"}, headers=headers)
     if response.status_code in (400, 422):
         logger.warning(
-            "embeddings: %s が encoding_format=base64 を受け付けませんでした（HTTP %d）。以後この接続先は float で受け取ります: %s",
+            "embeddings: %s did not accept encoding_format=base64 (HTTP %d). Using float for this endpoint from now on: %s",
             url,
             response.status_code,
             response.text[:300],

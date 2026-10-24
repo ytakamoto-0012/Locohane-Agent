@@ -107,7 +107,7 @@ def _downscale_to_jpeg(
             return buffer.getvalue()
     except Exception:
         # 縮小の失敗で画像を渡せなくなる方が損失が大きいため、元画像へフォールバックする。
-        logger.exception("画像の縮小に失敗しました。元の解像度のまま渡します")
+        logger.exception("Failed to shrink the image. Passing it at the original resolution")
         return None
 
 
