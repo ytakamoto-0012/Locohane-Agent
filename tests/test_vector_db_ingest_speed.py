@@ -226,8 +226,8 @@ def test_ingest_with_child_processes(tmp_path):
     with vcat.open_catalog(cfg.vector_db_dir) as catalog:
         catalog.create("docs", str(docs))
     result = ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport)
-    assert result.added == 4 and [p for p, _ in result.failed] == [str(docs / "empty.md")]
-    assert ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport).unchanged == 4
+    assert (result.added, result.path_only, result.failed) == (5, 1, [])
+    assert ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport).unchanged == 5
 
 
 # --- Office の使い回し --------------------------------------------------------------------

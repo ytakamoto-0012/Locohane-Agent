@@ -497,13 +497,15 @@ class Config:
             埋め込みモデル名から決めた値（auto_embedding_prefixes()）が入る。
         vector_db_chunk_size / vector_db_chunk_overlap: チャンク分割の目安文字数と
             隣り合うチャンクの重複文字数。
-        vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。画像ファイルの
-            拡張子は vector_db_image_input が True のときだけ使う。
+        vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。画像ファイルは
+            vector_db_image_input が False ならファイルパスだけを登録する。
         vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。
         vector_db_image_input: True なら .pdf/.docx/.pptx/.xlsx/.xlsm をページごとの
             画像にし、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
             （マルチモーダルの埋め込みモデルが必要）。
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
+        vector_db_office_timeout_seconds: image_input で Office ファイルを PDF に書き出す1回の上限秒数。
+            超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。
         vector_db_ingest_workers: 取り込みで並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。
         vector_db_ingest_processes: 取り込みで本文の抽出・ページの画像化を行う子プロセスの数。
             0 なら子プロセスを使わず、ワーカースレッドで行う。
@@ -1073,6 +1075,7 @@ class Config:
     vector_db_max_file_mb: float
     vector_db_image_input: bool
     vector_db_image_dpi: int
+    vector_db_office_timeout_seconds: float
     vector_db_ingest_workers: int
     vector_db_ingest_processes: int
     vector_db_scan_workers: int
@@ -3111,6 +3114,10 @@ def load_config(
         vector_db_max_file_mb=_positive_float(os.getenv("VECTOR_DB_MAX_FILE_MB", vector_db.get("max_file_mb", 50)), "[vector_db].max_file_mb"),
         vector_db_image_input=_as_bool(os.getenv("VECTOR_DB_IMAGE_INPUT", vector_db.get("image_input", False))),
         vector_db_image_dpi=_positive_int(os.getenv("VECTOR_DB_IMAGE_DPI", vector_db.get("image_dpi", 100)), "[vector_db].image_dpi"),
+        vector_db_office_timeout_seconds=_positive_float(
+            os.getenv("VECTOR_DB_OFFICE_TIMEOUT_SECONDS", vector_db.get("office_timeout_seconds", 180)),
+            "[vector_db].office_timeout_seconds",
+        ),
         vector_db_ingest_workers=_positive_int(
             os.getenv("VECTOR_DB_INGEST_WORKERS", vector_db.get("ingest_workers", 1)), "[vector_db].ingest_workers"
         ),

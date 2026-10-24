@@ -854,6 +854,7 @@ const CONFIG_PRESETS = [
       "vector_db.document_prefix",
       "vector_db.image_input",
       "vector_db.image_dpi",
+      "vector_db.office_timeout_seconds",
       "vector_db.ingest_workers",
       "vector_db.ingest_processes",
       "vector_db.scan_workers",

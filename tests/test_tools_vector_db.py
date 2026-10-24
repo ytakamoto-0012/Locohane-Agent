@@ -109,7 +109,7 @@ def test_search_documents_shows_image_matches(env, monkeypatch, tmp_path):
     c = canvas.Canvas(str(env["docs"] / "drawing.pdf"))
     c.showPage()
     c.save()
-    monkeypatch.setattr(ingest, "render_pages", lambda path, dpi: [PageImage("p.1", "", "配管の図面".encode())])
+    monkeypatch.setattr(ingest, "render_pages", lambda path, dpi, **_: [PageImage("p.1", "", "配管の図面".encode())])
     cfg = dataclasses.replace(env["cfg"], vector_db_image_input=True)
     embed = FakeEmbeddingServer()
     ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport)

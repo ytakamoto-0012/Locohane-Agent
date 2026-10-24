@@ -11,13 +11,18 @@ Office ファイルの画像化には Windows と Microsoft Office（pywin32）�
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import csv
 from dataclasses import dataclass
 import io
 import os
 from pathlib import Path
+import signal
+import subprocess
 import tempfile
 import threading
 from typing import Callable
+import uuid
 
 from .extract import PDFIUM_LOCK, ExtractError, normalize_newlines
 
@@ -56,16 +61,47 @@ class PageImage:
     Attributes:
         locator: ファイル内の位置（例: "p.3"、"スライド2"、"シート: 集計"）。
         text: ページの文字（PDF のテキスト層。無ければ空文字）。
-        png: ページの PNG 画像。
+        png: ページの PNG 画像（png_path に書き出したときは空）。
+        png_path: render_pages() の out_dir に書き出した PNG のパス（書き出していなければ None）。
     """
 
     locator: str
     text: str
-    png: bytes
+    png: bytes = b""
+    png_path: Path | None = None
+
+    def read_png(self) -> bytes:
+        """PNG 画像（png_path に書き出していればファイルから読む）。"""
+        return self.png_path.read_bytes() if self.png_path is not None else self.png
 
 
-def render_pages(path: Path, dpi: int) -> list[PageImage]:
+# PNG を書き出すときの通し番号を振る（同じ out_dir に複数の PDF（Excel のシートごと）から書くため）。
+_PageWriter = Callable[[bytes], "tuple[bytes, Path | None]"]
+
+
+def _page_writer(out_dir: Path | None) -> _PageWriter:
+    """out_dir があれば PNG をそこへ書き出して (b"", パス) を、無ければ (PNG, None) を返す関数。"""
+    counter = iter(range(1, 1_000_000_000))
+
+    def write(png: bytes) -> tuple[bytes, Path | None]:
+        if out_dir is None:
+            return png, None
+        png_path = out_dir / f"page_{next(counter):05d}.png"
+        png_path.write_bytes(png)
+        return b"", png_path
+
+    return write
+
+
+def render_pages(path: Path, dpi: int, *, out_dir: Path | None = None, office_timeout: float | None = None) -> list[PageImage]:
     """path の全ページを dpi の解像度で画像にする。
+
+    Args:
+        out_dir: 指定すると各ページの PNG をこのフォルダへ書き出し、PageImage.png_path で返す
+            （400ページの PDF 等でも全ページの画像をメモリーに持たないため。取り込みが使う）。
+            省略時は PageImage.png にそのまま持つ。
+        office_timeout: Office ファイルを PDF に書き出す1回の上限秒数。超えたら（見えない確認画面で
+            止まった等）そのアプリのプロセスを終了して ExtractError にする。None なら待ち続ける。
 
     Raises:
         ExtractError: 画像化に対応していない拡張子、Office が使えない、
@@ -74,15 +110,16 @@ def render_pages(path: Path, dpi: int) -> list[PageImage]:
     ext = path.suffix.lower()
     if ext not in IMAGE_EXTENSIONS:
         raise ExtractError(f"画像化に対応していない形式です: {ext}")
+    write = _page_writer(out_dir)
     try:
         if ext == ".pdf":
-            return _render_pdf(path, dpi, _page_locator)
+            return _render_pdf(path, dpi, _page_locator, write)
         if ext in IMAGE_FILE_EXTENSIONS:
-            return _render_image_file(path, dpi)
+            return _render_image_file(path, dpi, write)
         with tempfile.TemporaryDirectory(prefix="locohane_vdb_") as tmp:
             pages: list[PageImage] = []
-            for pdf_path, locate in _export_office_to_pdf(path, Path(tmp)):
-                pages.extend(_render_pdf(pdf_path, dpi, locate))
+            for pdf_path, locate in _export_office_to_pdf(path, Path(tmp), office_timeout):
+                pages.extend(_render_pdf(pdf_path, dpi, locate, write))
             return pages
     except ExtractError:
         raise
@@ -92,7 +129,7 @@ def render_pages(path: Path, dpi: int) -> list[PageImage]:
         raise ExtractError(f"画像化に失敗しました: {type(e).__name__}: {e}") from e
 
 
-def _render_pdf(pdf_path: Path, dpi: int, locate: Locate) -> list[PageImage]:
+def _render_pdf(pdf_path: Path, dpi: int, locate: Locate, write: _PageWriter) -> list[PageImage]:
     import pypdfium2 as pdfium
 
     with PDFIUM_LOCK:
@@ -108,13 +145,14 @@ def _render_pdf(pdf_path: Path, dpi: int, locate: Locate) -> list[PageImage]:
                     page.render(scale=dpi / 72).to_pil().save(buffer, format="PNG", compress_level=_PNG_COMPRESS_LEVEL)
                 finally:
                     page.close()
-                pages.append(PageImage(locate(i + 1, total), normalize_newlines(text), buffer.getvalue()))
+                png, png_path = write(buffer.getvalue())
+                pages.append(PageImage(locate(i + 1, total), normalize_newlines(text), png, png_path))
             return pages
         finally:
             pdf.close()
 
 
-def _render_image_file(path: Path, dpi: int) -> list[PageImage]:
+def _render_image_file(path: Path, dpi: int, write: _PageWriter) -> list[PageImage]:
     """画像ファイルを PNG にする。EXIF の回転を反映し、透過部分は白で埋め、長辺が大きすぎれば縮小する。
 
     複数ページの TIFF はページごとに分ける（位置は p.N）。1枚だけなら位置は「画像」。
@@ -126,11 +164,13 @@ def _render_image_file(path: Path, dpi: int) -> list[PageImage]:
     pillow_heif.register_heif_opener()
     max_long_side = round(_A4_LONG_SIDE_INCHES * dpi)
     with Image.open(path) as img:
-        frames = list(ImageSequence.Iterator(img)) if path.suffix.lower() in _MULTI_PAGE_IMAGE_EXTENSIONS else [img]
-        pngs = [_to_png(ImageOps.exif_transpose(frame), max_long_side) for frame in frames]
-    if len(pngs) == 1:
-        return [PageImage("画像", "", pngs[0])]
-    return [PageImage(f"p.{i}", "", png) for i, png in enumerate(pngs, start=1)]
+        # ImageSequence.Iterator は同じ Image を seek し直して返すため、ページごとにその場で PNG にする
+        # （list() で先に集めると、すべて最後のページになる）。
+        frames = ImageSequence.Iterator(img) if path.suffix.lower() in _MULTI_PAGE_IMAGE_EXTENSIONS else [img]
+        written = [write(_to_png(ImageOps.exif_transpose(frame), max_long_side)) for frame in frames]
+    if len(written) == 1:
+        return [PageImage("画像", "", *written[0])]
+    return [PageImage(f"p.{i}", "", png, png_path) for i, (png, png_path) in enumerate(written, start=1)]
 
 
 def _to_png(img, max_long_side: int) -> bytes:
@@ -209,7 +249,93 @@ def _office_app(prog_id: str):
     if prog_id != "PowerPoint.Application":
         app.Visible = False
     app.DisplayAlerts = 0
+    # 取り込み元のファイルのマクロ（.xlsm の Workbook_Open 等）を実行しない（msoAutomationSecurityForceDisable）。
+    # COM で開いたときの既定はマクロを有効にする（msoAutomationSecurityLow）ため、明示して止める。
+    app.AutomationSecurity = 3
+    if prog_id == "Excel.Application":
+        app.EnableEvents = False
     return app, True
+
+
+# パスワード付きのファイルを開くときに渡すダミーのパスワード。渡さないと、見えないパスワード入力画面で
+# 止まったままになる（パスワードの無いファイルでは無視される）。
+_DUMMY_PASSWORD = "locohane-no-password"
+
+
+class OfficeTimeout(ExtractError):
+    """Office の PDF への書き出しが office_timeout 秒で終わらず、アプリのプロセスを終了した。"""
+
+
+def _app_pid(prog_id: str, app) -> int | None:
+    """app（DispatchEx で起動した Office のアプリ）のプロセス ID（分からなければ None）。
+
+    Excel は Application.Hwnd、Word は一意のキャプションを付けてウィンドウを探す。PowerPoint は
+    ウィンドウが無いと HWND を返さないが、1つの PC で1プロセスしか動かない（DispatchEx でも同じプロセスに
+    つながる）ため、POWERPNT.EXE をプロセス名で探す。
+    """
+    import win32gui
+    import win32process
+
+    try:
+        if prog_id == "Excel.Application":
+            hwnd = int(app.Hwnd)
+        elif prog_id == "Word.Application":
+            caption = f"locohane-{uuid.uuid4().hex}"
+            app.Caption = caption
+            hwnd = win32gui.FindWindow("OpusApp", caption)
+        else:
+            return _find_process("POWERPNT.EXE")
+        return win32process.GetWindowThreadProcessId(hwnd)[1] if hwnd else None
+    except Exception:  # noqa: BLE001 - 分からなければ時間制限をかけない
+        return None
+
+
+def _find_process(image_name: str) -> int | None:
+    """image_name（例: "POWERPNT.EXE"）のプロセス ID（無ければ None）。"""
+    try:
+        out = subprocess.run(
+            ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
+            capture_output=True, text=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    for row in csv.reader(out.splitlines()):
+        if len(row) >= 2 and row[0].lower() == image_name.lower() and row[1].isdigit():
+            return int(row[1])
+    return None
+
+
+@contextmanager
+def _watchdog(pid: int | None, seconds: float | None, path: Path):
+    """seconds 秒を過ぎても抜けなければ pid のプロセスを終了し、抜けるときに OfficeTimeout を投げる。
+
+    見えない確認画面（「前回開いた時に重大なエラーが発生しました」・パスワード入力等）で Office が止まると、
+    COM の呼び出しが返らず取り込みが進まなくなるため。プロセスを終了すると止まっていた呼び出しはエラーで返る。
+    """
+    if pid is None or not seconds:
+        yield
+        return
+    fired = threading.Event()
+
+    def kill() -> None:
+        fired.set()
+        try:
+            os.kill(pid, signal.SIGTERM)  # Windows では TerminateProcess
+        except OSError:
+            pass
+
+    timer = threading.Timer(seconds, kill)
+    timer.daemon = True
+    timer.start()
+    try:
+        yield
+    finally:
+        timer.cancel()
+        if fired.is_set():
+            raise OfficeTimeout(
+                f"Office の PDF への書き出しが {seconds:g} 秒で終わらなかったため中止しました（確認画面で止まった等。"
+                f"[vector_db] office_timeout_seconds で上限を変えられます）: {path.name}"
+            )
 
 
 def _release_office_app(prog_id: str, *, broken: bool) -> None:
@@ -226,7 +352,7 @@ def _release_office_app(prog_id: str, *, broken: bool) -> None:
         pythoncom.CoUninitialize()
 
 
-def _export_office_to_pdf(path: Path, out_dir: Path) -> list[tuple[Path, Locate]]:
+def _export_office_to_pdf(path: Path, out_dir: Path, timeout: float | None = None) -> list[tuple[Path, Locate]]:
     """Office ファイルを COM で PDF に書き出し、(PDF パス, ページ位置の付け方) のリストを返す。
 
     Excel は可視シートごとに、render 系スキルと同じく横1×縦1ページのフィット印刷にして
@@ -234,14 +360,19 @@ def _export_office_to_pdf(path: Path, out_dir: Path) -> list[tuple[Path, Locate]
     PDF に含めないため、ページ番号を表示スライドの番号へ対応させる。
 
     使い回しているアプリでエラーになったら（利用者が閉じた・応答しなくなった等）、そのアプリを終了し、
-    新しく起動して1回だけやり直す。
+    新しく起動して1回だけやり直す。timeout 秒で終わらなければアプリのプロセスを終了し、やり直さずに
+    OfficeTimeout にする（_watchdog）。
     """
     prog_id = _PROG_ID[path.suffix.lower()]
     while True:
         fresh = True
         try:
             app, fresh = _office_app(prog_id)
-            entries = _export_with(app, path, out_dir)
+            with _watchdog(_app_pid(prog_id, app) if timeout else None, timeout, path):
+                entries = _export_with(app, path, out_dir)
+        except OfficeTimeout:
+            _release_office_app(prog_id, broken=True)
+            raise
         except Exception:
             _release_office_app(prog_id, broken=True)
             if fresh:
@@ -255,22 +386,31 @@ def _export_with(app, path: Path, out_dir: Path) -> list[tuple[Path, Locate]]:
     """起動済みの app で path を PDF に書き出す（_export_office_to_pdf 参照）。開いた文書は閉じ、アプリは終了しない。"""
     ext = path.suffix.lower()
     abs_path = os.path.abspath(path)
+    # 書き出し先も絶対パスにする（相対パスは Office の作業フォルダからの位置と解釈され、書き出せない）。
+    out_dir = Path(os.path.abspath(out_dir))
     doc = None
+    # ダミーのパスワード（_DUMMY_PASSWORD）は、パスワード付きのファイルを入力画面で止めずにエラーにするため。
+    # Word・Excel は位置引数で渡す（Excel はキーワード引数の Password や、Format・WriteResPassword に値・Missing を
+    # 渡すと入力画面で止まるか開けなくなる。Microsoft 365 の Excel で確認した組み合わせ）。PowerPoint は
+    # パスワード付きのファイルで止まることがあり、そのときは _watchdog で打ち切る。
     try:
         if ext == ".docx":
             pdf_path = out_dir / "document.pdf"
-            doc = app.Documents.Open(abs_path, ReadOnly=True, AddToRecentFiles=False)
+            # FileName, ConfirmConversions, ReadOnly, AddToRecentFiles, PasswordDocument, PasswordTemplate
+            doc = app.Documents.Open(abs_path, False, True, False, _DUMMY_PASSWORD, _DUMMY_PASSWORD)
             doc.SaveAs2(str(pdf_path), 17)  # wdFormatPDF
             return [(pdf_path, _page_locator)]
 
         if ext == ".pptx":
             pdf_path = out_dir / "presentation.pdf"
-            doc = app.Presentations.Open(abs_path, ReadOnly=True, Untitled=False, WithWindow=False)
+            # PowerPoint はファイル名の後ろに "::パスワード::" を付けて渡す。
+            doc = app.Presentations.Open(f"{abs_path}::{_DUMMY_PASSWORD}::", ReadOnly=True, Untitled=False, WithWindow=False)
             visible = [s.SlideIndex for s in doc.Slides if not s.SlideShowTransition.Hidden]
             doc.SaveAs(str(pdf_path), 32)  # ppSaveAsPDF
             return [(pdf_path, lambda page, total: f"スライド{visible[page - 1]}" if page <= len(visible) else f"p.{page}")]
 
-        doc = app.Workbooks.Open(abs_path, UpdateLinks=0, ReadOnly=True, AddToMru=False)
+        # Filename, UpdateLinks, ReadOnly, Format, Password, WriteResPassword, IgnoreReadOnlyRecommended
+        doc = app.Workbooks.Open(abs_path, 0, True, None, _DUMMY_PASSWORD, None, True)
         entries: list[tuple[Path, Locate]] = []
         for idx, ws in enumerate(doc.Worksheets):
             if ws.Visible != -1:  # xlSheetVisible 以外（非表示・最非表示）は印刷対象外

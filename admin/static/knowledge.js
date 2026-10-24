@@ -106,6 +106,17 @@ function knowledgeJobCell(job, maxFileMb) {
   if (job.result) {
     const r = job.result;
     parts.push(el("div", { class: "hint", text: `追加 ${r.added} / 更新 ${r.updated} / 変更なし ${r.unchanged} / 削除 ${r.removed} / 失敗 ${r.failed.length}` }));
+    // 中身を埋め込まずにファイル名・フォルダ名だけで探せるようにしたファイル（画像ファイル・文字の無い PDF 等）。
+    if (r.path_only) {
+      parts.push(
+        el("div", {
+          class: "hint",
+          text:
+            `うち ${r.path_only} 件は中身を取り出せない（[vector_db] image_input = false の画像ファイル・文字の無い PDF 等）ため、` +
+            "ファイル名・フォルダ名だけを登録しました（search_document_paths で探せます）。",
+        })
+      );
+    }
     if (r.failed.length) {
       const details = el("details", {}, [el("summary", { text: "失敗したファイル" })]);
       for (const f of r.failed) details.append(el("div", { class: "hint", text: `${f.path}: ${f.reason}` }));

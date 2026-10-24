@@ -22,6 +22,16 @@ _MATCHED_LABELS = {"text": "本文", "keyword": "キーワード", "image": "画
 _PATH_MATCHED_LABELS = {"path": "意味", "path_keyword": "キーワード"}
 
 
+def _unexpected_error(tool_name: str, e: Exception) -> str:
+    """想定外の例外を「エラー: ...」の文字列にする。
+
+    langgraph の ToolNode は既定で ToolInvocationError 以外の例外を投げ直し、会話のターンごと止めるため、
+    ベクターDB の一時的な不具合（取り込みの「再構築」と同時の検索で表が消えた等）は文字列で返す。
+    """
+    logger.exception("%s: 想定外のエラー", tool_name)
+    return f"エラー: 社内文書の検索で想定外のエラーが起きました（{type(e).__name__}: {e}）。時間を置いて試し直してください。"
+
+
 def _enabled_config():
     cfg = _state._LLM_CONFIG
     if cfg is None or not cfg.vector_db_enabled:
@@ -47,6 +57,8 @@ def list_document_collections() -> str:
         collections = vector_search.list_collections(cfg)
     except (CatalogError, OSError) as e:
         return f"エラー: {e}"
+    except Exception as e:  # noqa: BLE001 - sqlite3.Error 等。ツールの例外は会話のターンごと止めるため文字列で返す
+        return _unexpected_error("list_document_collections", e)
     if not collections:
         return "コレクションはまだありません（管理者が設定ダッシュボードの「ナレッジ」タブで文書を取り込む必要があります）。"
     lines = [f"{len(collections)}件のコレクションがあります。"]
@@ -93,6 +105,8 @@ def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
         result = vector_search.search(cfg, query, collection=collection.strip() or None, top_k=top_k or None)
     except (vector_search.SearchError, EmbeddingError, StoreError, CatalogError) as e:
         return f"エラー: {e}"
+    except Exception as e:  # noqa: BLE001 - sqlite3.Error（再構築中の検索等）・応答の JSON の不正等
+        return _unexpected_error("search", e)
     logger.info("search_documents: query=%r collection=%r hits=%d", query, collection, len(result.hits))
     notes = [f"（{name} は検索対象外: {reason}）" for name, reason in result.skipped]
     if not result.hits:
@@ -157,6 +171,8 @@ def search_document_paths(query: str, collection: str = "", top_k: int = 0) -> s
         result = vector_search.search_paths(cfg, query, collection=collection.strip() or None, top_k=top_k or None)
     except (vector_search.SearchError, EmbeddingError, StoreError, CatalogError) as e:
         return f"エラー: {e}"
+    except Exception as e:  # noqa: BLE001 - sqlite3.Error（再構築中の検索等）・応答の JSON の不正等
+        return _unexpected_error("search", e)
     logger.info("search_document_paths: query=%r collection=%r hits=%d", query, collection, len(result.hits))
     notes = [f"（{name} は検索対象外: {reason}）" for name, reason in result.skipped]
     if not result.hits:

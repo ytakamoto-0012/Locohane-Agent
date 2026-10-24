@@ -62,8 +62,26 @@ def extract_segments(path: Path, data: bytes | None = None) -> list[Segment]:
     except ExtractError:
         raise
     except Exception as e:  # noqa: BLE001 - 壊れたファイルは1件の失敗として扱い、取り込み全体は止めない
+        if ext in _OOXML_EXTENSIONS and _is_encrypted_office(path, data):
+            raise ExtractError("パスワード付き（暗号化された）ファイルのため読めません") from e
         raise ExtractError(f"{type(e).__name__}: {e}") from e
     return [s for s in segments if s.text.strip()]
+
+
+# Office Open XML（ZIP）の形式。パスワードを付けると ZIP ではなく OLE の複合ファイル（暗号化されたパッケージ）になる。
+_OOXML_EXTENSIONS = (".docx", ".xlsx", ".xlsm", ".pptx")
+_OLE_SIGNATURE = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+
+def _is_encrypted_office(path: Path, data: bytes | None) -> bool:
+    """docx・xlsx・pptx がパスワード付き（中身が OLE の複合ファイル）か。"""
+    if data is not None:
+        return data[:8] == _OLE_SIGNATURE
+    try:
+        with path.open("rb") as f:
+            return f.read(8) == _OLE_SIGNATURE
+    except OSError:
+        return False
 
 
 def _decode_text(data: bytes) -> str:

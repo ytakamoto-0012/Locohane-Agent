@@ -534,7 +534,7 @@ def env(request, tmp_path):
     (docs / "weld.md").write_text("溶接ビードの幅は5mm以上とする。", encoding="utf-8")
     (docs / "sub" / "room.txt").write_text("会議室の予約はポータルから行う。", encoding="utf-8")
     (docs / "~$lock.docx").write_bytes(b"office lock file")
-    (docs / "image.png").write_bytes(b"png")
+    (docs / "image.xyz").write_bytes(b"unsupported")
     cfg = make_config(tmp_path, vector_db_backend=request.param)
     embed = FakeEmbeddingServer()
     qdrant = FakeQdrant()
@@ -567,12 +567,14 @@ def test_ingest_is_incremental(env):
     (docs / "empty.md").write_text("   ", encoding="utf-8")
     third = ingest.ingest_collection(cfg, "docs", **kwargs)
     assert (third.updated, third.removed) == (1, 1)
-    assert [p for p, _ in third.failed] == [str(docs / "empty.md")]
+    # 本文を取り出せないファイルも、失敗にせずファイルパスだけを登録する（ファイル名で探せるように）。
+    assert (third.added, third.path_only, third.failed) == (1, 1, [])
 
     result = search.search(cfg, "溶接ビードの幅", **kwargs)
     assert [h.text for h in result.hits] == ["溶接ビードの幅は6mm以上に改訂した。"]
     [collection] = search.list_collections(cfg)
-    assert (collection.file_count, collection.model, collection.dim) == (1, "fake-embed", DIM)
+    assert (collection.file_count, collection.chunk_count, collection.model, collection.dim) == (2, 1, "fake-embed", DIM)
+    assert str(docs / "empty.md") in {h.source_path for h in search.search_paths(cfg, "empty", **kwargs).hits}
 
 
 def test_ingest_reuses_one_embedding_client(env, monkeypatch):
@@ -724,15 +726,14 @@ def test_ingest_runs_files_in_parallel_with_ingest_workers(env):
     parallel = make_config(cfg.vector_db_dir.parent, vector_db_backend=cfg.vector_db_backend, vector_db_ingest_workers=3)
     progress = []
     result = ingest.ingest_collection(parallel, "docs", progress=lambda *a: progress.append(a), **kwargs)
-    assert (result.added, result.unchanged) == (8, 0)
-    assert [p for p, _ in result.failed] == [str(docs / "empty.md")]
+    assert (result.added, result.unchanged, result.path_only, result.failed) == (9, 0, 1, [])
     assert 1 < state["peak"] <= 3
     assert progress[-1] == (9, 9, "")
-    assert search.list_collections(parallel)[0].file_count == 8
+    assert search.list_collections(parallel)[0].file_count == 9
     assert [h.text for h in search.search(parallel, "溶接ビードの幅", **kwargs).hits][0] == "溶接ビードの幅は5mm以上とする。"
     # 2回目は差分なし（並列でも記録が正しく残っている）
     again = ingest.ingest_collection(parallel, "docs", **kwargs)
-    assert (again.added, again.updated, again.unchanged) == (0, 0, 8)
+    assert (again.added, again.updated, again.unchanged) == (0, 0, 9)
 
 
 def test_ingest_in_parallel_stops_on_embedding_error(env):

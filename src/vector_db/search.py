@@ -120,7 +120,7 @@ def search_paths(
         raise SearchError("検索語を指定してください。")
     limit = top_k if top_k and top_k > 0 else cfg.vector_db_top_k
     result = SearchResult()
-    targets = _targets(cfg, collection, result)
+    targets = _targets(cfg, collection, result, paths=True)
     client = shared_client(cfg) if embedding_transport is None else None
     vector = embed_texts(cfg, [query], kind="query", transport=embedding_transport, client=client)[0]
     candidates = limit * _CANDIDATE_FACTOR
@@ -143,8 +143,12 @@ def search_paths(
     return result
 
 
-def _targets(cfg: Config, collection: str | None, result: SearchResult) -> list[Collection]:
-    """検索するコレクション（collection が空なら全部）。比べられないものは外して result.skipped に理由を載せる。"""
+def _targets(cfg: Config, collection: str | None, result: SearchResult, *, paths: bool = False) -> list[Collection]:
+    """検索するコレクション（collection が空なら全部）。比べられないものは外して result.skipped に理由を載せる。
+
+    paths=True（search_paths）なら、本文のチャンクが無くてもファイルがあれば対象にする
+    （image_input = false の画像ファイル等は、ファイルパスだけを登録しているため）。
+    """
     model = embedding_model(cfg)
     collections = list_collections(cfg)
     if collection:
@@ -153,8 +157,10 @@ def _targets(cfg: Config, collection: str | None, result: SearchResult) -> list[
             raise SearchError(f"コレクション {collection} はありません。list_document_collections で一覧を確認してください。")
     targets = []
     for c in collections:
-        if not c.model or not c.chunk_count:
+        if not c.model or not c.file_count:
             result.skipped.append((c.name, "まだ文書が取り込まれていません"))
+        elif not paths and not c.chunk_count:
+            result.skipped.append((c.name, "本文のある文書がありません（ファイル名・フォルダ名は search_document_paths で探せます）"))
         elif c.model != model:
             result.skipped.append((c.name, f"埋め込みモデル {c.model} で作られています（今の設定は {model}。管理者が再構築する必要があります）"))
         elif c.document_prefix is not None and c.document_prefix != cfg.vector_db_document_prefix:

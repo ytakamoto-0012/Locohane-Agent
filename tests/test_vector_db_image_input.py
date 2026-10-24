@@ -84,7 +84,7 @@ def env(request, tmp_path, monkeypatch):
     (docs / "note.md").write_text("会議室の予約はポータルから行う。", encoding="utf-8")
     rendered = []
 
-    def fake_render(path, dpi):
+    def fake_render(path, dpi, **_):
         rendered.append((path.name, dpi))
         # 「画像」の代わりに文字列のバイト列を渡す（偽の埋め込みサーバーはそれを読んでベクターにする）。
         return [PageImage("p.1", "溶接ビードの幅は5mm以上", "溶接ビードの幅の図".encode()), PageImage("p.2", "", "外観検査の写真".encode())]
@@ -145,7 +145,7 @@ def test_page_matching_both_text_and_image_is_merged_and_ranked_first(env, monke
     cfg, kwargs = env["cfg"], env["kwargs"]
     # p.1 は本文（welding manual）と画像の両方が「welding」に近い。p.2 は画像だけ。
     monkeypatch.setattr(
-        ingest, "render_pages", lambda path, dpi: [PageImage("p.1", "welding manual", b"welding"), PageImage("p.2", "", b"wel")]
+        ingest, "render_pages", lambda path, dpi, **_: [PageImage("p.1", "welding manual", b"welding"), PageImage("p.2", "", b"wel")]
     )
     ingest.ingest_collection(cfg, "docs", **kwargs)
     hits = search.search(cfg, "welding", collection="docs", top_k=5, **kwargs).hits
@@ -188,7 +188,7 @@ def test_switching_image_input_reingests_only_affected_files(env):
     assert _image_store_sources(cfg, kwargs) == ["manual.pdf"]
 
 
-def test_text_only_failure_suggests_image_input(env):
+def test_text_less_pdf_is_registered_by_path_until_image_input(env):
     from reportlab.pdfgen import canvas
 
     c = canvas.Canvas(str(env["docs"] / "manual.pdf"))
@@ -196,9 +196,14 @@ def test_text_only_failure_suggests_image_input(env):
     c.save()
     text_cfg = make_config(env["cfg"].vector_db_dir.parent, vector_db_backend=env["cfg"].vector_db_backend, vector_db_image_input=False, vector_db_rrf_weight_keyword=0.0)
     result = ingest.ingest_collection(text_cfg, "docs", **env["kwargs"])
-    assert "image_input = true" in result.failed[0][1]
-    # image_input = true なら画像だけでも取り込める
-    assert ingest.ingest_collection(env["cfg"], "docs", **env["kwargs"]).failed == []
+    # 本文を取り出せなくても失敗にせず、ファイル名・フォルダ名で探せるようパスだけを登録する。
+    assert (result.path_only, result.failed) == (1, [])
+    hits = search.search_paths(text_cfg, "manual", **env["kwargs"]).hits
+    assert [Path(h.source_path).name for h in hits][:1] == ["manual.pdf"]
+    # image_input = true にすると、パスだけのファイルも画像として取り込み直す
+    again = ingest.ingest_collection(env["cfg"], "docs", **env["kwargs"])
+    assert (again.updated, again.path_only, again.failed) == (1, 0, [])
+    assert _image_store_sources(env["cfg"], env["kwargs"]) == ["manual.pdf"]
 
 
 def test_removed_files_and_rebuild_delete_image_vectors(env):
@@ -212,7 +217,7 @@ def test_removed_files_and_rebuild_delete_image_vectors(env):
 
 
 def test_long_page_text_is_cut_to_chunk_size(env, monkeypatch):
-    monkeypatch.setattr(ingest, "render_pages", lambda path, dpi: [PageImage("p.9", "あ" * 500, b"x")])
+    monkeypatch.setattr(ingest, "render_pages", lambda path, dpi, **_: [PageImage("p.9", "あ" * 500, b"x")])
     cfg = env["cfg"]
     ingest.ingest_collection(cfg, "docs", **env["kwargs"])
     hit = search.search(cfg, "x", collection="docs", top_k=5, **env["kwargs"]).hits
@@ -296,25 +301,36 @@ def test_render_pages_converts_image_files_to_png(tmp_path):
         render_pages(tmp_path / "broken.jpg", dpi=50)
 
 
-def test_image_files_are_ingested_only_when_image_input_is_true(env):
+def test_image_files_are_embedded_as_images_only_when_image_input_is_true(env):
     from PIL import Image
 
     cfg, kwargs, docs = env["cfg"], env["kwargs"], env["docs"]
     Image.new("RGB", (8, 8), "red").save(docs / "photo.png")
     (docs / "phone.heic").write_bytes(b"heic")
     assert {ingest.file_mode(cfg, docs / n) for n in ("photo.png", "phone.heic")} == {"text+image"}
-    names = [p.name for p in ingest.list_source_files(docs, True, cfg.vector_db_include_extensions, True)]
+    names = [p.name for p in ingest.list_source_files(docs, True, cfg.vector_db_include_extensions)]
     assert names == ["manual.pdf", "note.md", "phone.heic", "photo.png"]
 
     result = ingest.ingest_collection(cfg, "docs", **kwargs)
     assert (result.added, result.failed) == (4, [])
     assert sorted(n for n, _ in env["rendered"]) == ["manual.pdf", "phone.heic", "photo.png"]
 
-    # image_input = false では画像ファイルを対象にせず、取り込み済みのものは削除する。
+    # image_input = false でも画像ファイルは対象のまま、画像のベクターを消してファイルパスだけを残す。
     text_cfg = make_config(cfg.vector_db_dir.parent, vector_db_backend=cfg.vector_db_backend, vector_db_image_input=False, vector_db_rrf_weight_keyword=0.0)
-    assert ingest.effective_extensions(text_cfg.vector_db_include_extensions, False) == (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".md", ".txt", ".csv")
+    assert {ingest.file_mode(text_cfg, docs / n) for n in ("photo.png", "phone.heic")} == {"path"}
     result = ingest.ingest_collection(text_cfg, "docs", **kwargs)
-    assert (result.removed, result.failed) == (2, [])
+    assert (result.removed, result.path_only, result.failed) == (0, 2, [])
+    with vcat.open_catalog(text_cfg.vector_db_dir) as catalog:
+        records = catalog.files("docs")
+    assert {(Path(s).name, r.mode, r.chunk_count) for s, r in records.items() if Path(s).suffix != ".md" and Path(s).suffix != ".pdf"} == {
+        ("photo.png", "path", 0),
+        ("phone.heic", "path", 0),
+    }
+    hits = search.search_paths(text_cfg, "photo", embedding_transport=kwargs["embedding_transport"], store_transport=kwargs.get("store_transport")).hits
+    assert "photo.png" in {Path(h.source_path).name for h in hits}
+    # 画像のベクターは消えている（本文の検索に画像の一致が出ない）。
+    hits = search.search(text_cfg, "photo", embedding_transport=kwargs["embedding_transport"], store_transport=kwargs.get("store_transport")).hits
+    assert all("image" not in h.matched for h in hits)
 
 
 def test_old_catalog_gets_schedule_columns(tmp_path):

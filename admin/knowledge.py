@@ -354,7 +354,7 @@ def build_router(
             "embedding_model": endpoints[0].model if endpoints else None,
             "query_prefix": cfg.vector_db_query_prefix,
             "document_prefix": cfg.vector_db_document_prefix,
-            "include_extensions": list(effective_extensions(cfg.vector_db_include_extensions, cfg.vector_db_image_input)),
+            "include_extensions": list(effective_extensions(cfg.vector_db_include_extensions)),
             "image_input": cfg.vector_db_image_input,
             "max_file_mb": cfg.vector_db_max_file_mb,
             "collections": [_collection_dict(c, running.get(c.name)) for c in collections],
