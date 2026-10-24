@@ -36,6 +36,7 @@ import yaml
 
 from evals.case_schema import load_case
 from evals.skill_tree import FIXTURES_DIRNAME, cases_sha256, copy_ignore_for, file_sha256, tree_sha256
+from admin.i18n import t as _t
 
 THEME_FILENAME = "theme.json"
 SPEC_FILENAME = "spec.md"
@@ -92,10 +93,10 @@ def themes_root(common_data_dir: Path) -> Path:
 def theme_dir(root: Path, theme_id: str) -> Path:
     """テーマ ID からフォルダを求める（ID の形式を確かめ、置き場の外を指させない）。"""
     if not _THEME_ID_RE.match(theme_id or ""):
-        raise ThemeError(f"テーマ ID が不正です: {theme_id!r}")
+        raise ThemeError(_t("テーマ ID が不正です: {0!r}", theme_id))
     path = root / theme_id
     if not (path / THEME_FILENAME).is_file():
-        raise ThemeError(f"テーマが見つかりません: {theme_id}")
+        raise ThemeError(_t("テーマが見つかりません: {0}", theme_id))
     return path
 
 
@@ -123,7 +124,7 @@ def _locked(directory: Path) -> Iterator[None]:
                 break
             except OSError:
                 if time.monotonic() > deadline:
-                    raise ThemeError(f"テーマのロックを取得できません（他の処理が使用中）: {directory.name}") from None
+                    raise ThemeError(_t("テーマのロックを取得できません（他の処理が使用中）: {0}", directory.name)) from None
                 time.sleep(0.05)
         try:
             yield
@@ -191,7 +192,7 @@ def add_history(data: dict, actor: str, action: str, detail: str = "") -> None:
 def create_theme(root: Path, *, instance: str, title: str, lab: str | None, actor: str) -> Path:
     title = (title or "").strip()
     if not title:
-        raise ThemeError("テーマ名を入力してください。")
+        raise ThemeError(_t("テーマ名を入力してください。"))
     root.mkdir(parents=True, exist_ok=True)
     theme_id = f"{datetime.now():%Y%m%d%H%M%S}_{secrets.token_hex(2)}"
     directory = root / theme_id
@@ -231,7 +232,7 @@ def create_theme(root: Path, *, instance: str, title: str, lab: str | None, acto
 
 def _check_part(part: str) -> None:
     if part in ("", ".", "..") or not _FIXTURE_PART_RE.match(part) or part.endswith((".", " ")) or _RESERVED_NAME_RE.match(part):
-        raise ThemeError(f"パスに使えない名前が含まれています: {part!r}")
+        raise ThemeError(_t("パスに使えない名前が含まれています: {0!r}", part))
 
 
 def resolve_path(directory: Path, rel: str, *, for_write: bool = False) -> Path:
@@ -243,7 +244,7 @@ def resolve_path(directory: Path, rel: str, *, for_write: bool = False) -> Path:
     """
     rel = (rel or "").replace("\\", "/").strip().strip("/")
     if not rel or rel.startswith("/") or ":" in rel:
-        raise ThemeError(f"パスが不正です: {rel!r}")
+        raise ThemeError(_t("パスが不正です: {0!r}", rel))
     parts = rel.split("/")
     for part in parts:
         _check_part(part)
@@ -259,17 +260,17 @@ def resolve_path(directory: Path, rel: str, *, for_write: bool = False) -> Path:
     elif parts[0] == CASES_DIRNAME and len(parts) >= 3 and parts[1] == FIXTURES_DIRNAME:
         ok = True
     if not ok:
-        raise ThemeError(f"このパスは扱えません: {rel}")
+        raise ThemeError(_t("このパスは扱えません: {0}", rel))
     path = (directory / Path(*parts)).resolve()
     if not path.is_relative_to(directory.resolve()):
-        raise ThemeError(f"テーマの外を指すパスです: {rel}")
+        raise ThemeError(_t("テーマの外を指すパスです: {0}", rel))
     if for_write and parts[0] == ASSETS_DIRNAME and parts[1] == "skills" and len(parts) == 3:
-        raise ThemeError("スキルのフォルダそのものではなく、その中のファイルを指定してください。")
+        raise ThemeError(_t("スキルのフォルダそのものではなく、その中のファイルを指定してください。"))
     if for_write and parts[0] == CASES_DIRNAME and len(parts) == 3:
         # 入力ファイルはフォルダ（ケースの work_dir: fixtures/<フォルダ>）の中に置く。
-        raise ThemeError("入力ファイルは cases/fixtures/<フォルダ名>/ の中に置いてください。")
+        raise ThemeError(_t("入力ファイルは cases/fixtures/<フォルダ名>/ の中に置いてください。"))
     if for_write and path.is_dir():
-        raise ThemeError(f"同じ名前のフォルダがあります: {rel}")
+        raise ThemeError(_t("同じ名前のフォルダがあります: {0}", rel))
     return path
 
 
@@ -305,11 +306,11 @@ def _is_text(path: Path) -> bool:
 def read_text(directory: Path, rel: str) -> str:
     path = resolve_path(directory, rel)
     if not path.is_file():
-        raise ThemeError(f"ファイルが見つかりません: {rel}")
+        raise ThemeError(_t("ファイルが見つかりません: {0}", rel))
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError as e:
-        raise ThemeError(f"テキストファイルではありません: {rel}") from e
+        raise ThemeError(_t("テキストファイルではありません: {0}", rel)) from e
 
 
 def write_text(directory: Path, rel: str, content: str, *, actor: str) -> None:
@@ -324,7 +325,7 @@ def write_text(directory: Path, rel: str, content: str, *, actor: str) -> None:
 def write_bytes(directory: Path, rel: str, content: bytes, *, actor: str) -> None:
     path = resolve_path(directory, rel, for_write=True)
     if not rel.replace("\\", "/").startswith(f"{CASES_DIRNAME}/{FIXTURES_DIRNAME}/"):
-        raise ThemeError("ファイルのアップロードは cases/fixtures/ 配下にだけできます。")
+        raise ThemeError(_t("ファイルのアップロードは cases/fixtures/ 配下にだけできます。"))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
     mark_changed(directory, actor, f"入力ファイル: {rel}")
@@ -334,12 +335,12 @@ def delete_path(directory: Path, rel: str, *, actor: str) -> None:
     path = resolve_path(directory, rel)
     parts = rel.replace("\\", "/").strip().strip("/").split("/")
     if parts in (["spec.md"], ["config_patch.json"]):
-        raise ThemeError(f"{rel} は削除できません（中身を空にして保存してください）。")
+        raise ThemeError(_t("{0} は削除できません（中身を空にして保存してください）。", rel))
     if parts[0] == ASSETS_DIRNAME and (parts[1] == "agents" or len(parts) == 3 or parts[3:] == ["SKILL.md"]):
         # 研究対象の本体だけを消すと、入手元の記録（取り込んだドラフト等）と食い違う。
-        raise ThemeError("研究対象そのものを除くには、研究対象の「外す」を使ってください。")
+        raise ThemeError(_t("研究対象そのものを除くには、研究対象の「外す」を使ってください。"))
     if not path.exists():
-        raise ThemeError(f"見つかりません: {rel}")
+        raise ThemeError(_t("見つかりません: {0}", rel))
     if path.is_dir():
         shutil.rmtree(path)
     else:
@@ -469,9 +470,9 @@ def validate_python(content: str, rel: str) -> str | None:
 
 def asset_path(directory: Path, asset_type: str, name: str) -> Path:
     if asset_type not in ASSET_TYPES:
-        raise ThemeError(f"研究対象の種類が不正です: {asset_type!r}")
+        raise ThemeError(_t("研究対象の種類が不正です: {0!r}", asset_type))
     if not NAME_RE.match(name or "") or len(name) > 64:
-        raise ThemeError(f"名前は小文字英数字・ハイフン・アンダースコアのみにしてください: {name!r}")
+        raise ThemeError(_t("名前は小文字英数字・ハイフン・アンダースコアのみにしてください: {0!r}", name))
     base = directory / ASSETS_DIRNAME / asset_type
     return base / name if asset_type == "skills" else base / f"{name}.md"
 
@@ -487,18 +488,18 @@ def add_asset_copy(directory: Path, asset_type: str, name: str, origin: Path, *,
     """既存のスキル（フォルダ）・エージェント（.md）を複製して資産にする（baseline にも写す）。"""
     target = asset_path(directory, asset_type, name)
     if target.exists():
-        raise ThemeError(f"同じ名前の研究対象が既にあります: {name}")
+        raise ThemeError(_t("同じ名前の研究対象が既にあります: {0}", name))
     baseline = directory / BASELINE_DIRNAME / ASSETS_DIRNAME / asset_type / target.name
     if asset_type == "skills":
         if not (origin / "SKILL.md").is_file():
-            raise ThemeError(f"スキルが見つかりません: {origin}")
+            raise ThemeError(_t("スキルが見つかりません: {0}", origin))
         shutil.copytree(origin, target, ignore=copy_ignore_for(origin))
         baseline.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(target, baseline, dirs_exist_ok=True)
         source = {**source, "origin_sha256": tree_sha256(origin)}
     else:
         if not origin.is_file():
-            raise ThemeError(f"エージェント定義が見つかりません: {origin}")
+            raise ThemeError(_t("エージェント定義が見つかりません: {0}", origin))
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(origin, target)
         baseline.parent.mkdir(parents=True, exist_ok=True)
@@ -517,7 +518,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
     """新しいスキル（SKILL.md だけ）・エージェント（.md）を作る。"""
     target = asset_path(directory, asset_type, name)
     if target.exists():
-        raise ThemeError(f"同じ名前の研究対象が既にあります: {name}")
+        raise ThemeError(_t("同じ名前の研究対象が既にあります: {0}", name))
     if asset_type == "skills":
         error = validate_skill_md(content, name)
         if error:
@@ -542,7 +543,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
 def remove_asset(directory: Path, asset_type: str, name: str, *, actor: str) -> None:
     target = asset_path(directory, asset_type, name)
     if not target.exists():
-        raise ThemeError(f"研究対象が見つかりません: {name}")
+        raise ThemeError(_t("研究対象が見つかりません: {0}", name))
     if target.is_dir():
         shutil.rmtree(target)
     else:
@@ -716,7 +717,7 @@ TASK_TYPES = ("trial", "draft_spec", "draft_cases", "draft_asset")
 
 def add_task(directory: Path, task_type: str, params: dict, *, actor: str) -> str:
     if task_type not in TASK_TYPES:
-        raise ThemeError(f"不明なタスクです: {task_type}")
+        raise ThemeError(_t("不明なタスクです: {0}", task_type))
     task_id = f"{datetime.now():%Y%m%d%H%M%S}_{secrets.token_hex(2)}"
 
     def _apply(data: dict) -> None:

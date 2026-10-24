@@ -21,6 +21,7 @@ from evals.config_patch import ConfigPatchError
 from .. import audit
 from .. import instances as inst
 from . import promotion, sources, themes
+from admin.i18n import t as _t
 
 # アップロードできる入力ファイル1つの上限（バイト）。
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -107,14 +108,14 @@ def build_router(
         except inst.InstanceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if meta.is_skill_lab:
-            raise HTTPException(status_code=400, detail="スキル研究室のインスタンスには研究テーマを置けません。")
+            raise HTTPException(status_code=400, detail=_t("スキル研究室のインスタンスには研究テーマを置けません。"))
         return meta
 
     def _cfg(name: str):
         try:
             return promotion.instance_config(instances_root, name)
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail=f"インスタンス {name} の設定を読めません: {exc}") from exc
+            raise HTTPException(status_code=400, detail=_t("インスタンス {0} の設定を読めません: {1}", name, exc)) from exc
 
     def _root(name: str) -> Path:
         return themes.themes_root(_cfg(name).common_data_dir)
@@ -127,9 +128,9 @@ def build_router(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         data = themes.read_or_none(directory)
         if data is None:
-            raise HTTPException(status_code=409, detail=f"テーマ {theme_id} の theme.json を読めません（手で直すか、テーマのフォルダを退避してください）。")
+            raise HTTPException(status_code=409, detail=_t("テーマ {0} の theme.json を読めません（手で直すか、テーマのフォルダを退避してください）。", theme_id))
         if data.get("instance") != name:
-            raise HTTPException(status_code=404, detail="このインスタンスのテーマではありません。")
+            raise HTTPException(status_code=404, detail=_t("このインスタンスのテーマではありません。"))
         return directory
 
     def _labs() -> list[dict]:
@@ -174,14 +175,14 @@ def build_router(
 
     def _check_lab(lab: str | None) -> None:
         if lab and lab not in {x["name"] for x in _labs()}:
-            raise HTTPException(status_code=400, detail=f"スキル研究室 {lab} が見つかりません。")
+            raise HTTPException(status_code=400, detail=_t("スキル研究室 {0} が見つかりません。", lab))
 
     def _guard_editable(directory: Path) -> dict:
         data = themes.read(directory)
         if data.get("status") in themes.CLOSED_STATUSES:
-            raise HTTPException(status_code=409, detail=f"このテーマは終了しています（{data.get('status')}）。")
+            raise HTTPException(status_code=409, detail=_t("このテーマは終了しています（{0}）。", data.get('status')))
         if data.get("status") in themes.ACTIVE_STATUSES:
-            raise HTTPException(status_code=409, detail="ループ・トライアウトの実行中は編集できません。先に停止してください。")
+            raise HTTPException(status_code=409, detail=_t("ループ・トライアウトの実行中は編集できません。先に停止してください。"))
         return data
 
     def _summary(directory: Path) -> dict:
@@ -303,10 +304,10 @@ def build_router(
         directory = _theme(name, theme_id)
         _check_lab(body.lab)
         if themes.read(directory).get("status") in themes.CLOSED_STATUSES:
-            raise HTTPException(status_code=409, detail="このテーマは終了しています。")
+            raise HTTPException(status_code=409, detail=_t("このテーマは終了しています。"))
         if body.lab is not None and themes.read(directory).get("status") in themes.ACTIVE_STATUSES:
             # 実行中に担当を替えると、元のワーカーが続けている間に新しいワーカーも同じテーマを拾ってしまう。
-            raise HTTPException(status_code=409, detail="ループ・トライアウトの実行中・開始待ちの間は担当のワーカーを変えられません。先に停止してください。")
+            raise HTTPException(status_code=409, detail=_t("ループ・トライアウトの実行中・開始待ちの間は担当のワーカーを変えられません。先に停止してください。"))
 
         def _apply(d: dict) -> None:
             if body.title is not None and body.title.strip():
@@ -329,16 +330,16 @@ def build_router(
         try:
             if body.mode == "draft":
                 if body.asset_type != "skills" or not body.origin:
-                    raise themes.ThemeError("ドラフトの取り込みにはドラフトのフォルダを指定してください。")
+                    raise themes.ThemeError(_t("ドラフトの取り込みにはドラフトのフォルダを指定してください。"))
                 origin = Path(body.origin).resolve()
                 draft_root = cfg.skill_draft_dir.resolve()
                 if not origin.is_relative_to(draft_root) or len(origin.relative_to(draft_root).parts) != 2:
-                    raise themes.ThemeError("このインスタンスのドラフトではありません。")
+                    raise themes.ThemeError(_t("このインスタンスのドラフトではありません。"))
                 owner = origin.parent.name
                 other = sources.imported_drafts(_root(name)).get(str(origin))
                 if other and other != theme_id:
                     # 2つのテーマで同じドラフトを仕上げると、昇格・差し戻しが食い違う。
-                    raise themes.ThemeError(f"このドラフトは別のテーマ（{other}）に取り込み済みです。そのテーマで続けるか、取りやめてから取り込んでください。")
+                    raise themes.ThemeError(_t("このドラフトは別のテーマ（{0}）に取り込み済みです。そのテーマで続けるか、取りやめてから取り込んでください。", other))
                 themes.add_asset_copy(
                     directory, "skills", origin.name, origin, source={"kind": "draft", "origin": str(origin), "owner": owner}, actor=user
                 )
@@ -360,23 +361,23 @@ def build_router(
             elif body.mode == "official":
                 origin = promotion.official_sources(cfg, body.asset_type, body.name)
                 if origin is None:
-                    raise themes.ThemeError(f"正式の {body.name} が見つかりません。")
+                    raise themes.ThemeError(_t("正式の {0} が見つかりません。", body.name))
                 source = {"kind": "official", "origin": str(origin), "origin_label": sources.origin_label(cfg, origin)}
                 themes.add_asset_copy(directory, body.asset_type, body.name, origin, source=source, actor=user)
             elif body.mode == "new":
                 themes.add_asset_new(directory, body.asset_type, body.name, body.content or "", actor=user)
             elif body.mode == "ai":
                 if themes.asset_path(directory, body.asset_type, body.name).exists():
-                    raise themes.ThemeError(f"同じ名前の研究対象が既にあります: {body.name}")
+                    raise themes.ThemeError(_t("同じ名前の研究対象が既にあります: {0}", body.name))
                 if not (body.request or "").strip():
-                    raise themes.ThemeError("何をさせたいかを書いてください。")
+                    raise themes.ThemeError(_t("何をさせたいかを書いてください。"))
                 task_id = themes.add_task(
                     directory, "draft_asset", {"asset_type": body.asset_type, "name": body.name, "request": body.request}, actor=user
                 )
                 _audit(request, user, name, "skill_lab_task", theme=theme_id, task="draft_asset", asset=body.name)
                 return {"task_id": task_id}
             else:
-                raise themes.ThemeError(f"不明な追加方法です: {body.mode}")
+                raise themes.ThemeError(_t("不明な追加方法です: {0}", body.mode))
         except themes.ThemeError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         _audit(request, user, name, "skill_lab_asset_add", theme=theme_id, mode=body.mode, asset=f"{body.asset_type}/{body.name}")
@@ -458,7 +459,7 @@ def build_router(
         directory = _theme(name, theme_id)
         _guard_editable(directory)
         if create and (directory / themes.CASES_DIRNAME / f"{case_id}.yaml").exists():
-            raise HTTPException(status_code=409, detail=f"同じ名前の試験問題（{case_id}）が既にあります。別の名前にしてください。")
+            raise HTTPException(status_code=409, detail=_t("同じ名前の試験問題（{0}）が既にあります。別の名前にしてください。", case_id))
         data = {"id": case_id, "target": "skill_lab", **{k: v for k, v in body.data.items() if k not in ("id", "target")}}
         data = {k: v for k, v in data.items() if v not in (None, "", [], {})}
         content = yaml.safe_dump(data, allow_unicode=True, sort_keys=False)
@@ -476,12 +477,12 @@ def build_router(
         try:
             content = base64.b64decode(body.content_base64, validate=True)
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail="ファイルの内容を読めません。") from exc
+            raise HTTPException(status_code=400, detail=_t("ファイルの内容を読めません。")) from exc
         if len(content) > _MAX_UPLOAD_BYTES:
-            raise HTTPException(status_code=400, detail=f"ファイルが大きすぎます（上限 {_MAX_UPLOAD_BYTES // 1024 // 1024}MB）。")
+            raise HTTPException(status_code=400, detail=_t("ファイルが大きすぎます（上限 {0}MB）。", _MAX_UPLOAD_BYTES // 1024 // 1024))
         filename = Path(body.filename.replace("\\", "/")).name.strip()
         if not filename or not body.folder.strip():
-            raise HTTPException(status_code=400, detail="フォルダ名とファイル名を指定してください。")
+            raise HTTPException(status_code=400, detail=_t("フォルダ名とファイル名を指定してください。"))
         rel = f"{themes.CASES_DIRNAME}/{themes.FIXTURES_DIRNAME}/{body.folder.strip()}/{filename}"
         try:
             themes.write_bytes(directory, rel, content, actor=user)
@@ -497,20 +498,20 @@ def build_router(
         directory = _theme(name, theme_id)
         data = themes.read(directory)
         if data.get("status") in themes.CLOSED_STATUSES:
-            raise HTTPException(status_code=409, detail="このテーマは終了しています。")
+            raise HTTPException(status_code=409, detail=_t("このテーマは終了しています。"))
         if body.type != "trial" and data.get("status") in themes.ACTIVE_STATUSES:
-            raise HTTPException(status_code=409, detail="ループ・トライアウトの実行中は下書きを頼めません。")
+            raise HTTPException(status_code=409, detail=_t("ループ・トライアウトの実行中は下書きを頼めません。"))
         if body.type == "trial" and body.params.get("case_id") not in {c["id"] for c in themes.list_cases(directory)}:
-            raise HTTPException(status_code=400, detail="試すケースを選んでください。")
+            raise HTTPException(status_code=400, detail=_t("試すケースを選んでください。"))
         if body.type == "draft_asset":
             try:
                 target = themes.asset_path(directory, str(body.params.get("asset_type") or ""), str(body.params.get("name") or ""))
             except themes.ThemeError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
             if target.exists():
-                raise HTTPException(status_code=400, detail=f"同じ名前の研究対象が既にあります: {body.params.get('name')}")
+                raise HTTPException(status_code=400, detail=_t("同じ名前の研究対象が既にあります: {0}", body.params.get('name')))
             if not str(body.params.get("request") or "").strip():
-                raise HTTPException(status_code=400, detail="何をさせたいかを書いてください。")
+                raise HTTPException(status_code=400, detail=_t("何をさせたいかを書いてください。"))
         try:
             task_id = themes.add_task(directory, body.type, body.params, actor=user)
         except themes.ThemeError as exc:
@@ -528,23 +529,23 @@ def build_router(
         directory = _theme(name, theme_id)
         data = _guard_editable(directory)
         if body.mode not in ("loop", "tryout"):
-            raise HTTPException(status_code=400, detail="mode は loop か tryout にしてください。")
+            raise HTTPException(status_code=400, detail=_t("mode は loop か tryout にしてください。"))
         missing = themes.start_missing(directory)
         if missing:
-            raise HTTPException(status_code=400, detail="開始するには次を入れてください: " + "、".join(missing))
+            raise HTTPException(status_code=400, detail=_t("開始するには次を入れてください: {0}", "、".join(missing)))
         labs = _labs()
         lab = data.get("lab")
         if lab and lab not in {x["name"] for x in labs}:
-            raise HTTPException(status_code=400, detail=f"担当のスキル調整ワーカー {lab} が見つかりません。「担当・名前を変更」で選び直してください。")
+            raise HTTPException(status_code=400, detail=_t("担当のスキル調整ワーカー {0} が見つかりません。「担当・名前を変更」で選び直してください。", lab))
         if not lab and len(labs) != 1:
             raise HTTPException(
                 status_code=400,
-                detail="担当のスキル調整ワーカーを選んでください（「担当・名前を変更」）。" if labs else "スキル調整ワーカーがありません。先にインスタンス一覧で作成してください。",
+                detail=_t("担当のスキル調整ワーカーを選んでください（「担当・名前を変更」）。") if labs else _t("スキル調整ワーカーがありません。先にインスタンス一覧で作成してください。"),
             )
         pending = [t for t in data.get("tasks") or [] if t.get("type") != "trial" and t.get("status") in ("queued", "running")]
         if pending:
             # 下書きがループの途中で仕様・ケースを書き換えると、評価と修正の前提が崩れる。
-            raise HTTPException(status_code=409, detail="AI への依頼（下書き）が終わるまで待ってから開始してください。")
+            raise HTTPException(status_code=409, detail=_t("AI への依頼（下書き）が終わるまで待ってから開始してください。"))
         # 担当が決まっていなければ今の唯一のワーカーに決める（後からワーカーが増えても、どれも拾わなくならないように）。
         lab = lab or labs[0]["name"]
         changed = {"ok": False}
@@ -560,7 +561,7 @@ def build_router(
 
         themes.update(directory, _apply)
         if not changed["ok"]:
-            raise HTTPException(status_code=409, detail="テーマの状態が変わったため開始できませんでした。画面を更新してください。")
+            raise HTTPException(status_code=409, detail=_t("テーマの状態が変わったため開始できませんでした。画面を更新してください。"))
         _audit(request, user, name, "skill_lab_start", theme=theme_id, mode=body.mode)
         return {"success": True, "lab_running": _lab_running({**data, "lab": lab})}
 
@@ -600,7 +601,7 @@ def build_router(
 
         themes.update(directory, _apply)
         if not changed["ok"]:
-            raise HTTPException(status_code=409, detail="テーマの状態が変わったため取りやめられませんでした。画面を更新してください。")
+            raise HTTPException(status_code=409, detail=_t("テーマの状態が変わったため取りやめられませんでした。画面を更新してください。"))
         promotion.unmark_imported(directory)
         _audit(request, user, name, "skill_lab_cancel", theme=theme_id)
         return {"success": True}
@@ -613,7 +614,7 @@ def build_router(
         data = themes.read(directory)
         it = next((x for x in data.get("iterations") or [] if x["n"] == n), None)
         if it is None:
-            raise HTTPException(status_code=404, detail="反復が見つかりません。")
+            raise HTTPException(status_code=404, detail=_t("反復が見つかりません。"))
         return {**it, "runs": _runs(directory, it.get("out_dir"), it.get("verdicts") or [])}
 
     @router.get("/api/instances/{name}/skill-lab/themes/{theme_id}/trial/{task_id}")
@@ -621,7 +622,7 @@ def build_router(
         directory = _theme(name, theme_id)
         task = next((t for t in themes.read(directory).get("tasks") or [] if t["id"] == task_id), None)
         if task is None:
-            raise HTTPException(status_code=404, detail="タスクが見つかりません。")
+            raise HTTPException(status_code=404, detail=_t("タスクが見つかりません。"))
         return task
 
     def _runs(directory: Path, out_dir: str | None, verdicts: list[dict]) -> list[dict]:

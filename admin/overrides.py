@@ -20,6 +20,7 @@ from src.config import load_config
 from . import audit
 from . import instances as inst
 from .ini_catalog import IniCatalog
+from admin.i18n import t as _t
 
 # [admin] セクションは管理ツール自身の起動設定であり、インスタンス別の
 # 上書き対象外（src/config.py の _apply_config_overrides も同じ理由で無視する。
@@ -45,7 +46,7 @@ def read(path: Path) -> dict[str, dict[str, str]]:
         return {}
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise ValidationError(f"{path}: トップレベルはオブジェクトである必要があります。")
+        raise ValidationError(_t("{0}: トップレベルはオブジェクトである必要があります。", path))
     return data
 
 
@@ -112,10 +113,10 @@ def _build_new_data(
 
     for (section, key), value in updates.items():
         if section == _EXEMPT_SECTION:
-            raise ValidationError("[admin] セクションは管理ツールからは変更できません（config.ini を直接編集してください）。")
+            raise ValidationError(_t("[admin] セクションは管理ツールからは変更できません（config.ini を直接編集してください）。"))
         info = key_index.get((section, key))
         if info is None:
-            raise ValidationError(f"[{section}].{key} は config.ini に存在しないキーです。")
+            raise ValidationError(_t("[{0}].{1} は config.ini に存在しないキーです。", section, key))
         if value == info.default_value:
             new_data.get(section, {}).pop(key, None)
         else:
@@ -185,7 +186,7 @@ def preview(
         try:
             load_config(config_path=config_ini_path, overrides_path=tmp_path, instance_name=instance_name)
         except Exception as exc:  # noqa: BLE001 - 原因をそのままUIへ伝える
-            raise ValidationError(f"設定の検証に失敗しました: {exc}") from exc
+            raise ValidationError(_t("設定の検証に失敗しました: {0}", exc)) from exc
         _check_data_dir_conflict(instances_root, config_ini_path, instance_name=instance_name, tmp_path=tmp_path)
     finally:
         tmp_path.unlink(missing_ok=True)
@@ -238,11 +239,11 @@ def save(
     if base_mtime is None:
         if actual_mtime is not None:
             raise ConflictError(
-                "他のセッション/ブラウザタブで既に保存されています。画面を再読み込みしてから編集し直してください。"
+                _t("他のセッション/ブラウザタブで既に保存されています。画面を再読み込みしてから編集し直してください。")
             )
     elif actual_mtime is not None and abs(actual_mtime - base_mtime) > 1e-6:
         raise ConflictError(
-            "他のセッション/ブラウザタブで既に保存されています。画面を再読み込みしてから編集し直してください。"
+            _t("他のセッション/ブラウザタブで既に保存されています。画面を再読み込みしてから編集し直してください。")
         )
 
     existing = read(path)
@@ -262,7 +263,7 @@ def save(
             # なので実害はない。
             load_config(config_path=config_ini_path, overrides_path=tmp_path, instance_name=instance_name)
         except Exception as exc:  # noqa: BLE001 - 原因をそのままUIへ伝える
-            raise ValidationError(f"設定の検証に失敗しました: {exc}") from exc
+            raise ValidationError(_t("設定の検証に失敗しました: {0}", exc)) from exc
         _check_data_dir_conflict(instances_root, config_ini_path, instance_name=instance_name, tmp_path=tmp_path)
 
         _backup(path, backup_dir, backup_keep)
@@ -313,10 +314,10 @@ def restore(
             またはその内容で load_config() の検証が失敗した場合。
     """
     if not backup_file.is_file():
-        raise ValidationError(f"バックアップが見つかりません: {backup_file}")
+        raise ValidationError(_t("バックアップが見つかりません: {0}", backup_file))
     new_data = json.loads(backup_file.read_text(encoding="utf-8"))
     if not isinstance(new_data, dict):
-        raise ValidationError(f"{backup_file}: トップレベルはオブジェクトである必要があります。")
+        raise ValidationError(_t("{0}: トップレベルはオブジェクトである必要があります。", backup_file))
 
     existing = read(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -328,7 +329,7 @@ def restore(
         try:
             load_config(config_path=config_ini_path, overrides_path=tmp_path, instance_name=instance_name)
         except Exception as exc:  # noqa: BLE001
-            raise ValidationError(f"バックアップの検証に失敗しました: {exc}") from exc
+            raise ValidationError(_t("バックアップの検証に失敗しました: {0}", exc)) from exc
         _check_data_dir_conflict(instances_root, config_ini_path, instance_name=instance_name, tmp_path=tmp_path)
 
         _backup(path, backup_dir, backup_keep)

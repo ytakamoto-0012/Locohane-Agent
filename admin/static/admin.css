@@ -110,6 +110,8 @@ h4 .hint { margin-left: 4px; font-weight: normal; }
 .tab-btn, .subtab-btn { background: none; border: none; padding: 8px 14px; color: var(--text-dim); border-radius: var(--radius); }
 .tab-btn.active, .subtab-btn.active { background: var(--panel-2); color: var(--text); }
 .topbar-right { display: flex; align-items: center; gap: 12px; color: var(--text-dim); }
+.lang-select { width: auto; padding: 2px 6px; font-size: 12px; }
+.login-lang { margin-top: 12px; text-align: center; }
 #main { flex: 1; overflow: auto; padding: 20px; }
 
 .view-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }

@@ -38,6 +38,7 @@ from .. import instances as inst
 from .. import overrides
 from ..ini_catalog import find_key, parse_file
 from . import sources, themes
+from admin.i18n import t as _t
 
 PROMOTION_LOG = PROJECT_ROOT / "evals" / "promotion_log.md"
 PROMOTE_HISTORY_DIR = PROJECT_ROOT / "evals" / "history" / "promote"
@@ -105,7 +106,7 @@ def _current_override_text(instances_root: Path, name: str, section: str, key: s
     existing = overrides.read(inst.overrides_path(instances_root, name))
     info = find_key(catalog, section, key)
     if info is None:
-        raise PromotionError(f"config.ini に [{section}].{key} がありません。")
+        raise PromotionError(_t("config.ini に [{0}].{1} がありません。", section, key))
     return existing.get(section, {}).get(key, info.default_value)
 
 
@@ -274,7 +275,7 @@ def promote(
     backup_keep: int,
 ) -> dict:
     if not _LOCK.acquire(blocking=False):
-        raise PromotionError("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。")
+        raise PromotionError(_t("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。"))
     try:
         return _promote(
             instances_root,
@@ -303,9 +304,9 @@ def _promote(
 ) -> dict:
     result = check(instances_root, directory, distribute_to=distribute_to)
     if result.problems:
-        raise PromotionError("昇格できません: " + " / ".join(result.problems))
+        raise PromotionError(_t("昇格できません: {0}", " / ".join(result.problems)))
     if result.confirmations and not discard_source_changes:
-        raise PromotionError("確認が必要です: " + " / ".join(result.confirmations))
+        raise PromotionError(_t("確認が必要です: {0}", " / ".join(result.confirmations)))
     data = themes.read(directory)
     instance = data["instance"]
     assets = themes.list_assets(directory)
@@ -378,7 +379,7 @@ def _promote(
             if backup is not None and backup.exists():
                 shutil.move(str(backup), str(target))
         raise PromotionError(
-            f"昇格に失敗したため、置いたファイルを元に戻しました（設定を保存済みのインスタンス: {saved_instances or 'なし'}）: {e}"
+            _t("昇格に失敗したため、置いたファイルを元に戻しました（設定を保存済みのインスタンス: {0}）: {1}", saved_instances or 'なし', e)
         ) from e
 
     # 取り込み元のドラフトをアーカイブ（配置と設定の登録は済んでいるため、ここで失敗しても昇格は取り消さず、
@@ -477,7 +478,7 @@ def _append_log(data: dict, record: dict) -> None:
 def return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reject: bool, actor: str) -> dict:
     """取り込み元のドラフトへ差し戻す（apply_fixes なら研究室での修正をドラフトへ写す）。"""
     if not _LOCK.acquire(blocking=False):
-        raise PromotionError("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。")
+        raise PromotionError(_t("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。"))
     try:
         return _return_to_creators(directory, reason=reason, apply_fixes=apply_fixes, reject=reject, actor=actor)
     finally:
@@ -487,19 +488,19 @@ def return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, rejec
 def _return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reject: bool, actor: str) -> dict:
     reason = (reason or "").strip()
     if not reason:
-        raise PromotionError("差し戻しの理由を書いてください（作成者の skill-creator に表示されます）。")
+        raise PromotionError(_t("差し戻しの理由を書いてください（作成者の skill-creator に表示されます）。"))
     data = themes.read(directory)
     if data.get("status") in themes.CLOSED_STATUSES:
-        raise PromotionError(f"このテーマは既に終了しています（{data.get('status')}）")
+        raise PromotionError(_t("このテーマは既に終了しています（{0}）", data.get('status')))
     if data.get("status") in themes.ACTIVE_STATUSES:
-        raise PromotionError("ループ・トライアウトの実行中は差し戻せません（先に停止してください）")
+        raise PromotionError(_t("ループ・トライアウトの実行中は差し戻せません（先に停止してください）"))
     drafts = [
         (name, src)
         for name, src in (data.get("sources") or {}).get("skills", {}).items()
         if src.get("kind") == "draft" and src.get("origin") and (Path(src["origin"]) / "SKILL.md").is_file()
     ]
     if not drafts:
-        raise PromotionError("差し戻せる取り込み元のドラフトがありません（テーマを終えるには「取りやめ」を使ってください）。")
+        raise PromotionError(_t("差し戻せる取り込み元のドラフトがありません（テーマを終えるには「取りやめ」を使ってください）。"))
     returned = []
     for name, src in drafts:
         draft = Path(src["origin"])
@@ -509,8 +510,7 @@ def _return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reje
                 _replace_draft_with(draft, work)
             except OSError as e:
                 raise PromotionError(
-                    f"ドラフト {src.get('owner')}/{name} へ修正を写せませんでした（ドラフトは元のままです。"
-                    f"作成者がファイルを開いていないか確かめてください。差し戻し済み: {returned or 'なし'}）: {e}"
+                    _t("ドラフト {0}/{1} へ修正を写せませんでした（ドラフトは元のままです。作成者がファイルを開いていないか確かめてください。差し戻し済み: {2}）: {3}", src.get('owner'), name, returned or 'なし', e)
                 ) from e
         meta_path = draft / DRAFT_META_FILENAME
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}

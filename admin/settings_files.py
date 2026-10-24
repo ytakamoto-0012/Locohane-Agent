@@ -14,6 +14,7 @@ from __future__ import annotations
 import shutil
 import time
 from pathlib import Path
+from admin.i18n import t as _t
 
 # 編集可能なテキストファイル（app.py の _load_settings_text 参照）。
 TEXT_FILE_NAMES = frozenset({"header.md", "tab_title.md", "welcome.md"})
@@ -31,7 +32,7 @@ class SettingsFileError(Exception):
 
 def read_text_file(settings_dir: Path, name: str) -> str:
     if name not in TEXT_FILE_NAMES:
-        raise SettingsFileError(f"{name} は編集できません。")
+        raise SettingsFileError(_t("{0} は編集できません。", name))
     path = settings_dir / name
     return path.read_text(encoding="utf-8") if path.is_file() else ""
 
@@ -55,7 +56,7 @@ def _backup_file(path: Path, backup_dir: Path, keep: int, prefix: str) -> None:
 
 def write_text_file(settings_dir: Path, name: str, content: str, backup_dir: Path, backup_keep: int) -> None:
     if name not in TEXT_FILE_NAMES:
-        raise SettingsFileError(f"{name} は編集できません。")
+        raise SettingsFileError(_t("{0} は編集できません。", name))
     path = settings_dir / name
     _backup_file(path, backup_dir, backup_keep, prefix=f"settings_{name}")
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,13 +80,13 @@ def write_image(
         SettingsFileError: kind不正・拡張子不許可・サイズ超過。
     """
     if kind not in ("icon", "favicon"):
-        raise SettingsFileError(f"不正な種別です: {kind}")
+        raise SettingsFileError(_t("不正な種別です: {0}", kind))
     allowed = ICON_EXTENSIONS if kind == "icon" else FAVICON_EXTENSIONS
     ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     if ext not in allowed:
-        raise SettingsFileError(f"許可されていない拡張子です（{', '.join(allowed)} のいずれか）: {ext!r}")
+        raise SettingsFileError(_t("許可されていない拡張子です（{0} のいずれか）: {1!r}", ', '.join(allowed), ext))
     if len(content) > _MAX_IMAGE_BYTES:
-        raise SettingsFileError(f"ファイルサイズが大きすぎます（上限 {_MAX_IMAGE_BYTES // 1024 // 1024}MB）。")
+        raise SettingsFileError(_t("ファイルサイズが大きすぎます（上限 {0}MB）。", _MAX_IMAGE_BYTES // 1024 // 1024))
 
     # 既存の同種別・別拡張子ファイルを削除する（フロントエンドは拡張子を
     # 順に探して最初に見つかったものを使うため、放置すると新しい方が
@@ -129,7 +130,7 @@ def delete_file(settings_dir: Path, target: str, backup_dir: Path, backup_keep: 
         paths = [settings_dir / f"{target}.{ext}" for ext in allowed]
         prefix = f"settings_{target}"
     else:
-        raise SettingsFileError(f"{target} は削除できません。")
+        raise SettingsFileError(_t("{0} は削除できません。", target))
     for path in paths:
         if path.is_file():
             _backup_file(path, backup_dir, backup_keep, prefix=prefix)

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets as _secrets
@@ -33,6 +34,8 @@ from . import instances as inst
 from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
 from .ini_catalog import parse_file as parse_ini_file
+from admin import i18n as admin_i18n
+from admin.i18n import t as _t
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -92,6 +95,19 @@ async def _lifespan(_app: FastAPI):
 
 
 app = FastAPI(title="Locohane 設定ダッシュボード", version=__version__, lifespan=_lifespan)
+# X-Locohane-Lang ヘッダー（admin/static/admin.js の api()）でエラーメッセージ等の言語を決める。
+app.add_middleware(admin_i18n.LanguageMiddleware)
+
+
+@app.get("/ui-config.js", include_in_schema=False)
+async def ui_config_js() -> Response:
+    """表示言語の既定値（[ui].default_language）を返すスクリプト。
+
+    admin/static/i18n.js が読み込み時に同期的に使うため、JSON ではなく script として返す
+    （ログイン画面でも使うため認証なし）。
+    """
+    body = f"window.LOCOHANE_DEFAULT_LANGUAGE = {json.dumps(_cfg.ui_default_language)};\n"
+    return Response(content=body, media_type="application/javascript")
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +136,7 @@ def require_login(
 ) -> str:
     username = _sessions.validate(locohane_admin_session)
     if username is None:
-        raise HTTPException(status_code=401, detail="ログインが必要です。")
+        raise HTTPException(status_code=401, detail=_t("ログインが必要です。"))
     # サーバー側のスライディングタイムアウト（SessionStore.validate）に合わせて
     # Cookie の max_age も毎回延ばす（2026-09-29 レビューで発見：ログイン時に
     # 1回設定するだけだと、操作中でもログインから一定時間でCookieが失効していた）。
@@ -130,7 +146,7 @@ def require_login(
 
 def require_csrf(request: Request) -> None:
     if not auth.has_csrf_header(request.headers):
-        raise HTTPException(status_code=403, detail="CSRFヘッダ（X-Locohane-Admin: 1）がありません。")
+        raise HTTPException(status_code=403, detail=_t("CSRFヘッダ（X-Locohane-Admin: 1）がありません。"))
 
 
 def _require_instance(name: str) -> inst.InstanceMeta:
@@ -150,10 +166,10 @@ class LoginBody(BaseModel):
 def login(body: LoginBody, request: Request, response: Response):
     ip = _client_ip(request)
     if _throttle.is_locked_out(ip):
-        raise HTTPException(status_code=429, detail="ログイン試行回数が上限を超えました。しばらく待ってから再試行してください。")
+        raise HTTPException(status_code=429, detail=_t("ログイン試行回数が上限を超えました。しばらく待ってから再試行してください。"))
     if not auth.verify_password(_admin_users, body.username, body.password):
         _throttle.record_failure(ip)
-        raise HTTPException(status_code=401, detail="ユーザー名またはパスワードが違います。")
+        raise HTTPException(status_code=401, detail=_t("ユーザー名またはパスワードが違います。"))
     _throttle.record_success(ip)
     token = _sessions.create(body.username)
     _set_session_cookie(response, token)
@@ -327,7 +343,7 @@ def delete_instance(
     _require_instance(name)
     status = _supervisor.status(name)
     if status.state in (supervisor.InstanceState.RUNNING, supervisor.InstanceState.EXTERNAL):
-        raise HTTPException(status_code=409, detail="稼働中のインスタンスは削除できません。先に停止してください。")
+        raise HTTPException(status_code=409, detail=_t("稼働中のインスタンスは削除できません。先に停止してください。"))
     delete_data = body.delete_data if body else []
     try:
         deleted = inst.delete_instance(INSTANCES_ROOT, name, CONFIG_INI_PATH, delete_data)
@@ -462,7 +478,7 @@ def _flatten_updates(updates: dict[str, dict[str, str]], kind: str) -> dict[tupl
     rejected = [f"[{section}].{key}" for section, key in flat if not inst.config_key_applies(kind, section, key)]
     if rejected:
         target = "スキル調整ワーカー" if kind == inst.KIND_SKILL_LAB else "本体のインスタンス"
-        raise HTTPException(status_code=400, detail=f"{target}では効かない設定のため変更できません: {', '.join(rejected)}")
+        raise HTTPException(status_code=400, detail=_t("{0}では効かない設定のため変更できません: {1}", target, ', '.join(rejected)))
     return flat
 
 
@@ -470,7 +486,7 @@ def _flatten_resets(resets: list[list[str]]) -> list[tuple[str, str]]:
     result = []
     for pair in resets:
         if len(pair) != 2:
-            raise HTTPException(status_code=400, detail=f"resets の要素は [section, key] の2要素にしてください: {pair!r}")
+            raise HTTPException(status_code=400, detail=_t("resets の要素は [section, key] の2要素にしてください: {0!r}", pair))
         result.append((pair[0], pair[1]))
     return result
 
@@ -550,7 +566,7 @@ def restore_backup(
     backup_dir = inst.backups_dir(INSTANCES_ROOT, name)
     src = backup_dir / filename
     if "/" in filename or "\\" in filename or ".." in filename or src.parent != backup_dir:
-        raise HTTPException(status_code=400, detail="不正なファイル名です。")
+        raise HTTPException(status_code=400, detail=_t("不正なファイル名です。"))
     try:
         result = overrides.restore(
             path=inst.overrides_path(INSTANCES_ROOT, name),
@@ -610,7 +626,7 @@ def add_user(
     env_path = inst.env_path(INSTANCES_ROOT, name)
     users = env_files.read_users(env_path)
     if body.username in users:
-        raise HTTPException(status_code=400, detail="既に存在するユーザー名です。")
+        raise HTTPException(status_code=400, detail=_t("既に存在するユーザー名です。"))
     users[body.username] = body.password
     env_files.write_users(env_path, users)
     audit.append(
@@ -634,7 +650,7 @@ def _reject_if_project_env_user(name: str, target_username: str) -> None:
     if target_username in env_files.read_users(PROJECT_ENV_PATH):
         raise HTTPException(
             status_code=403,
-            detail="プロジェクト直下 .env のユーザー（管理者設定）はこの画面から変更・削除できません。",
+            detail=_t("プロジェクト直下 .env のユーザー（管理者設定）はこの画面から変更・削除できません。"),
         )
 
 
@@ -656,7 +672,7 @@ def set_user_password(
     env_path = inst.env_path(INSTANCES_ROOT, name)
     users = env_files.read_users(env_path)
     if target_username not in users:
-        raise HTTPException(status_code=404, detail="ユーザーが見つかりません（継承中の場合は先にユーザーを追加してください）。")
+        raise HTTPException(status_code=404, detail=_t("ユーザーが見つかりません（継承中の場合は先にユーザーを追加してください）。"))
     users[target_username] = body.password
     env_files.write_users(env_path, users)
     audit.append(
@@ -685,7 +701,7 @@ def delete_user(
     env_path = inst.env_path(INSTANCES_ROOT, name)
     users = env_files.read_users(env_path)
     if target_username not in users:
-        raise HTTPException(status_code=404, detail="ユーザーが見つかりません。")
+        raise HTTPException(status_code=404, detail=_t("ユーザーが見つかりません。"))
     del users[target_username]
     env_files.write_users(env_path, users)
     audit.append(
@@ -836,7 +852,7 @@ def put_setting_image(
     try:
         content = base64.b64decode(body.content_base64, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"base64のデコードに失敗しました: {exc}") from exc
+        raise HTTPException(status_code=400, detail=_t("base64のデコードに失敗しました: {0}", exc)) from exc
     try:
         saved_name = settings_files.write_image(target_dir, kind, body.filename, content, backup_dir, _cfg.admin_backup_keep)
     except settings_files.SettingsFileError as exc:
@@ -856,7 +872,7 @@ def delete_setting_image(
     """インスタンス専用の画像を削除し、共通設定に戻す。"""
     target_dir, backup_dir = _settings_target(instance)
     if kind not in ("icon", "favicon"):
-        raise HTTPException(status_code=400, detail=f"不正な種別です: {kind}")
+        raise HTTPException(status_code=400, detail=_t("不正な種別です: {0}", kind))
     settings_files.delete_file(target_dir, kind, backup_dir, _cfg.admin_backup_keep)
     _audit_settings(request, user, instance, "settings_reset_to_shared", kind)
     return {"success": True}
@@ -1011,7 +1027,7 @@ def get_monitor_thread(
     except (monitor.MonitorError, sqlite3.Error) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if detail is None:
-        raise HTTPException(status_code=404, detail="スレッドが見つかりません。")
+        raise HTTPException(status_code=404, detail=_t("スレッドが見つかりません。"))
     audit.append(
         AUDIT_LOG_PATH,
         {
@@ -1072,7 +1088,7 @@ def get_api_reference(user: str = Depends(require_login)):
     try:
         return api_docs.render()
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"{api_docs.API_REFERENCE_PATH.name} が見つかりません。") from exc
+        raise HTTPException(status_code=404, detail=_t("{0} が見つかりません。", api_docs.API_REFERENCE_PATH.name)) from exc
 
 
 # ---------------------------------------------------------------------------

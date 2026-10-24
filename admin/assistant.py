@@ -39,6 +39,8 @@ from src.config import Config
 from . import audit
 from .assistant_index import AssistantIndex, EmbeddingProvider, Passage
 from .ini_catalog import KeyInfo
+from admin.i18n import response_language_instruction
+from admin.i18n import t as _t
 
 logger = logging.getLogger(__name__)
 
@@ -327,7 +329,7 @@ def build_router(
 
     def _require_enabled() -> None:
         if not enabled:
-            raise HTTPException(status_code=404, detail="管理アシスタントは無効です（[admin] assistant_enabled）。")
+            raise HTTPException(status_code=404, detail=_t("管理アシスタントは無効です（[admin] assistant_enabled）。"))
 
     async def _build_model(config: Config):
         if model_factory is not None:
@@ -350,7 +352,7 @@ def build_router(
         kind = instance_kind(body.instance)
         messages = [m for m in body.messages if m.content.strip()][-max_history:]
         if not messages or messages[-1].role != "user":
-            raise HTTPException(status_code=400, detail="最後のメッセージは相談内容（role=user）にしてください。")
+            raise HTTPException(status_code=400, detail=_t("最後のメッセージは相談内容（role=user）にしてください。"))
         llm_instance = fixed_llm_instance or body.instance
         if llm_instance != body.instance:
             instance_kind(llm_instance)
@@ -384,24 +386,24 @@ def build_router(
                 view=body.view,
                 key_block=format_key_block([views[k] for k in chosen if k in views]),
                 doc_block=format_doc_block(docs),
-            )
+            ) + response_language_instruction()
             return system, docs, mode, len(chosen)
 
         async def stream() -> AsyncIterator[bytes]:
             from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-            yield _ndjson({"type": "status", "text": "関係する設定・説明を探しています…"})
+            yield _ndjson({"type": "status", "text": _t("関係する設定・説明を探しています…")})
             try:
                 system, docs, mode, n_keys = await asyncio.to_thread(build_context)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("管理アシスタントの検索に失敗しました。")
-                yield _ndjson({"type": "error", "message": f"関係する設定・説明を検索できませんでした: {exc}"})
+                yield _ndjson({"type": "error", "message": _t("関係する設定・説明を検索できませんでした: {0}", exc)})
                 return
             logger.info(
                 "管理アシスタント: user=%s instance=%s llm=%s messages=%d keys=%d docs=%d search=%s",
                 user, body.instance, llm_instance, len(messages), n_keys, len(docs), mode,
             )
-            yield _ndjson({"type": "status", "text": "回答を考えています…"})
+            yield _ndjson({"type": "status", "text": _t("回答を考えています…")})
             lc_messages = [SystemMessage(content=system)] + [
                 HumanMessage(content=m.content) if m.role == "user" else AIMessage(content=m.content) for m in messages
             ]
@@ -423,13 +425,13 @@ def build_router(
                 yield _ndjson(
                     {
                         "type": "error",
-                        "message": f"LLM（インスタンス {llm_instance!r} の [llm] 接続先）から応答を得られませんでした: {exc}",
+                        "message": _t("LLM（インスタンス {0!r} の [llm] 接続先）から応答を得られませんでした: {1}", llm_instance, exc),
                     }
                 )
                 return
             full = "".join(answer).strip()
             if not full:
-                yield _ndjson({"type": "error", "message": "LLM の応答が空でした。"})
+                yield _ndjson({"type": "error", "message": _t("LLM の応答が空でした。")})
                 return
             yield _ndjson(
                 {

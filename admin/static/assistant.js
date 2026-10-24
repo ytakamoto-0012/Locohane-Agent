@@ -67,7 +67,7 @@ async function openAssistant(status) {
   shell.appendChild(clone("tpl-assistant"));
   shell.classList.add("assistant-open");
   if (status.llm_instance) {
-    $("#assistant-llm-note").textContent = `回答にはインスタンス ${status.llm_instance} の LLM 接続先を使います。`;
+    $("#assistant-llm-note").textContent = _t(`回答にはインスタンス {0} の LLM 接続先を使います。`, status.llm_instance);
   }
   $("#assistant-close-btn").addEventListener("click", closeAssistant);
   $("#assistant-clear-btn").addEventListener("click", () => {
@@ -136,7 +136,7 @@ function renderAssistantMessages() {
     box.append(
       el("p", {
         class: "hint",
-        text: "例:「応答が遅い」「チャット画面にログインできない」「社内文書を検索させたい」「長い会話の途中でエラーになる」",
+        text: _t("例:「応答が遅い」「チャット画面にログインできない」「社内文書を検索させたい」「長い会話の途中でエラーになる」"),
       })
     );
   }
@@ -157,7 +157,7 @@ function buildAssistantMessage(m) {
     // AI に渡したドキュメントの段落（回答の根拠を確かめられるように）。
     node.append(
       el("details", { class: "assistant-sources" }, [
-        el("summary", { text: `参考にした説明（${m.sources.length}件）` }),
+        el("summary", { text: _t(`参考にした説明（{0}件）`, m.sources.length) }),
         el("ul", {}, m.sources.map((s) => el("li", { text: `${s.source} > ${s.title}` }))),
       ])
     );
@@ -172,8 +172,8 @@ function buildAssistantKeyButtons(keys, instance) {
     keys.map((k) =>
       el("button", {
         type: "button",
-        text: `[${k.section}] ${k.key} を開く`,
-        title: `インスタンス ${instance} の config.ini 画面でこのキーを表示します（変更・保存はご自身で行ってください）`,
+        text: _t(`[{0}] {1} を開く`, k.section, k.key),
+        title: _t(`インスタンス {0} の config.ini 画面でこのキーを表示します（変更・保存はご自身で行ってください）`, instance),
         onclick: () => openConfigKeyFromAssistant(instance, k.section, k.key),
       })
     )
@@ -195,7 +195,7 @@ async function streamAssistant(body, signal, onEvent) {
   const doFetch = () =>
     fetch("/api/assistant/chat", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "X-Locohane-Admin": "1" },
+      headers: { "Content-Type": "application/json", "X-Locohane-Admin": "1", "X-Locohane-Lang": I18N_LANG },
       credentials: "same-origin",
       body: JSON.stringify(body),
       signal,
@@ -237,7 +237,7 @@ async function sendAssistantMessage() {
   if (!text || assistantAbort) return;
   const instance = $("#assistant-instance").value;
   if (!instance) {
-    $("#assistant-error").textContent = "相談対象のインスタンスを選んでください。";
+    $("#assistant-error").textContent = _t("相談対象のインスタンスを選んでください。");
     return;
   }
   $("#assistant-error").textContent = "";
@@ -247,7 +247,7 @@ async function sendAssistantMessage() {
   renderAssistantMessages();
 
   const box = $("#assistant-messages");
-  let statusText = "考えています…";
+  let statusText = _t("考えています…");
   const live = el("div", { class: "assistant-msg assistant streaming", text: statusText });
   box.append(live);
   box.scrollTop = box.scrollHeight;
@@ -258,7 +258,7 @@ async function sendAssistantMessage() {
   // 思考するモデルでは最初の文字が出るまで数分かかることがあるため、経過時間を見せる。
   const startedAt = Date.now();
   const waitTimer = setInterval(() => {
-    if (!partial) live.textContent = `${statusText}（${Math.round((Date.now() - startedAt) / 1000)}秒）`;
+    if (!partial) live.textContent = _t(`{0}（{1}秒）`, statusText, Math.round((Date.now() - startedAt) / 1000));
   }, 1000);
   assistantAbort = new AbortController();
   $("#assistant-stop-btn").classList.remove("hidden");
@@ -288,7 +288,7 @@ async function sendAssistantMessage() {
       }
     );
   } catch (e) {
-    failure = e.name === "AbortError" ? null : e.message || "相談に失敗しました。";
+    failure = e.name === "AbortError" ? null : e.message || _t("相談に失敗しました。");
   } finally {
     clearInterval(waitTimer);
     assistantAbort = null;
@@ -301,7 +301,7 @@ async function sendAssistantMessage() {
     assistantState.messages.push({ role: "assistant", content: finished.text, html: finished.html, keys: finished.keys, sources: finished.sources, instance });
   } else if (partial && !failure) {
     // 停止ボタンで止めた場合は、そこまでの回答を残す。
-    assistantState.messages.push({ role: "assistant", content: partial + "\n（停止しました）", instance });
+    assistantState.messages.push({ role: "assistant", content: partial + _t("\n（停止しました）"), instance });
   } else if (failure) {
     assistantState.messages.push({ role: "assistant", content: failure, error: true });
   }

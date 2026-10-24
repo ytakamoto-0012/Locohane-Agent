@@ -9,13 +9,16 @@ const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
 
 function clone(tplId) {
   const tpl = document.getElementById(tplId);
-  return tpl.content.cloneNode(true);
+  const fragment = tpl.content.cloneNode(true);
+  applyI18n(fragment);
+  return fragment;
 }
 
 async function api(path, opts) {
   opts = opts || {};
   const method = opts.method || "GET";
-  const headers = { "Content-Type": "application/json" };
+  // X-Locohane-Lang: サーバーのエラーメッセージ・管理アシスタントの回答の言語（admin/i18n.py）。
+  const headers = { "Content-Type": "application/json", "X-Locohane-Lang": I18N_LANG };
   if (method !== "GET") headers["X-Locohane-Admin"] = "1";
   const doFetch = () =>
     fetch(path, {
@@ -65,6 +68,7 @@ function showLogin(message) {
   mainEl = null;
   app.innerHTML = "";
   app.appendChild(clone("tpl-login"));
+  $("#login-lang").appendChild(createLanguageSelect());
   if (message) $("#login-error").textContent = message;
   $("#login-form").addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -76,7 +80,7 @@ function showLogin(message) {
       });
       showShell(result.username, result.version);
     } catch (e) {
-      $("#login-error").textContent = e.message || "ログインに失敗しました。";
+      $("#login-error").textContent = e.message || _t("ログインに失敗しました。");
     }
   });
 }
@@ -93,7 +97,7 @@ function promptRelogin() {
     overlay.className = "relogin-overlay";
     overlay.appendChild(clone("tpl-login"));
     document.body.appendChild(overlay);
-    $(".hint", overlay).textContent = "セッションの有効期限が切れました。再度ログインしてください（入力中の内容は保持されます）。";
+    $(".hint", overlay).textContent = _t("セッションの有効期限が切れました。再度ログインしてください（入力中の内容は保持されます）。");
     $("input[name=username]", overlay).value = $("#me-username") ? $("#me-username").textContent : "";
     $("input[name=password]", overlay).focus();
     $("form", overlay).addEventListener("submit", async (ev) => {
@@ -109,7 +113,7 @@ function promptRelogin() {
         reloginPromise = null;
         resolve();
       } catch (e) {
-        $(".error", overlay).textContent = e.message || "ログインに失敗しました。";
+        $(".error", overlay).textContent = e.message || _t("ログインに失敗しました。");
       }
     });
   });
@@ -120,6 +124,7 @@ function showShell(username, version) {
   app.innerHTML = "";
   app.appendChild(clone("tpl-shell"));
   $("#me-username").textContent = username;
+  $("#lang-select-slot").appendChild(createLanguageSelect());
   if (version) $("#app-version").textContent = `v${version}`;
   mainEl = $("#main");
   $("#logout-btn").addEventListener("click", async () => {
@@ -150,17 +155,17 @@ function navigate(view) {
 /* ---------------------------------------------------- インスタンス一覧 */
 
 const STATE_LABELS = {
-  running: "稼働中",
-  stopped: "停止中",
-  external: "外部で起動中",
-  crashed: "異常終了",
-  error: "設定エラー",
+  running: _t("稼働中"),
+  stopped: _t("停止中"),
+  external: _t("外部で起動中"),
+  crashed: _t("異常終了"),
+  error: _t("設定エラー"),
 };
 
 const PROCESSING_LABELS = {
-  start: "起動中…",
-  stop: "停止中…",
-  restart: "再起動中…",
+  start: _t("起動中…"),
+  stop: _t("停止中…"),
+  restart: _t("再起動中…"),
 };
 
 let instanceCache = [];
@@ -194,7 +199,7 @@ async function refreshInstanceCards() {
     const isLab = inst.kind === "skill_lab";
     card.classList.toggle("lab-card", isLab);
     card.querySelector(".badge-lab").classList.toggle("hidden", !isLab);
-    card.querySelector(".addr").textContent = isLab ? "スキル研究室の実行役（チャット画面なし）" : `${inst.app_host}:${inst.app_port}`;
+    card.querySelector(".addr").textContent = isLab ? _t("スキル研究室の実行役（チャット画面なし）") : `${inst.app_host}:${inst.app_port}`;
     card.querySelector(".state-label").textContent = STATE_LABELS[inst.state] || inst.state;
     const link = card.querySelector(".open-link");
     link.href = inst.url;
@@ -214,12 +219,12 @@ async function refreshInstanceCards() {
 
     btnStart.addEventListener("click", () => runInstanceAction(inst.name, "start", card));
     btnStop.addEventListener("click", () => {
-      if (confirm(`${inst.display_name} を停止します。生成中の処理は中断されます。よろしいですか？`)) {
+      if (confirm(_t(`{0} を停止します。生成中の処理は中断されます。よろしいですか？`, inst.display_name))) {
         runInstanceAction(inst.name, "stop", card);
       }
     });
     btnRestart.addEventListener("click", () => {
-      if (confirm(`${inst.display_name} を再起動します。生成中の処理は中断されます。よろしいですか？`)) {
+      if (confirm(_t(`{0} を再起動します。生成中の処理は中断されます。よろしいですか？`, inst.display_name))) {
         runInstanceAction(inst.name, "restart", card);
       }
     });
@@ -256,10 +261,10 @@ async function refreshCardActivity() {
     const lc = item.log_counts_24h || {};
     const live = (v) => (item.available ? String(v) : "-");
     const tiles = [
-      cardStat("接続中ユーザー", live(item.users.length), item.available && item.users.length ? item.users.join(", ") : null),
-      cardStat("接続セッション", live(item.sessions)),
-      cardStat("生成中スレッド", live(item.generating), item.available && item.waiting ? `うち応答待ち ${item.waiting}` : null),
-      cardStat("24時間の警告", fmtNum(lc.WARNING || 0), `ERROR ${fmtNum(lc.ERROR || 0)} / CRITICAL ${fmtNum(lc.CRITICAL || 0)}`),
+      cardStat(_t("接続中ユーザー"), live(item.users.length), item.available && item.users.length ? item.users.join(", ") : null),
+      cardStat(_t("接続セッション"), live(item.sessions)),
+      cardStat(_t("生成中スレッド"), live(item.generating), item.available && item.waiting ? _t(`うち応答待ち {0}`, item.waiting) : null),
+      cardStat(_t("24時間の警告"), fmtNum(lc.WARNING || 0), `ERROR ${fmtNum(lc.ERROR || 0)} / CRITICAL ${fmtNum(lc.CRITICAL || 0)}`),
     ];
     box.replaceChildren(...tiles);
     renderCardContextChart(card.querySelector(".card-context"), item);
@@ -276,8 +281,8 @@ function renderCardIngest(box, item) {
     return;
   }
   const rows = jobs.map((j) => {
-    const state = j.stop_requested ? "停止中" : j.trigger === "schedule" ? "取り込み中（自動）" : "取り込み中";
-    const count = j.total ? `${fmtNum(j.done)} / ${fmtNum(j.total)} ファイル` : "対象を確認中";
+    const state = j.stop_requested ? _t("停止中") : j.trigger === "schedule" ? _t("取り込み中（自動）") : _t("取り込み中");
+    const count = j.total ? _t(`{0} / {1} ファイル`, fmtNum(j.done), fmtNum(j.total)) : _t("対象を確認中");
     const current = j.current ? j.current.split(/[\\/]/).pop() : "";
     return el("div", { class: "card-ingest-job", title: [j.collection, state, count, j.current].filter(Boolean).join("\n") }, [
       el("div", { class: "card-ingest-head" }, [
@@ -288,7 +293,7 @@ function renderCardIngest(box, item) {
       current ? el("div", { class: "card-ingest-file", text: current }) : null,
     ]);
   });
-  const title = el("div", { class: "card-ingest-title", text: "ナレッジの取り込み" });
+  const title = el("div", { class: "card-ingest-title", text: _t("ナレッジの取り込み") });
   box.replaceChildren(title, ...rows);
   box.onclick = () => renderInstanceDetail(item.name, "knowledge");
 }
@@ -307,10 +312,10 @@ async function refreshWorkerCards() {
     if (!card) continue;
     const running = lab.running || [];
     const tiles = [
-      cardStat("処理中のテーマ", String(running.length), running.map((r) => `${r.instance}: ${r.title}`).join(", ") || null),
-      cardStat("開始待ちのテーマ", String(lab.queued || 0)),
-      cardStat("待ちの依頼", String(lab.tasks || 0), "1回試行・AI による下書き"),
-      cardStat("LLM 接続先", lab.endpoint ? lab.endpoint.replace(/^https?:\/\//, "") : "-", lab.endpoint_error || lab.endpoint || null),
+      cardStat(_t("処理中のテーマ"), String(running.length), running.map((r) => `${r.instance}: ${r.title}`).join(", ") || null),
+      cardStat(_t("開始待ちのテーマ"), String(lab.queued || 0)),
+      cardStat(_t("待ちの依頼"), String(lab.tasks || 0), _t("1回試行・AI による下書き")),
+      cardStat(_t("LLM 接続先"), lab.endpoint ? lab.endpoint.replace(/^https?:\/\//, "") : "-", lab.endpoint_error || lab.endpoint || null),
     ];
     card.querySelector(".card-activity").replaceChildren(...tiles);
     card.querySelector(".card-context").replaceChildren();
@@ -357,7 +362,7 @@ function renderCardContextChart(box, item) {
   for (const s of series) {
     const slot = threadColorSlots.get(`${item.name}/${s.thread_id}`);
     if (slot === undefined) hidden++;
-    else drawn.push({ ...s, color: THREAD_COLORS[slot], label: s.thread_name || s.thread_id, owner: s.owner || "（不明）" });
+    else drawn.push({ ...s, color: THREAD_COLORS[slot], label: s.thread_name || s.thread_id, owner: s.owner || _t("（不明）") });
   }
   drawn.sort((a, b) => THREAD_COLORS.indexOf(a.color) - THREAD_COLORS.indexOf(b.color));
   // 生成中は数秒ごとに点が増えて描き直すため、ホバー位置を box に覚えておき、描き直し後も同じ位置で出し直す。
@@ -365,9 +370,9 @@ function renderCardContextChart(box, item) {
   const chart = contextMiniChart(drawn, box._hover);
   box.replaceChildren(
     ...[
-      el("div", { class: "card-context-title", text: "LLMリクエストごとの入力トークン" }),
+      el("div", { class: "card-context-title", text: _t("LLMリクエストごとの入力トークン") }),
       chart,
-      hidden ? el("div", { class: "hint", text: `ほか ${hidden} スレッドは色の上限のため非表示` }) : null,
+      hidden ? el("div", { class: "hint", text: _t(`ほか {0} スレッドは色の上限のため非表示`, hidden) }) : null,
     ].filter(Boolean) // replaceChildren は null を "null" という文字列として挿入するため除く
   );
   // 要素を差し替えた瞬間はポインタが外れても pointerleave が届かないことがあるため、:hover でも確かめる。
@@ -405,7 +410,7 @@ function contextMiniChart(series, hover) {
   const timeOpts = tMax - tMin < 10 * 60 * 1000 ? { hour: "2-digit", minute: "2-digit", second: "2-digit" } : { hour: "2-digit", minute: "2-digit" };
   const axisTime = (t) => new Date(t).toLocaleTimeString("ja-JP", timeOpts);
 
-  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img", "aria-label": "生成中スレッドのLLMリクエストごとの入力トークン" });
+  const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img", "aria-label": _t("生成中スレッドのLLMリクエストごとの入力トークン") });
   for (const t of ticks) {
     svg.append(svgEl("line", { x1: M.left, x2: W - M.right, y1: y(t), y2: y(t), class: t === 0 ? "chart-baseline" : "chart-grid" }));
     const label = svgEl("text", { x: M.left - 6, y: y(t) + 4, "text-anchor": "end", class: "chart-axis-text card-chart-text" });
@@ -478,7 +483,7 @@ function contextMiniChart(series, hover) {
     "div",
     { class: "chart-legend card-context-legend" },
     series.map((s) =>
-      el("span", { class: "legend-item", title: `${s.owner}: ${s.label}\n現在 ${fmtNum(s.pts.length ? s.pts[s.pts.length - 1].value : null)} トークン` }, [
+      el("span", { class: "legend-item", title: _t(`{0}: {1}\n現在 {2} トークン`, s.owner, s.label, fmtNum(s.pts.length ? s.pts[s.pts.length - 1].value : null)) }, [
         el("span", { class: "legend-line", style: `background:${s.color}` }),
         el("span", { class: "legend-text", text: s.label }),
       ])
@@ -486,7 +491,7 @@ function contextMiniChart(series, hover) {
   );
   const empty = all.length
     ? null
-    : el("div", { class: "hint", text: "LLMリクエストの記録がまだありません（[log] level が INFO より上、または [llm] track_token_usage=false の場合は記録されません）" });
+    : el("div", { class: "hint", text: _t("LLMリクエストの記録がまだありません（[log] level が INFO より上、または [llm] track_token_usage=false の場合は記録されません）") });
   const wrap = el("div", {}, [legend, box, empty]);
   wrap._showAtClientX = showAtClientX;
   return wrap;
@@ -521,13 +526,13 @@ async function runInstanceAction(name, action, card) {
   try {
     await api(`/api/instances/${encodeURIComponent(name)}/${action}`, { method: "POST" });
   } catch (e) {
-    alert(`操作に失敗しました: ${e.message}`);
+    alert(_t(`操作に失敗しました: {0}`, e.message));
   }
   try {
     await refreshInstanceCards();
   } catch (e) {
     restoreCard();
-    alert(`インスタンス一覧の更新に失敗しました: ${e.message}`);
+    alert(_t(`インスタンス一覧の更新に失敗しました: {0}`, e.message));
   }
 }
 
@@ -610,7 +615,7 @@ function openEditInstanceModal(inst) {
       modal.remove();
       await refreshInstanceCards();
       if (portOrHostChanged && (inst.state === "running")) {
-        alert("ホスト・ポートを変更しました。反映するにはインスタンスを再起動してください。");
+        alert(_t("ホスト・ポートを変更しました。反映するにはインスタンスを再起動してください。"));
       }
     } catch (e) {
       modal.querySelector("#edit-instance-error").textContent = e.message;
@@ -625,18 +630,18 @@ async function openDeleteInstanceModal(inst) {
     entries = data.entries;
     extensions = data.extensions || {};
   } catch (e) {
-    alert("データの保存先を取得できませんでした: " + e.message);
+    alert(_t("データの保存先を取得できませんでした: ") + e.message);
     return;
   }
   const modal = clone("tpl-delete-instance").firstElementChild;
   document.body.appendChild(modal);
   modal.querySelector(".delete-instance-name").textContent = inst.name;
   // インスタンス専用のスキル・サブエージェント（スキル研究室で昇格したもの）が一緒に消える場合は警告する。
-  const extNames = [...(extensions.skills || []).map((n) => `スキル ${n}`), ...(extensions.agents || []).map((n) => `サブエージェント ${n}`)];
+  const extNames = [...(extensions.skills || []).map((n) => _t(`スキル {0}`, n)), ...(extensions.agents || []).map((n) => _t(`サブエージェント {0}`, n))];
   if (extensions.deleted_with_instance && extNames.length) {
     modal.querySelector(".extensions-warning").replaceChildren(
-      el("strong", { text: `このインスタンス専用のスキル・サブエージェント ${extNames.length} 件も一緒に削除されます: ` }),
-      extNames.join("、"),
+      el("strong", { text: _t(`このインスタンス専用のスキル・サブエージェント {0} 件も一緒に削除されます: `, extNames.length) }),
+      extNames.join(_t("、")),
       el("br"),
       el("code", { text: extensions.dir }),
     );
@@ -661,7 +666,7 @@ async function openDeleteInstanceModal(inst) {
     if (entry.reason) {
       const reason = document.createElement("span");
       reason.className = "hint";
-      reason.textContent = `（${entry.reason}）`;
+      reason.textContent = _t(`（{0}）`, entry.reason);
       text.append(" ", reason);
     }
     row.append(cb, text);
@@ -700,7 +705,7 @@ async function openDeleteInstanceModal(inst) {
     ev.preventDefault();
     const errEl = modal.querySelector("#delete-instance-error");
     if (ev.target.elements.confirm_name.value !== inst.name) {
-      errEl.textContent = "インスタンス名が一致しません。";
+      errEl.textContent = _t("インスタンス名が一致しません。");
       return;
     }
     // disabled のチェックボックス（common_data_dir 配下の連動分）は送らない。
@@ -715,7 +720,7 @@ async function openDeleteInstanceModal(inst) {
       modal.remove();
       await refreshInstanceCards();
     } catch (e) {
-      errEl.textContent = "削除に失敗しました: " + e.message;
+      errEl.textContent = _t("削除に失敗しました: ") + e.message;
     }
   });
 }
@@ -807,11 +812,11 @@ let activeSection = null;
 // よく変更するキーをまとめて表示するプリセット（表示順もこの並び）
 const CONFIG_PRESETS = [
   {
-    name: "並列数",
+    name: _t("並列数"),
     keys: ["llm.max_concurrent_requests", "graph.max_parallel", "subagent.max_parallel"],
   },
   {
-    name: "トークン制御",
+    name: _t("トークン制御"),
     keys: [
       "graph.token_guard_soft_threshold",
       "subagent.token_guard_soft_threshold",
@@ -825,7 +830,7 @@ const CONFIG_PRESETS = [
     ],
   },
   {
-    name: "スキル関係",
+    name: _t("スキル関係"),
     keys: [
       "paths.project_locohane_dir",
       "subagent.agent_type_run_script_allowlist",
@@ -839,7 +844,7 @@ const CONFIG_PRESETS = [
     ],
   },
   {
-    name: "ベクターDB",
+    name: _t("ベクターDB"),
     keys: [
       "vector_db.enabled",
       "vector_db.backend",
@@ -922,7 +927,7 @@ function buildSectionList() {
   const list = $("#section-list");
   list.innerHTML = "";
   const allLi = document.createElement("li");
-  allLi.textContent = "すべて";
+  allLi.textContent = _t("すべて");
   allLi.dataset.section = "";
   allLi.classList.add("active");
   list.appendChild(allLi);
@@ -976,7 +981,7 @@ function renderKeyList() {
     shown++;
   }
   if (shown === 0) {
-    listEl.innerHTML = '<p class="hint">該当するキーがありません。</p>';
+    listEl.innerHTML = _t('<p class="hint">該当するキーがありません。</p>');
   }
 }
 
@@ -987,7 +992,7 @@ function buildKeyRow(k) {
   row.querySelector(".key-desc").textContent = k.description;
   row.querySelector(".env-badge").classList.toggle("hidden", !k.env_override_active);
   if (k.env_override_active) {
-    row.querySelector(".env-badge").textContent = `環境変数 ${k.env_name} で上書き中`;
+    row.querySelector(".env-badge").textContent = _t(`環境変数 {0} で上書き中`, k.env_name);
   }
   const changedBadge = row.querySelector(".changed-badge");
   const resetBtn = row.querySelector(".reset-btn");
@@ -1002,7 +1007,7 @@ function buildKeyRow(k) {
   if (k.is_admin_section) {
     const note = document.createElement("p");
     note.className = "hint";
-    note.textContent = "[admin] は管理ツール自身の設定のため、ここからは変更できません（config.ini を直接編集してください）。";
+    note.textContent = _t("[admin] は管理ツール自身の設定のため、ここからは変更できません（config.ini を直接編集してください）。");
     inputWrap.appendChild(note);
   } else if (k.ui_kind === "bool") {
     const wrap = document.createElement("label");
@@ -1012,7 +1017,7 @@ function buildKeyRow(k) {
     input.checked = value.trim().toLowerCase() === "true";
     input.addEventListener("change", () => setEdit(k, input.checked ? "true" : "false"));
     wrap.appendChild(input);
-    wrap.appendChild(document.createTextNode(" 有効にする"));
+    wrap.appendChild(document.createTextNode(_t(" 有効にする")));
     inputWrap.appendChild(wrap);
   } else if (k.ui_kind === "choice") {
     const select = buildChoiceSelect(k.choices, value.trim(), (v) => setEdit(k, v));
@@ -1057,8 +1062,8 @@ function buildChoiceSelect(choices, current, onChange) {
   for (const c of options) {
     const opt = document.createElement("option");
     opt.value = c;
-    if (c === "") opt.textContent = "（未指定）";
-    else if (matched === undefined && c === current) opt.textContent = `${c}（選択肢外の現在値）`;
+    if (c === "") opt.textContent = _t("（未指定）");
+    else if (matched === undefined && c === current) opt.textContent = _t(`{0}（選択肢外の現在値）`, c);
     else opt.textContent = c;
     select.appendChild(opt);
   }
@@ -1077,7 +1082,7 @@ function parsePyLiteral(text) {
   const s = text;
   let i = 0;
   const fail = (msg) => {
-    throw new Error(`${msg}（${i + 1}文字目付近）`);
+    throw new Error(_t(`{0}（{1}文字目付近）`, msg, i + 1));
   };
   const skip = () => {
     for (;;) {
@@ -1092,7 +1097,7 @@ function parsePyLiteral(text) {
     let out = "";
     while (i < s.length && s[i] !== q) {
       let c = s[i++];
-      if (c === "\n") fail("文字列の途中で改行されています");
+      if (c === "\n") fail(_t("文字列の途中で改行されています"));
       if (c !== "\\") {
         out += c;
         continue;
@@ -1102,7 +1107,7 @@ function parsePyLiteral(text) {
       if (c === "x" || c === "u" || c === "U") {
         const len = c === "x" ? 2 : c === "u" ? 4 : 8;
         const hex = s.slice(i, i + len);
-        if (hex.length !== len || !/^[0-9a-fA-F]+$/.test(hex)) fail("不正なエスケープです");
+        if (hex.length !== len || !/^[0-9a-fA-F]+$/.test(hex)) fail(_t("不正なエスケープです"));
         out += String.fromCodePoint(parseInt(hex, 16));
         i += len;
       } else if (c in ESC) {
@@ -1111,7 +1116,7 @@ function parsePyLiteral(text) {
         out += "\\" + c;
       }
     }
-    if (s[i] !== q) fail("文字列が閉じていません");
+    if (s[i] !== q) fail(_t("文字列が閉じていません"));
     i++;
     return out;
   };
@@ -1128,7 +1133,7 @@ function parsePyLiteral(text) {
         arr.push(parseValue());
         skip();
         if (s[i] === ",") i++;
-        else if (s[i] !== close) fail(`"," か "${close}" が必要です`);
+        else if (s[i] !== close) fail(_t(`"," か "{0}" が必要です`, close));
       }
       i++;
       return arr;
@@ -1140,14 +1145,14 @@ function parsePyLiteral(text) {
         skip();
         if (s[i] === "}") break;
         const key = parseValue();
-        if (typeof key !== "string") fail("辞書のキーは文字列にしてください");
+        if (typeof key !== "string") fail(_t("辞書のキーは文字列にしてください"));
         skip();
-        if (s[i] !== ":") fail('":" が必要です');
+        if (s[i] !== ":") fail(_t('":" が必要です'));
         i++;
         obj[key] = parseValue();
         skip();
         if (s[i] === ",") i++;
-        else if (s[i] !== "}") fail('"," か "}" が必要です');
+        else if (s[i] !== "}") fail(_t('"," か "}" が必要です'));
       }
       i++;
       return obj;
@@ -1177,11 +1182,11 @@ function parsePyLiteral(text) {
         return val;
       }
     }
-    fail("解釈できない値です");
+    fail(_t("解釈できない値です"));
   };
   const result = parseValue();
   skip();
-  if (i < s.length) fail("余分な文字があります");
+  if (i < s.length) fail(_t("余分な文字があります"));
   return result;
 }
 
@@ -1203,7 +1208,7 @@ function serializePyList(arr) {
 
 function parsePyList(text) {
   const data = parsePyLiteral(text.trim() || "[]");
-  if (!Array.isArray(data)) throw new Error("リスト（[...]）形式ではありません");
+  if (!Array.isArray(data)) throw new Error(_t("リスト（[...]）形式ではありません"));
   return data;
 }
 
@@ -1236,17 +1241,17 @@ function buildListInput(k, value, inputWrap) {
   }
 
   if (data === null) {
-    toggle.textContent = "項目ごとに編集";
+    toggle.textContent = _t("項目ごとに編集");
     if (parseError) {
       note.classList.replace("hint", "error");
-      note.textContent = `項目ごとの編集に切り替えられません: ${parseError}`;
+      note.textContent = _t(`項目ごとの編集に切り替えられません: {0}`, parseError);
     }
     toggle.addEventListener("click", () => {
       try {
         parsePyList(effectiveValue(k));
       } catch (e) {
         note.classList.replace("hint", "error");
-        note.textContent = `項目ごとの編集に切り替えられません: ${e.message}`;
+        note.textContent = _t(`項目ごとの編集に切り替えられません: {0}`, e.message);
         return;
       }
       rawListIds.delete(id);
@@ -1256,13 +1261,13 @@ function buildListInput(k, value, inputWrap) {
     return;
   }
 
-  toggle.textContent = "テキストで編集";
+  toggle.textContent = _t("テキストで編集");
   toggle.addEventListener("click", () => {
     rawListIds.add(id);
     rerenderKeyRow(k, inputWrap);
   });
   if (/^\s*#/m.test(value)) {
-    note.textContent = "※ここで編集して保存すると、リスト内のコメント行は保存値に含まれません（config.ini 自体は変わりません）。";
+    note.textContent = _t("※ここで編集して保存すると、リスト内のコメント行は保存値に含まれません（config.ini 自体は変わりません）。");
   }
   let defaultCanon = null;
   try {
@@ -1285,7 +1290,7 @@ function buildListInput(k, value, inputWrap) {
     return;
   }
   if (k.schema) {
-    note.textContent = "※値が想定の形式と異なるため、要素の種類を選んで編集する形式で表示しています。";
+    note.textContent = _t("※値が想定の形式と異なるため、要素の種類を選んで編集する形式で表示しています。");
   }
   inputWrap.appendChild(buildArrayEditor(data, emit, { depth: 0 }));
 }
@@ -1416,9 +1421,9 @@ function buildSchemaList(arr, schema, set) {
         set(arr);
       };
       ctrl.append(
-        smallBtn("↑", "上へ移動", idx === 0, () => swap(idx - 1, idx)),
-        smallBtn("↓", "下へ移動", idx === arr.length - 1, () => swap(idx, idx + 1)),
-        smallBtn("✕", "削除", false, () => {
+        smallBtn("↑", _t("上へ移動"), idx === 0, () => swap(idx - 1, idx)),
+        smallBtn("↓", _t("下へ移動"), idx === arr.length - 1, () => swap(idx, idx + 1)),
+        smallBtn("✕", _t("削除"), false, () => {
           arr.splice(idx, 1);
           render();
           set(arr);
@@ -1427,7 +1432,7 @@ function buildSchemaList(arr, schema, set) {
       itemEl.append(body, ctrl);
       box.appendChild(itemEl);
     });
-    const add = smallBtn("＋ 項目を追加", "項目を追加", false, () => {
+    const add = smallBtn(_t("＋ 項目を追加"), _t("項目を追加"), false, () => {
       arr.push(schemaDefault(schema.item));
       render();
       set(arr);
@@ -1476,13 +1481,13 @@ function buildSchemaGrouped(arr, schema, set) {
       });
       const count = document.createElement("span");
       count.className = "hint";
-      count.textContent = `${g.items.length} 件`;
+      count.textContent = _t(`{0} 件`, g.items.length);
       head.append(
         label,
         nameInput,
         count,
-        smallBtn("✕", `この${schema.group_label}をまとめて削除`, false, () => {
-          if (g.items.length > 0 && !confirm(`${schema.group_label}「${g.name}」の ${g.items.length} 件をまとめて削除しますか？`)) return;
+        smallBtn("✕", _t(`この{0}をまとめて削除`, schema.group_label), false, () => {
+          if (g.items.length > 0 && !confirm(_t(`{0}「{1}」の {2} 件をまとめて削除しますか？`, schema.group_label, g.name, g.items.length))) return;
           groups.splice(gi, 1);
           render();
           flush();
@@ -1491,12 +1496,12 @@ function buildSchemaGrouped(arr, schema, set) {
       panel.appendChild(head);
       // グループ内の項目は通常のリストと同じ編集UI（並べ替え・削除・追加）
       panel.appendChild(buildSchemaList(g.items, { type: "list", item: schema.item }, () => {
-        count.textContent = `${g.items.length} 件`;
+        count.textContent = _t(`{0} 件`, g.items.length);
         flush();
       }));
       box.appendChild(panel);
     });
-    const add = smallBtn(`＋ ${schema.group_label}を追加`, `${schema.group_label}を追加`, false, () => {
+    const add = smallBtn(_t(`＋ {0}を追加`, schema.group_label), _t(`{0}を追加`, schema.group_label), false, () => {
       // 項目が0件のグループはリストに書き出せないため、空の項目を1件持たせる
       groups.push({ name: "", items: [schemaDefault(schema.item)] });
       render();
@@ -1538,7 +1543,7 @@ function buildSchemaDict(obj, schema, set) {
     row.className = "le-field";
     const label = document.createElement("span");
     label.className = "le-field-name";
-    label.textContent = f.optional ? `${f.name}（任意）` : f.name;
+    label.textContent = f.optional ? _t(`{0}（任意）`, f.name) : f.name;
     const body = document.createElement("div");
     body.className = "le-item-body";
     body.appendChild(
@@ -1604,10 +1609,10 @@ function buildSchemaOneOf(value, schema, set) {
 }
 
 const VALUE_TYPES = [
-  ["string", "文字"],
-  ["number", "数値"],
-  ["bool", "真偽"],
-  ["list", "リスト"],
+  ["string", _t("文字")],
+  ["number", _t("数値")],
+  ["bool", _t("真偽")],
+  ["list", _t("リスト")],
 ];
 
 function valueType(v) {
@@ -1630,8 +1635,8 @@ function convertValue(v, type) {
 function buildTypeSelect(current, onChange, withDict = false) {
   const select = document.createElement("select");
   select.className = "le-type";
-  select.title = "値の種類";
-  const types = withDict || current === "dict" ? [...VALUE_TYPES, ["dict", "辞書"]] : VALUE_TYPES;
+  select.title = _t("値の種類");
+  const types = withDict || current === "dict" ? [...VALUE_TYPES, ["dict", _t("辞書")]] : VALUE_TYPES;
   for (const [value, label] of types) {
     const opt = document.createElement("option");
     opt.value = value;
@@ -1716,11 +1721,11 @@ function buildArrayEditor(arr, notify, ctx) {
           render();
           notify();
         };
-        ctrl.appendChild(smallBtn("↑", "上へ移動", idx === 0, () => swap(idx - 1, idx)));
-        ctrl.appendChild(smallBtn("↓", "下へ移動", idx === arr.length - 1, () => swap(idx, idx + 1)));
+        ctrl.appendChild(smallBtn("↑", _t("上へ移動"), idx === 0, () => swap(idx - 1, idx)));
+        ctrl.appendChild(smallBtn("↓", _t("下へ移動"), idx === arr.length - 1, () => swap(idx, idx + 1)));
       }
       ctrl.appendChild(
-        smallBtn("✕", "削除", false, () => {
+        smallBtn("✕", _t("削除"), false, () => {
           arr.splice(idx, 1);
           render();
           notify();
@@ -1731,7 +1736,7 @@ function buildArrayEditor(arr, notify, ctx) {
     });
     // 空リストには手本にする要素が無いため、追加する値の種類を選ばせる
     const newTypeSelect = arr.length === 0 ? buildTypeSelect("string", () => {}, !inline) : null;
-    const add = smallBtn(inline ? "＋" : "＋ 項目を追加", "項目を追加", false, () => {
+    const add = smallBtn(inline ? _t("＋") : _t("＋ 項目を追加"), _t("項目を追加"), false, () => {
       arr.push(newTypeSelect ? convertValue("", newTypeSelect.value) : blankLike(arr[arr.length - 1]));
       render();
       notify();
@@ -1774,7 +1779,7 @@ function buildDictEditor(obj, notify, ctx) {
       row.append(
         label,
         body,
-        smallBtn("✕", "この項目を削除", false, () => {
+        smallBtn("✕", _t("この項目を削除"), false, () => {
           delete obj[name];
           render();
           notify();
@@ -1786,9 +1791,9 @@ function buildDictEditor(obj, notify, ctx) {
     addRow.className = "le-field le-field-add";
     const nameInput = document.createElement("input");
     nameInput.type = "text";
-    nameInput.placeholder = "項目名";
+    nameInput.placeholder = _t("項目名");
     const typeSelect = buildTypeSelect("string", () => {});
-    const addBtn = smallBtn("＋ 項目を追加", "項目を追加", false, () => {
+    const addBtn = smallBtn(_t("＋ 項目を追加"), _t("項目を追加"), false, () => {
       const name = nameInput.value.trim();
       if (!name || name in obj) {
         nameInput.classList.add("invalid");
@@ -1864,7 +1869,7 @@ function setEdit(k, newValue) {
 
 function updateFooter() {
   const count = Object.keys(dirtyEdits).length + resetKeys.size;
-  $("#dirty-count").textContent = count > 0 ? `${count} 件変更` : "";
+  $("#dirty-count").textContent = count > 0 ? _t(`{0} 件変更`, count) : "";
   $("#save-btn").disabled = count === 0;
 }
 
@@ -1894,7 +1899,7 @@ async function openPreviewModal() {
   document.body.appendChild(modal);
   modal.querySelector(".btn-cancel").addEventListener("click", () => modal.remove());
   const diffEl = modal.querySelector("#preview-diff");
-  diffEl.textContent = "確認中...";
+  diffEl.textContent = _t("確認中...");
   try {
     const payload = buildUpdatePayload();
     const result = await api(`/api/instances/${encodeURIComponent(currentInstanceName)}/config/preview`, {
@@ -1903,7 +1908,7 @@ async function openPreviewModal() {
     });
     diffEl.innerHTML = "";
     if (result.changes.length === 0) {
-      diffEl.innerHTML = '<p class="hint">変更はありません。</p>';
+      diffEl.innerHTML = _t('<p class="hint">変更はありません。</p>');
     }
     for (const c of result.changes) {
       const div = document.createElement("div");
@@ -1953,10 +1958,10 @@ async function doSave() {
     }
   } catch (e) {
     if (e.status === 409) {
-      alert("他のセッションで既に保存されています。画面を再読み込みします。");
+      alert(_t("他のセッションで既に保存されています。画面を再読み込みします。"));
       await renderInstanceDetail(currentInstanceName);
     } else {
-      alert("保存に失敗しました: " + e.message);
+      alert(_t("保存に失敗しました: ") + e.message);
     }
   }
 }
@@ -1967,8 +1972,8 @@ async function renderUsers(container) {
   container.appendChild(clone("tpl-users"));
   const data = await api(`/api/instances/${encodeURIComponent(currentInstanceName)}/users`);
   $("#users-inherited-note").textContent = data.inherited_from_project_env
-    ? "プロジェクト直下 .env の AUTH_USERS（管理者設定）を継承しています。この画面からは変更・削除できません（このインスタンス専用のユーザーを追加すると、以後は専用のものだけが使われます）。"
-    : "このインスタンス専用のユーザー設定です。";
+    ? _t("プロジェクト直下 .env の AUTH_USERS（管理者設定）を継承しています。この画面からは変更・削除できません（このインスタンス専用のユーザーを追加すると、以後は専用のものだけが使われます）。")
+    : _t("このインスタンス専用のユーザー設定です。");
   const tbody = $("#users-tbody");
   tbody.innerHTML = "";
   for (const name of data.usernames) {
@@ -1977,10 +1982,10 @@ async function renderUsers(container) {
     if (inherited) tr.classList.add("row-inherited");
     const pwInput = document.createElement("input");
     pwInput.type = "password";
-    pwInput.placeholder = "新しいパスワード";
+    pwInput.placeholder = _t("新しいパスワード");
     pwInput.disabled = inherited;
     const pwBtn = document.createElement("button");
-    pwBtn.textContent = "変更";
+    pwBtn.textContent = _t("変更");
     pwBtn.disabled = inherited;
     pwBtn.addEventListener("click", async () => {
       if (!pwInput.value) return;
@@ -1994,13 +1999,13 @@ async function renderUsers(container) {
         return;
       }
       pwInput.value = "";
-      alert("パスワードを変更しました。");
+      alert(_t("パスワードを変更しました。"));
     });
     const delBtn = document.createElement("button");
-    delBtn.textContent = "削除";
+    delBtn.textContent = _t("削除");
     delBtn.disabled = inherited;
     delBtn.addEventListener("click", async () => {
-      if (!confirm(`ユーザー "${name}" を削除しますか？`)) return;
+      if (!confirm(_t(`ユーザー "{0}" を削除しますか？`, name))) return;
       try {
         await api(`/api/instances/${encodeURIComponent(currentInstanceName)}/users/${encodeURIComponent(name)}`, {
           method: "DELETE",
@@ -2018,8 +2023,8 @@ async function renderUsers(container) {
     if (inherited) {
       const badge = document.createElement("span");
       badge.className = "badge-default";
-      badge.textContent = "プロジェクト直下 .env（管理者設定）";
-      badge.title = "プロジェクト直下の .env で設定されたユーザーです。変更は管理者が .env を直接編集してください。";
+      badge.textContent = _t("プロジェクト直下 .env（管理者設定）");
+      badge.title = _t("プロジェクト直下の .env で設定されたユーザーです。変更は管理者が .env を直接編集してください。");
       tdName.appendChild(document.createTextNode(" "));
       tdName.appendChild(badge);
     }
@@ -2050,11 +2055,11 @@ async function renderUsers(container) {
     }
   });
 
-  $("#secret-status").textContent = data.auth_secret_set ? "設定済み" : "未設定";
+  $("#secret-status").textContent = data.auth_secret_set ? _t("設定済み") : _t("未設定");
   $("#gen-secret-btn").addEventListener("click", async () => {
-    if (!confirm("JWT署名鍵を再生成すると、既存のログインセッションは全て無効になります。よろしいですか？")) return;
+    if (!confirm(_t("JWT署名鍵を再生成すると、既存のログインセッションは全て無効になります。よろしいですか？"))) return;
     await api(`/api/instances/${encodeURIComponent(currentInstanceName)}/auth-secret`, { method: "POST" });
-    $("#secret-status").textContent = "設定済み（再生成しました）";
+    $("#secret-status").textContent = _t("設定済み（再生成しました）");
   });
 }
 
@@ -2068,7 +2073,7 @@ async function renderEnvVars(container) {
   for (const [key, value] of Object.entries(data.vars)) {
     const tr = document.createElement("tr");
     const delBtn = document.createElement("button");
-    delBtn.textContent = "削除";
+    delBtn.textContent = _t("削除");
     delBtn.addEventListener("click", async () => {
       await api(`/api/instances/${encodeURIComponent(currentInstanceName)}/env/${encodeURIComponent(key)}`, {
         method: "DELETE",
@@ -2113,7 +2118,7 @@ async function renderBackups(container) {
   const tbody = $("#backups-tbody");
   tbody.innerHTML = "";
   if (data.backups.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="3" class="hint">まだバックアップはありません。</td></tr>';
+    tbody.innerHTML = _t('<tr><td colspan="3" class="hint">まだバックアップはありません。</td></tr>');
     return;
   }
   for (const b of data.backups) {
@@ -2123,17 +2128,17 @@ async function renderBackups(container) {
     const tdTime = document.createElement("td");
     tdTime.textContent = new Date(b.mtime * 1000).toLocaleString("ja-JP");
     const restoreBtn = document.createElement("button");
-    restoreBtn.textContent = "復元";
+    restoreBtn.textContent = _t("復元");
     restoreBtn.addEventListener("click", async () => {
-      if (!confirm(`${b.name} の内容で復元します。現在の設定はさらにバックアップされます。よろしいですか？`)) return;
+      if (!confirm(_t(`{0} の内容で復元します。現在の設定はさらにバックアップされます。よろしいですか？`, b.name))) return;
       try {
         const result = await api(
           `/api/instances/${encodeURIComponent(currentInstanceName)}/backups/${encodeURIComponent(b.name)}/restore`,
           { method: "POST" }
         );
-        alert(result.needs_restart ? "復元しました。反映にはインスタンスの再起動が必要です。" : "復元しました。");
+        alert(result.needs_restart ? _t("復元しました。反映にはインスタンスの再起動が必要です。") : _t("復元しました。"));
       } catch (e) {
-        alert("復元に失敗しました: " + e.message);
+        alert(_t("復元に失敗しました: ") + e.message);
       }
     });
     const tdActions = document.createElement("td");
@@ -2173,7 +2178,7 @@ async function renderSettingsPanel(container, target) {
           method: "PUT",
           body: { content: section.querySelector("textarea").value },
         }),
-        "保存しました（ブラウザの再読み込みで反映されます）。"
+        _t("保存しました（ブラウザの再読み込みで反映されます）。")
       )
     );
     section.querySelector(".reset-setting-btn").addEventListener("click", () => resetSetting(file));
@@ -2189,10 +2194,10 @@ async function renderSettingsPanel(container, target) {
 async function loadSettings() {
   $("#settings-error").textContent = "";
   $("#settings-target-hint").textContent = settingsTarget
-    ? "このインスタンスだけに適用されます。専用の設定が無い項目は、上部の「表示設定」タブの共通設定が使われます。"
-    : "各インスタンスの既定値です。インスタンスごとに変えたい場合は、インスタンスの「設定」→「表示設定」タブで設定してください。";
+    ? _t("このインスタンスだけに適用されます。専用の設定が無い項目は、上部の「表示設定」タブの共通設定が使われます。")
+    : _t("各インスタンスの既定値です。インスタンスごとに変えたい場合は、インスタンスの「設定」→「表示設定」タブで設定してください。");
   const data = await api(`/api/settings${settingsQuery()}`);
-  const sourceLabel = (overridden) => (!settingsTarget ? "" : overridden ? "［このインスタンス専用］" : "［共通設定を使用中］");
+  const sourceLabel = (overridden) => (!settingsTarget ? "" : overridden ? _t("［このインスタンス専用］") : _t("［共通設定を使用中］"));
   $$(".settings-section[data-text]").forEach((section) => {
     const info = data.texts[section.dataset.text];
     section.querySelector("textarea").value = info.content;
@@ -2201,7 +2206,7 @@ async function loadSettings() {
   });
   $$(".settings-section[data-image]").forEach((section) => {
     const info = data.images[section.dataset.image];
-    section.querySelector(".image-current").textContent = info.filename || "（なし）";
+    section.querySelector(".image-current").textContent = info.filename || _t("（なし）");
     section.querySelector(".setting-source").textContent = sourceLabel(info.overridden);
     section.querySelector(".reset-setting-btn").classList.toggle("hidden", !info.overridden);
   });
@@ -2218,17 +2223,17 @@ async function settingsAction(fn, message) {
 }
 
 function resetSetting(target) {
-  if (!confirm("このインスタンス専用の設定を削除し、共通設定に戻します。よろしいですか？")) return;
+  if (!confirm(_t("このインスタンス専用の設定を削除し、共通設定に戻します。よろしいですか？"))) return;
   settingsAction(
     () => api(`/api/settings/${target}${settingsQuery()}`, { method: "DELETE" }),
-    "共通設定に戻しました（ブラウザの再読み込みで反映されます）。"
+    _t("共通設定に戻しました（ブラウザの再読み込みで反映されます）。")
   );
 }
 
 async function uploadImage(section, kind) {
   const file = section.querySelector("input[type=file]").files[0];
   if (!file) {
-    $("#settings-error").textContent = "ファイルを選択してください。";
+    $("#settings-error").textContent = _t("ファイルを選択してください。");
     return;
   }
   const base64 = await fileToBase64(file);
@@ -2238,7 +2243,7 @@ async function uploadImage(section, kind) {
         method: "PUT",
         body: { filename: file.name, content_base64: base64 },
       }),
-    "アップロードしました（ブラウザの再読み込みで反映されます）。"
+    _t("アップロードしました（ブラウザの再読み込みで反映されます）。")
   );
 }
 
@@ -2279,7 +2284,7 @@ async function renderAudit() {
     tbody.appendChild(tr);
   }
   if (data.entries.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="5" class="hint">まだ履歴はありません。</td></tr>';
+    tbody.innerHTML = _t('<tr><td colspan="5" class="hint">まだ履歴はありません。</td></tr>');
   }
 }
 
@@ -2287,10 +2292,10 @@ function summarizeAuditEntry(entry) {
   if (entry.changes && entry.changes.length) {
     return entry.changes.map((c) => `[${c.section}].${c.key}`).join(", ");
   }
-  if (entry.action === "conversation_view") return `会話閲覧: ${entry.thread_owner || ""} / ${entry.thread_id || ""}`;
-  if (entry.target_user) return `対象: ${entry.target_user}`;
-  if (entry.file) return `ファイル: ${entry.file}`;
-  if (entry.key) return `キー: ${entry.key}`;
+  if (entry.action === "conversation_view") return _t(`会話閲覧: {0} / {1}`, entry.thread_owner || "", entry.thread_id || "");
+  if (entry.target_user) return _t(`対象: {0}`, entry.target_user);
+  if (entry.file) return _t(`ファイル: {0}`, entry.file);
+  if (entry.key) return _t(`キー: {0}`, entry.key);
   return "";
 }
 
@@ -2382,15 +2387,15 @@ function fmtTime(iso) {
 function fmtElapsed(iso) {
   if (!iso) return "-";
   const sec = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (sec < 60) return `${sec}秒`;
-  if (sec < 3600) return `${Math.floor(sec / 60)}分${sec % 60}秒`;
-  return `${Math.floor(sec / 3600)}時間${Math.floor((sec % 3600) / 60)}分`;
+  if (sec < 60) return _t(`{0}秒`, sec);
+  if (sec < 3600) return _t(`{0}分{1}秒`, Math.floor(sec / 60), sec % 60);
+  return _t(`{0}時間{1}分`, Math.floor(sec / 3600), Math.floor((sec % 3600) / 60));
 }
 
 function dataTable(headers, rows, emptyText) {
   const tbody = el("tbody");
   for (const cells of rows) tbody.append(el("tr", {}, cells.map((c) => el("td", {}, c))));
-  if (!rows.length) tbody.append(el("tr", {}, el("td", { colspan: headers.length, class: "hint", text: emptyText || "なし" })));
+  if (!rows.length) tbody.append(el("tr", {}, el("td", { colspan: headers.length, class: "hint", text: emptyText || _t("なし") })));
   return el("table", { class: "data-table" }, [el("thead", {}, el("tr", {}, headers.map((h) => el("th", { text: h })))), tbody]);
 }
 
@@ -2414,15 +2419,15 @@ async function renderMonitor(container) {
   const updated = el("span", { class: "hint" });
   const endpointsBox = el("div");
   container.append(
-    el("div", { class: "monitor-toolbar" }, [updated, el("span", { class: "hint", text: `（${MONITOR_POLL_MS / 1000}秒ごとに自動更新）` })]),
+    el("div", { class: "monitor-toolbar" }, [updated, el("span", { class: "hint", text: _t(`（{0}秒ごとに自動更新）`, MONITOR_POLL_MS / 1000) })]),
     tiles,
     body,
     el("section", { class: "monitor-section" }, [
       el("div", { class: "section-head" }, [
-        el("h3", { text: "LLM接続先" }),
-        el("button", { text: "状態を確認", onclick: () => loadEndpoints(endpointsBox) }),
+        el("h3", { text: _t("LLM接続先") }),
+        el("button", { text: _t("状態を確認"), onclick: () => loadEndpoints(endpointsBox) }),
       ]),
-      el("p", { class: "hint", text: "[llm] main_url / sub_url の各接続先へ問い合わせます（llama_cpp は GET /slots でスロット使用状況も表示）。" }),
+      el("p", { class: "hint", text: _t("[llm] main_url / sub_url の各接続先へ問い合わせます（llama_cpp は GET /slots でスロット使用状況も表示）。") }),
       endpointsBox,
     ])
   );
@@ -2436,13 +2441,13 @@ async function renderMonitor(container) {
       return;
     }
     if (!document.body.contains(container)) return;
-    updated.textContent = `状態: ${STATE_LABELS[data.state] || data.state}` + (data.updated_at ? ` ／ 本体の最終更新 ${fmtTime(data.updated_at)}` : "");
+    updated.textContent = _t(`状態: {0}`, STATE_LABELS[data.state] || data.state) + (data.updated_at ? _t(` ／ 本体の最終更新 {0}`, fmtTime(data.updated_at)) : "");
     const lc = data.log_counts_24h || {};
     tiles.replaceChildren(
-      statTile("接続中ユーザー", data.available ? String(data.users.filter((u) => u.sessions > 0).length) : "-"),
-      statTile("接続セッション", data.available ? String(data.sessions.length) : "-"),
-      statTile("生成中スレッド", data.available ? String(data.generating.length) : "-", data.available ? `うち応答待ち ${data.generating.filter((g) => g.waiting_for_user).length}` : null),
-      statTile("直近24時間の警告", `${fmtNum(lc.WARNING || 0)}`, `ERROR ${fmtNum(lc.ERROR || 0)} / CRITICAL ${fmtNum(lc.CRITICAL || 0)}`)
+      statTile(_t("接続中ユーザー"), data.available ? String(data.users.filter((u) => u.sessions > 0).length) : "-"),
+      statTile(_t("接続セッション"), data.available ? String(data.sessions.length) : "-"),
+      statTile(_t("生成中スレッド"), data.available ? String(data.generating.length) : "-", data.available ? _t(`うち応答待ち {0}`, data.generating.filter((g) => g.waiting_for_user).length) : null),
+      statTile(_t("直近24時間の警告"), `${fmtNum(lc.WARNING || 0)}`, `ERROR ${fmtNum(lc.ERROR || 0)} / CRITICAL ${fmtNum(lc.CRITICAL || 0)}`)
     );
     if (!data.available) {
       body.replaceChildren(
@@ -2450,42 +2455,42 @@ async function renderMonitor(container) {
           class: "hint",
           text:
             data.state === "running" || data.state === "external"
-              ? "実行状態を取得できません（本体が更新前のバージョン、または起動直後です）。"
-              : "インスタンスが停止しているため、接続中のユーザーはいません。",
+              ? _t("実行状態を取得できません（本体が更新前のバージョン、または起動直後です）。")
+              : _t("インスタンスが停止しているため、接続中のユーザーはいません。"),
         })
       );
       return;
     }
     const openThread = (id) => () => selectInstanceSubview("threads", { openThreadId: id });
-    const threadCell = (id, name) => (id && name ? linkBtn(name, openThread(id)) : el("span", { class: "hint", text: id ? "（未送信の新規チャット）" : "-" }));
+    const threadCell = (id, name) => (id && name ? linkBtn(name, openThread(id)) : el("span", { class: "hint", text: id ? _t("（未送信の新規チャット）") : "-" }));
     body.replaceChildren(
       el("section", { class: "monitor-section" }, [
-        el("h3", { text: "実行中のユーザー" }),
+        el("h3", { text: _t("実行中のユーザー") }),
         dataTable(
-          ["ユーザー", "接続セッション", "生成中スレッド", ""],
-          data.users.map((u) => [u.user, String(u.sessions), String(u.generating), linkBtn("会話一覧", () => selectInstanceSubview("threads", { owner: u.user }))]),
-          "接続中のユーザーはいません。"
+          [_t("ユーザー"), _t("接続セッション"), _t("生成中スレッド"), ""],
+          data.users.map((u) => [u.user, String(u.sessions), String(u.generating), linkBtn(_t("会話一覧"), () => selectInstanceSubview("threads", { owner: u.user }))]),
+          _t("接続中のユーザーはいません。")
         ),
       ]),
       el("section", { class: "monitor-section" }, [
-        el("h3", { text: "生成中のスレッド" }),
+        el("h3", { text: _t("生成中のスレッド") }),
         dataTable(
-          ["ユーザー", "スレッド", "経過時間", "状態"],
+          [_t("ユーザー"), _t("スレッド"), _t("経過時間"), _t("状態")],
           data.generating.map((g) => [
             g.owner || "-",
             threadCell(g.thread_id, g.thread_name || g.thread_id),
             fmtElapsed(g.started_at),
-            g.waiting_for_user ? el("span", { class: "badge warn", text: "ユーザーの応答待ち" }) : el("span", { class: "badge ok", text: "生成中" }),
+            g.waiting_for_user ? el("span", { class: "badge warn", text: _t("ユーザーの応答待ち") }) : el("span", { class: "badge ok", text: _t("生成中") }),
           ]),
-          "生成中のスレッドはありません。"
+          _t("生成中のスレッドはありません。")
         ),
       ]),
       el("section", { class: "monitor-section" }, [
-        el("h3", { text: "接続中のセッション（ブラウザタブ）" }),
+        el("h3", { text: _t("接続中のセッション（ブラウザタブ）") }),
         dataTable(
-          ["ユーザー", "開いているスレッド"],
+          [_t("ユーザー"), _t("開いているスレッド")],
           data.sessions.map((s) => [s.user, threadCell(s.thread_id, s.has_first_interaction ? s.thread_name || s.thread_id : null)]),
-          "接続中のセッションはありません。"
+          _t("接続中のセッションはありません。")
         ),
       ])
     );
@@ -2497,19 +2502,19 @@ async function renderMonitor(container) {
 
 async function loadEndpoints(box) {
   const seq = nextRequestSeq(box);
-  box.replaceChildren(el("p", { class: "hint", text: "確認中..." }));
+  box.replaceChildren(el("p", { class: "hint", text: _t("確認中...") }));
   try {
     const data = await api(monitorPath("/endpoints"));
     if (!isLatestRequest(box, seq)) return;
     box.replaceChildren(
       dataTable(
-        ["用途", "接続先", "モデル", "provider", "状態", "スロット使用中", "応答時間"],
+        [_t("用途"), _t("接続先"), _t("モデル"), "provider", _t("状態"), _t("スロット使用中"), _t("応答時間")],
         data.endpoints.map((e) => [
           e.role,
           e.base_url,
           e.model,
           e.provider,
-          e.reachable ? el("span", { class: "badge ok", text: "✓ 応答あり", title: e.error || "" }) : el("span", { class: "badge critical", text: "✕ 応答なし", title: e.error || "" }),
+          e.reachable ? el("span", { class: "badge ok", text: _t("✓ 応答あり"), title: e.error || "" }) : el("span", { class: "badge critical", text: _t("✕ 応答なし"), title: e.error || "" }),
           e.slots_total === null ? el("span", { class: "hint", text: "-", title: e.reachable ? e.error || "" : "" }) : `${e.slots_busy} / ${e.slots_total}`,
           `${fmtNum(e.latency_ms)} ms`,
         ])
@@ -2528,15 +2533,15 @@ const THREADS_PAGE_SIZE = 50;
 async function renderThreads(container, opts) {
   const state = { owner: opts.owner || "", q: "", offset: 0 };
   const usersBox = el("div");
-  const ownerSelect = el("select", { class: "inline-select" }, el("option", { value: "", text: "（全ユーザー）" }));
-  const search = el("input", { type: "search", placeholder: "スレッド名・IDで検索..." });
+  const ownerSelect = el("select", { class: "inline-select" }, el("option", { value: "", text: _t("（全ユーザー）") }));
+  const search = el("input", { type: "search", placeholder: _t("スレッド名・IDで検索...") });
   const listBox = el("div");
   const pager = el("div", { class: "pager" });
   const viewer = el("div", { class: "thread-viewer" });
 
   container.append(
-    el("section", { class: "monitor-section" }, [el("h3", { text: "ユーザー別の利用状況" }), usersBox]),
-    el("section", { class: "monitor-section" }, [el("h3", { text: "スレッド一覧" }), el("div", { class: "filter-row" }, [ownerSelect, search]), listBox, pager]),
+    el("section", { class: "monitor-section" }, [el("h3", { text: _t("ユーザー別の利用状況") }), usersBox]),
+    el("section", { class: "monitor-section" }, [el("h3", { text: _t("スレッド一覧") }), el("div", { class: "filter-row" }, [ownerSelect, search]), listBox, pager]),
     viewer
   );
 
@@ -2545,7 +2550,7 @@ async function renderThreads(container, opts) {
     for (const u of users) ownerSelect.append(el("option", { value: u.user, text: u.user }));
     usersBox.replaceChildren(
       dataTable(
-        ["ユーザー", "スレッド数", "トークン累計", "最終利用"],
+        [_t("ユーザー"), _t("スレッド数"), _t("トークン累計"), _t("最終利用")],
         users.map((u) => [
           linkBtn(u.user, () => {
             ownerSelect.value = u.user;
@@ -2579,17 +2584,17 @@ async function renderThreads(container, opts) {
     if (!isLatestRequest(listBox, seq)) return;
     listBox.replaceChildren(
       dataTable(
-        ["最終更新", "ユーザー", "スレッド", "発言数", "トークン累計"],
+        [_t("最終更新"), _t("ユーザー"), _t("スレッド"), _t("発言数"), _t("トークン累計")],
         data.threads.map((t) => [fmtTime(t.updated_at), t.owner, linkBtn(t.name || t.id, () => openThreadViewer(viewer, t.id)), fmtNum(t.user_messages), fmtNum(t.tokens_total)]),
-        "該当するスレッドはありません。"
+        _t("該当するスレッドはありません。")
       )
     );
     const from = data.total ? state.offset + 1 : 0;
     const to = Math.min(state.offset + THREADS_PAGE_SIZE, data.total);
     pager.replaceChildren(
-      el("button", { text: "← 前へ", disabled: state.offset === 0 ? "" : null, onclick: () => { state.offset -= THREADS_PAGE_SIZE; loadList(); } }),
-      el("span", { class: "hint", text: `${from}–${to} / ${data.total}件` }),
-      el("button", { text: "次へ →", disabled: to >= data.total ? "" : null, onclick: () => { state.offset += THREADS_PAGE_SIZE; loadList(); } })
+      el("button", { text: _t("← 前へ"), disabled: state.offset === 0 ? "" : null, onclick: () => { state.offset -= THREADS_PAGE_SIZE; loadList(); } }),
+      el("span", { class: "hint", text: _t(`{0}–{1} / {2}件`, from, to, data.total) }),
+      el("button", { text: _t("次へ →"), disabled: to >= data.total ? "" : null, onclick: () => { state.offset += THREADS_PAGE_SIZE; loadList(); } })
     );
   }
 
@@ -2611,11 +2616,11 @@ async function renderThreads(container, opts) {
   if (opts.openThreadId) openThreadViewer(viewer, opts.openThreadId);
 }
 
-const STEP_LABELS = { user_message: "ユーザー", assistant_message: "AI", system_message: "システム", tool: "ツール", llm: "思考" };
+const STEP_LABELS = { user_message: _t("ユーザー"), assistant_message: "AI", system_message: _t("システム"), tool: _t("ツール"), llm: _t("思考") };
 
 async function openThreadViewer(viewer, threadId, internal) {
   const seq = nextRequestSeq(viewer);
-  viewer.replaceChildren(el("p", { class: "hint", text: "読み込み中..." }));
+  viewer.replaceChildren(el("p", { class: "hint", text: _t("読み込み中...") }));
   let detail, tokens;
   try {
     [detail, tokens] = await Promise.all([
@@ -2640,7 +2645,7 @@ async function openThreadViewer(viewer, threadId, internal) {
         output: pts.reduce((s, p) => s + p.call_out, 0),
       }
     : detail.token_usage_cumulative || {};
-  const cumSource = fromLog ? "アプリログの合計" : "スレッドに保存された値";
+  const cumSource = fromLog ? _t("アプリログの合計") : _t("スレッドに保存された値");
   const internalCb = el("input", { type: "checkbox" });
   internalCb.checked = !!internal;
   internalCb.addEventListener("change", () => openThreadViewer(viewer, threadId, internalCb.checked));
@@ -2649,15 +2654,15 @@ async function openThreadViewer(viewer, threadId, internal) {
   for (const s of detail.steps) {
     const role = s.type === "user_message" ? "user" : s.type === "assistant_message" || s.type === "system_message" ? "ai" : "internal";
     const head = el("div", { class: "msg-head" }, [
-      el("strong", { text: s.type === "tool" ? `ツール: ${s.name || ""}` : STEP_LABELS[s.type] || s.type }),
+      el("strong", { text: s.type === "tool" ? _t(`ツール: {0}`, s.name || "") : STEP_LABELS[s.type] || s.type }),
       el("span", { class: "hint", text: fmtTime(s.created_at) }),
-      s.truncated ? el("span", { class: "badge warn", text: "長いため一部省略" }) : null,
+      s.truncated ? el("span", { class: "badge warn", text: _t("長いため一部省略") }) : null,
     ]);
     let bodyNode;
     if (role === "internal" || s.is_control) {
       bodyNode = el("details", {}, [
-        el("summary", { text: (s.output || s.input || "").split("\n")[0].slice(0, 120) || "（内容なし）" }),
-        s.input ? el("pre", { class: "msg-pre" }, [el("span", { class: "hint", text: "入力:\n" }), s.input]) : null,
+        el("summary", { text: (s.output || s.input || "").split("\n")[0].slice(0, 120) || _t("（内容なし）") }),
+        s.input ? el("pre", { class: "msg-pre" }, [el("span", { class: "hint", text: _t("入力:\n") }), s.input]) : null,
         el("pre", { class: "msg-pre", text: s.output }),
       ]);
     } else {
@@ -2665,14 +2670,14 @@ async function openThreadViewer(viewer, threadId, internal) {
     }
     messages.append(el("div", { class: `msg msg-${role}` }, [head, bodyNode]));
   }
-  if (!detail.steps.length) messages.append(el("p", { class: "hint", text: "表示できるメッセージがありません。" }));
+  if (!detail.steps.length) messages.append(el("p", { class: "hint", text: _t("表示できるメッセージがありません。") }));
 
   viewer.replaceChildren(
     el("section", { class: "monitor-section viewer-section" }, [
       el("div", { class: "section-head" }, [
         el("h3", { text: detail.name || detail.id }),
         el("button", {
-          text: "閉じる",
+          text: _t("閉じる"),
           onclick: () => {
             nextRequestSeq(viewer); // 読み込み中の応答で開き直さないように
             viewer.replaceChildren();
@@ -2680,21 +2685,21 @@ async function openThreadViewer(viewer, threadId, internal) {
         }),
       ]),
       el("div", { class: "thread-meta hint" }, [
-        `ユーザー: ${detail.owner} ／ 作成: ${fmtTime(detail.created_at)} ／ 最終更新: ${fmtTime(detail.updated_at)} ／ thread_id: ${detail.id}`,
-        detail.work_dir ? ` ／ 作業ディレクトリ: ${detail.work_dir}` : "",
+        _t(`ユーザー: {0} ／ 作成: {1} ／ 最終更新: {2} ／ thread_id: {3}`, detail.owner, fmtTime(detail.created_at), fmtTime(detail.updated_at), detail.id),
+        detail.work_dir ? _t(` ／ 作業ディレクトリ: {0}`, detail.work_dir) : "",
       ]),
       el("div", { class: "stat-row" }, [
-        statTile("トークン累計（合計）", fmtNum(cum.total), cumSource),
-        statTile("入力", fmtNum(cum.input), cumSource),
-        statTile("出力", fmtNum(cum.output), cumSource),
-        statTile("LLM呼び出し回数", fmtNum(tokens.points.length), "アプリログに残っている分"),
+        statTile(_t("トークン累計（合計）"), fmtNum(cum.total), cumSource),
+        statTile(_t("入力"), fmtNum(cum.input), cumSource),
+        statTile(_t("出力"), fmtNum(cum.output), cumSource),
+        statTile(_t("LLM呼び出し回数"), fmtNum(tokens.points.length), _t("アプリログに残っている分")),
       ]),
       buildTokenCharts(tokens.points),
       el("div", { class: "section-head" }, [
-        el("h3", { text: "会話内容" }),
+        el("h3", { text: _t("会話内容") }),
         el("div", { class: "filter-row" }, [
-          el("label", { class: "checkbox" }, [internalCb, " ツール実行・思考・UI制御メッセージも表示"]),
-          linkBtn("このスレッドのログを見る", () => selectInstanceSubview("logs", { threadId: detail.id })),
+          el("label", { class: "checkbox" }, [internalCb, _t(" ツール実行・思考・UI制御メッセージも表示")]),
+          linkBtn(_t("このスレッドのログを見る"), () => selectInstanceSubview("logs", { threadId: detail.id })),
         ]),
       ]),
       messages,
@@ -2710,7 +2715,7 @@ const SERIES_BLUE = "#3987e5";
 const SERIES_ORANGE = "#d95926";
 const SERIES_AQUA = "#199e70";
 
-const TOKEN_KIND_LABELS = { main: "メイン", sub: "サブ", compaction: "圧縮処理" };
+const TOKEN_KIND_LABELS = { main: _t("メイン"), sub: _t("サブ"), compaction: _t("圧縮処理") };
 
 function buildTokenCharts(points) {
   const wrap = el("div", { class: "token-charts" });
@@ -2718,7 +2723,7 @@ function buildTokenCharts(points) {
     wrap.append(
       el("p", {
         class: "hint",
-        text: "トークン推移のデータがありません（[llm] track_token_usage=false、またはアプリログがローテーション・削除済み）。",
+        text: _t("トークン推移のデータがありません（[llm] track_token_usage=false、またはアプリログがローテーション・削除済み）。"),
       })
     );
     return wrap;
@@ -2730,33 +2735,33 @@ function buildTokenCharts(points) {
   wrap.append(grid);
   grid.append(
     lineChart({
-      title: "会話の累積トークン使用量の推移",
-      note: "各LLM呼び出しの入力＋出力を足し上げた値です。縦の破線はコンテキスト圧縮の実行位置です。",
+      title: _t("会話の累積トークン使用量の推移"),
+      note: _t("各LLM呼び出しの入力＋出力を足し上げた値です。縦の破線はコンテキスト圧縮の実行位置です。"),
       points,
       series: [
-        { key: "cumulative_total", label: "全体（サブエージェント・圧縮処理を含む）", color: SERIES_BLUE },
-        { key: "cumulative_main_total", label: "メインエージェントのみ", color: SERIES_ORANGE },
+        { key: "cumulative_total", label: _t("全体（サブエージェント・圧縮処理を含む）"), color: SERIES_BLUE },
+        { key: "cumulative_main_total", label: _t("メインエージェントのみ"), color: SERIES_ORANGE },
       ],
       markers: compactions,
     }),
     lineChart({
-      title: "LLMリクエストごとの入力トークン（コンテキスト長）",
-      note: "圧縮が効くと、破線の後でメインエージェントの値が下がります。" + (hasSub || hasCompactionCall ? "サブエージェント・圧縮処理の呼び出しは点で表示します。" : ""),
+      title: _t("LLMリクエストごとの入力トークン（コンテキスト長）"),
+      note: _t("圧縮が効くと、破線の後でメインエージェントの値が下がります。") + (hasSub || hasCompactionCall ? _t("サブエージェント・圧縮処理の呼び出しは点で表示します。") : ""),
       points,
       series: [
-        { key: "call_in", label: "メインエージェント", color: SERIES_BLUE, filter: (p) => p.kind === "main" },
-        ...(hasSub ? [{ key: "call_in", label: "サブエージェント", color: SERIES_ORANGE, filter: (p) => p.kind === "sub", dotsOnly: true }] : []),
-        ...(hasCompactionCall ? [{ key: "call_in", label: "圧縮処理", color: SERIES_AQUA, filter: (p) => p.kind === "compaction", dotsOnly: true }] : []),
+        { key: "call_in", label: _t("メインエージェント"), color: SERIES_BLUE, filter: (p) => p.kind === "main" },
+        ...(hasSub ? [{ key: "call_in", label: _t("サブエージェント"), color: SERIES_ORANGE, filter: (p) => p.kind === "sub", dotsOnly: true }] : []),
+        ...(hasCompactionCall ? [{ key: "call_in", label: _t("圧縮処理"), color: SERIES_AQUA, filter: (p) => p.kind === "compaction", dotsOnly: true }] : []),
       ],
       markers: compactions,
     })
   );
   const table = dataTable(
-    ["#", "日時", "種別", "入力", "出力", "このターン累計", "全体累計", "メイン累計"],
+    ["#", _t("日時"), _t("種別"), _t("入力"), _t("出力"), _t("このターン累計"), _t("全体累計"), _t("メイン累計")],
     points.map((p, i) => [
       String(i + 1),
       fmtTime(p.ts),
-      (TOKEN_KIND_LABELS[p.kind] || p.kind) + (p.compacted ? "（圧縮後）" : ""),
+      (TOKEN_KIND_LABELS[p.kind] || p.kind) + (p.compacted ? _t("（圧縮後）") : ""),
       fmtNum(p.call_in),
       fmtNum(p.call_out),
       fmtNum(p.turn_total),
@@ -2764,7 +2769,7 @@ function buildTokenCharts(points) {
       fmtNum(p.cumulative_main_total),
     ])
   );
-  wrap.append(el("details", { class: "chart-table" }, [el("summary", { text: "数値を表で表示" }), table]));
+  wrap.append(el("details", { class: "chart-table" }, [el("summary", { text: _t("数値を表で表示") }), table]));
   return wrap;
 }
 
@@ -2808,13 +2813,13 @@ function lineChart({ title, note, points, series, markers }) {
   const xTickIdx = n <= 1 ? [0] : [...new Set([0, Math.round((n - 1) / 3), Math.round((2 * (n - 1)) / 3), n - 1])];
   for (const i of xTickIdx) {
     const t = svgEl("text", { x: x(i), y: H - 10, "text-anchor": "middle", class: "chart-axis-text" });
-    t.textContent = `${i + 1}回目`;
+    t.textContent = _t(`{0}回目`, i + 1);
     svg.append(t);
   }
   for (const i of markers || []) {
     svg.append(svgEl("line", { x1: x(i), x2: x(i), y1: M.top, y2: M.top + ih, class: "chart-marker" }));
     const t = svgEl("text", { x: x(i) + 3, y: M.top + 10, class: "chart-axis-text" });
-    t.textContent = "圧縮";
+    t.textContent = _t("圧縮");
     svg.append(t);
   }
   for (const s of series) {
@@ -2842,7 +2847,7 @@ function lineChart({ title, note, points, series, markers }) {
     cross.setAttribute("x1", x(i));
     cross.setAttribute("x2", x(i));
     cross.setAttribute("visibility", "visible");
-    const rows = [el("div", { class: "hint", text: `${i + 1}回目 ・ ${fmtTime(p.ts)}${p.compacted ? " ・ 圧縮後" : ""}` })];
+    const rows = [el("div", { class: "hint", text: _t(`{0}回目 ・ {1}{2}`, i + 1, fmtTime(p.ts), p.compacted ? _t(" ・ 圧縮後") : "") })];
     for (const s of series) {
       if (s.filter && !s.filter(p)) continue;
       rows.push(el("div", { class: "tt-row" }, [el("span", { class: "tt-key", style: `background:${s.color}` }), el("strong", { text: fmtNum(p[s.key]) }), el("span", { class: "hint", text: s.label })]));
@@ -2886,15 +2891,15 @@ function lineChart({ title, note, points, series, markers }) {
 /* --- アプリログ --- */
 
 async function renderLogs(container, opts) {
-  const level = el("select", { class: "inline-select" }, ["WARNING", "ERROR", "INFO", "DEBUG"].map((l) => el("option", { value: l, text: `${l} 以上` })));
-  const search = el("input", { type: "search", placeholder: "メッセージで絞り込み..." });
-  const threadInput = el("input", { type: "search", placeholder: "thread_id で絞り込み" });
+  const level = el("select", { class: "inline-select" }, ["WARNING", "ERROR", "INFO", "DEBUG"].map((l) => el("option", { value: l, text: _t(`{0} 以上`, l) })));
+  const search = el("input", { type: "search", placeholder: _t("メッセージで絞り込み...") });
+  const threadInput = el("input", { type: "search", placeholder: _t("thread_id で絞り込み") });
   threadInput.value = opts.threadId || "";
   if (opts.threadId) level.value = "INFO";
   const listBox = el("div", { class: "log-list" });
   container.append(
-    el("div", { class: "filter-row" }, [level, search, threadInput, el("button", { text: "再読み込み", onclick: () => load() })]),
-    el("p", { class: "hint", text: "[log] dir の app_*.log を新しい順に最大500件表示します。" }),
+    el("div", { class: "filter-row" }, [level, search, threadInput, el("button", { text: _t("再読み込み"), onclick: () => load() })]),
+    el("p", { class: "hint", text: _t("[log] dir の app_*.log を新しい順に最大500件表示します。") }),
     listBox
   );
   async function load() {
@@ -2902,7 +2907,7 @@ async function renderLogs(container, opts) {
     if (search.value.trim()) params.set("q", search.value.trim());
     if (threadInput.value.trim()) params.set("thread_id", threadInput.value.trim());
     const seq = nextRequestSeq(listBox);
-    listBox.replaceChildren(el("p", { class: "hint", text: "読み込み中..." }));
+    listBox.replaceChildren(el("p", { class: "hint", text: _t("読み込み中...") }));
     try {
       const data = await api(monitorPath(`/logs?${params}`));
       if (!isLatestRequest(listBox, seq)) return;
@@ -2911,13 +2916,13 @@ async function renderLogs(container, opts) {
           el("div", { class: `log-entry log-${e.level.toLowerCase()}` }, [
             el("div", { class: "log-head" }, [
               el("span", { class: "badge " + ({ WARNING: "warn", ERROR: "critical", CRITICAL: "critical" }[e.level] || "") , text: e.level }),
-              el("span", { class: "hint", text: `${fmtTime(e.ts)} ・ ${e.logger}${e.thread_id ? " ・ " + e.thread_id : ""}` }),
+              el("span", { class: "hint", text: _t(`{0} ・ {1}{2}`, fmtTime(e.ts), e.logger, e.thread_id ? _t(" ・ ") + e.thread_id : "") }),
             ]),
             el("pre", { class: "msg-pre", text: e.message }),
           ])
         )
       );
-      if (!data.entries.length) listBox.append(el("p", { class: "hint", text: "該当するログはありません。" }));
+      if (!data.entries.length) listBox.append(el("p", { class: "hint", text: _t("該当するログはありません。") }));
     } catch (e) {
       if (isLatestRequest(listBox, seq)) listBox.replaceChildren(el("div", { class: "error", text: e.message }));
     }
@@ -2944,7 +2949,7 @@ async function renderApiDocs() {
     // HTML はサーバー側（markdown-it-py、生HTML無効）で生成済み。
     $("#api-docs-body").innerHTML = data.html;
   } catch (e) {
-    $("#api-docs-error").textContent = e.message || "APIリファレンスの読み込みに失敗しました。";
+    $("#api-docs-error").textContent = e.message || _t("APIリファレンスの読み込みに失敗しました。");
   }
 }
 

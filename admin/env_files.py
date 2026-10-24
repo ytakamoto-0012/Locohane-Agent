@@ -18,6 +18,7 @@ from pathlib import Path
 import dotenv
 
 from src.config import _parse_auth_users
+from admin.i18n import t as _t
 
 # .env に書き込む際、値にこれらのいずれかを含むキー名は「機密」として扱う
 # （admin/audit.py の is_sensitive_key と同じ基準）。
@@ -109,13 +110,12 @@ def read_extra_vars(path: Path) -> dict[str, str]:
 def write_extra_var(path: Path, key: str, value: str) -> None:
     """MANAGED_KEYS 以外の任意の環境変数を1つ設定する。"""
     if key in MANAGED_KEYS:
-        raise EnvFileError(f"{key} は専用のエンドポイントから操作してください。")
+        raise EnvFileError(_t("{0} は専用のエンドポイントから操作してください。", key))
     if not key or not key.isascii() or not key.replace("_", "").isalnum() or key[0].isdigit():
-        raise EnvFileError(f"環境変数名として不正です: {key!r}")
+        raise EnvFileError(_t("環境変数名として不正です: {0!r}", key))
     if key.upper() in UNTRACKABLE_KEYS:
         raise EnvFileError(
-            f"{key} はインスタンスの .env では設定できません（管理ツールの重複チェック・稼働判定と"
-            "食い違うため）。データ保存先は設定画面の [paths] から変更してください。"
+            _t("{0} はインスタンスの .env では設定できません（管理ツールの重複チェック・稼働判定と食い違うため）。データ保存先は設定画面の [paths] から変更してください。", key)
         )
     path.parent.mkdir(parents=True, exist_ok=True)
     # quote_mode="always" の理由は write_users() 参照。
@@ -125,6 +125,6 @@ def write_extra_var(path: Path, key: str, value: str) -> None:
 def delete_extra_var(path: Path, key: str) -> None:
     """MANAGED_KEYS 以外の環境変数を1つ削除する。"""
     if key in MANAGED_KEYS:
-        raise EnvFileError(f"{key} は専用のエンドポイントから操作してください。")
+        raise EnvFileError(_t("{0} は専用のエンドポイントから操作してください。", key))
     if path.is_file():
         dotenv.unset_key(str(path), key)

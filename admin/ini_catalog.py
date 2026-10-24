@@ -78,6 +78,8 @@ _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
     ("main_agent_tool_guard", "visibility_mode"): ("strict", "hint", "all"),
     ("skill_creator", "other_users_drafts"): ("hidden", "listed", "readable", "full"),
     ("log", "level"): ("info", "debug", "none"),
+    # src/config.py の UI_DEFAULT_LANGUAGES と同じ値。
+    ("ui", "default_language"): ("auto", "ja", "en"),
     # src/config.py の VECTOR_DB_BACKENDS と同じ値・順序。
     ("vector_db", "backend"): ("sqlite_vec", "qdrant"),
     # src/config.py の VECTOR_DB_DISTANCES と同じ値・順序。
