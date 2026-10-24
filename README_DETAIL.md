@@ -323,6 +323,9 @@ Locohane/
 │   ├── audit.py              # 変更履歴ログ（JSON Lines）
 │   ├── monitor.py            # モニター画面の読み取り処理（稼働状況・会話・トークン推移・ログ・LLM接続先）
 │   ├── knowledge.py          # ナレッジ画面の HTTP API（ベクターDB のコレクション管理・取り込みジョブ）
+│   ├── assistant.py          # 管理アシスタント（右上の「AIに相談」。設定を読んで助言するだけ）の HTTP API
+│   ├── assistant_index.py    # 管理アシスタントの検索（config.ini・README_DETAIL.md・API リファレンスの簡易 RAG）
+│   ├── ASSISTANT_GUIDE.md    # 管理アシスタントが毎回読み直す画面ガイド（編集すれば再起動不要で反映）
 │   ├── skill_lab/            # スキル研究室（「設定ダッシュボード」の「スキル研究室」節）
 │   │   ├── api.py             # 研究室の HTTP API（/api/instances/{name}/skill-lab/...）
 │   │   ├── themes.py          # 研究テーマの置き場・ファイル操作・状態（対象インスタンスの data/<名前>/skill_lab/themes/）
@@ -567,6 +570,7 @@ Locohane/
 | `data/skill_lab/themes/<テーマID>/` | スキル研究室の研究テーマ（仕様・開発中の資産・ケース・入力ファイル・評価と AI 修正の記録 `runs/`）。対象インスタンスごとに分かれる | テーマが終わり、記録が不要になったとき | テーマのフォルダを削除（実行中でないこと） |
 | `data/temp/_tmp_<作成時刻>_<短縮ID>/` | `execute_python_code`/`run_script` の中間生成物・`write_scratch_note`/`write_thread_note` の書き出し先。チャットでアップロードしたファイル（`uploads/<送信日時>/`。作業フォルダを指定していてもここ）。自セッション専用（`[default_workdir]` 参照）。フォルダ名先頭の作成時刻（`YYMMDDHHMMSS`）はファイラー上で作成順に並べるためのもの。短縮IDは thread_id の SHA-1 先頭10桁（パス長上限 260文字を超えにくくするため、thread_id をそのまま使わない。旧形式 `_tmp_<作成時刻>_<thread_id>` のフォルダも再開時にそのまま使われる） | セッション終了後、不要になったとき | フォルダ内を削除（`[default_workdir] retention_days`/`cleanup_interval_hours` により自動削除もされる） |
 | `data/elements/<thread_id>/` | 添付ファイル（`provide_download`/`analyze_image`の`show_in_chat=True`等）・回答本文への画像埋め込みの永続化先。スレッド再開・プロセス再起動後も表示できるようここへ実体をコピー保存する（`[elements]`参照、`src/thread_store.py`） | 添付ファイルが不要になったとき | フォルダ内を削除 |
+| `instances/_assistant_index/` | 管理ツールの「AIに相談」が検索に使う、config.ini・README_DETAIL.md・API リファレンスの段落の埋め込みのキャッシュ（埋め込みの接続先・モデルごとに1ファイル。`data/` 配下ではない） | いつでも（次の相談で作り直す。初回は数十秒かかる） | フォルダを削除 |
 | `.files/` | Chainlit自身のセッションファイル配信ディレクトリ（送信直後のライブ表示にのみ使う一時配信。プロジェクト直下、`data/`配下ではない） | いつでも | フォルダ内を削除 |
 | `data/app.lock` | 同一データディレクトリへの多重起動を防ぐプロセス排他ロック（`src/instance_lock.py`）。空ファイルにOSのファイルロックをかけるだけで中身は使わない | アプリ停止中、削除しても実害はない | ファイルを削除（アプリ起動中は削除不可） |
 | `data/runtime_status.json` | 接続中セッション・生成中スレッドのスナップショット（設定ダッシュボードのモニター表示用、`src/runtime_status.py`）。本体が数秒ごとに更新し、正常終了時に削除する | 異常終了で残った場合 | ファイルを削除（次回起動時に作り直される） |
@@ -1613,6 +1617,13 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[admin]` | `session_timeout_minutes` | 管理ツールへのログインセッションの有効時間（分） | `ADMIN_SESSION_TIMEOUT_MINUTES` |
 | `[admin]` | `backup_keep` | インスタンスごとの設定バックアップの保持世代数 | `ADMIN_BACKUP_KEEP` |
 | `[admin]` | `stop_apps_on_exit` | 管理ツール終了時に、子プロセスとして起動した本体インスタンスも道連れで停止するか | `ADMIN_STOP_APPS_ON_EXIT` |
+| `[admin]` | `assistant_enabled` | ダッシュボード右上の「AIに相談」（管理アシスタント）を有効にするか。false でボタンを出さず API も 404 | `ADMIN_ASSISTANT_ENABLED` |
+| `[admin]` | `assistant_llm_instance` | 管理アシスタントの回答に使う LLM 接続先を取るインスタンス名。空欄なら相談対象インスタンス自身の `[llm]` | `ADMIN_ASSISTANT_LLM_INSTANCE` |
+| `[admin]` | `assistant_max_keys` | 相談内容に近い config.ini のキーを AI に渡す最大件数 | `ADMIN_ASSISTANT_MAX_KEYS` |
+| `[admin]` | `assistant_max_docs` | 相談内容に近い README_DETAIL.md・API リファレンスの段落を AI に渡す最大件数（0 で渡さない） | `ADMIN_ASSISTANT_MAX_DOCS` |
+| `[admin]` | `assistant_use_embedding` | 相談内容に近いキー・段落を選ぶのに埋め込み（`[vector_db] embedding_url`）を使うか。false なら文字2-gram だけ | `ADMIN_ASSISTANT_USE_EMBEDDING` |
+| `[admin]` | `assistant_embedding_instance` | 埋め込みの接続先を取るインスタンス名。空欄なら自動で探す | `ADMIN_ASSISTANT_EMBEDDING_INSTANCE` |
+| `[admin]` | `assistant_max_history_messages` | AI に渡す直近の会話の最大メッセージ数 | `ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES` |
 | `[admin]` | `instances_dir` | インスタンス別ディレクトリのルート（既定 `./instances`）。app.bat直接起動時のdefaultインスタンスの`.env`・`config_overrides.json`の読み込み先にも使われる。変更時は既存の中身を手動で移動する | `INSTANCES_DIR` |
 | `[ui]` | `max_display_messages` | チャット画面に描画するメッセージの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_MESSAGES` |
 | `[ui]` | `max_display_side_steps` | サイドパネルに描画するツール呼び出し等のStepの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_SIDE_STEPS` |
@@ -1967,6 +1978,53 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 ようにするためと、管理ツールと本体の間に認証用の秘密を共有する仕組みが
 無いため（本体は `0.0.0.0` で公開されうる）。
 
+### 管理アシスタント（AIに相談）
+
+ダッシュボード右上の「AIに相談」から、管理者の困りごと（「2人同時に使うと待たされる」「チャット画面にログインできない」等）を
+相談すると、**どの画面のどこを開き、どの設定キーをどう変えればよいか**を AI が助言する（`admin/assistant.py`・`admin/static/assistant.js`）。
+
+- **AI は設定を読むだけ**で、保存・起動停止・ユーザー操作などは一切行わない（そのための API を AI に渡していない）。操作は管理者が画面で行う。
+- 回答に出てきた設定キーには「`[section] key` を開く」ボタンが付き、押すとそのインスタンスの config.ini 画面を、検索欄にキーを入れた状態で開く。
+- パネル上部の「対象」で相談対象のインスタンスを選ぶ（開いた時点でインスタンス詳細を見ていればそのインスタンス、無ければ前回の選択か `default`）。
+- 会話履歴はブラウザのタブ（sessionStorage）にだけ残り、サーバーには保存しない。変更履歴（監査ログ）にも記録しない。
+
+AI に渡すもの（回答のたびに組み立て直す）:
+
+| 内容 | 出どころ |
+|---|---|
+| 画面ガイド（タブ・サブタブの役割、よくある困りごとと見る場所） | `admin/ASSISTANT_GUIDE.md`（毎回読み直すため、編集すれば再起動不要で反映） |
+| 相談内容に近い config.ini のキー（説明・既定値・現在値・選べる値・環境変数で上書き中か） | 相談対象インスタンスの実効値。`[admin] assistant_max_keys` 件まで（下の検索で選ぶ。会話中で `[section] key` と名指しされたキーは必ず含める） |
+| 相談内容に近いドキュメントの段落 | README_DETAIL.md（ライセンス・ファイル構成など管理の相談に関係しない節は除く）と API リファレンスを見出しごと（最大1200文字程度）に分けたもの。`[admin] assistant_max_docs` 件まで。回答の下の「参考にした説明」に一覧が出る |
+| 管理者が今開いている画面、インスタンス一覧（種類・稼働状態） | 画面の状態 |
+
+config.ini の説明文やドキュメントは全部で数十万字あり、ローカルの小さめのモデルにそのまま渡すと入力が長すぎるため、
+相談内容で検索して絞って渡す（簡易 RAG、`admin/assistant_index.py`）。索引は config.ini の全キー（キーの説明に、
+セクション冒頭の説明と「設定リファレンス」表の説明も付ける）と上の段落で、元のファイルが変われば次の相談で作り直す。
+
+- **埋め込み**（既定）: ナレッジと同じ埋め込みサーバー（`[vector_db] embedding_url`）で相談内容と各キー・段落の意味の近さを測り、
+  文字2-gram の類似度（下記）を 0.2 倍して足す。「ナレッジのファイル容量」と `[vector_db] max_file_mb`（1ファイルあたりの最大サイズ）の
+  ように、言い回しが違って文字が重ならない相談にも当たる。接続先は `[admin] assistant_embedding_instance` のインスタンスの
+  `embedding_url`（空欄なら、回答に使う LLM のインスタンス → 相談対象 → それ以外の名前順で、`embedding_url` が設定されている最初のもの。
+  `[vector_db] enabled` が false でも `embedding_url` があれば使う）。文書側の埋め込みは `instances/_assistant_index/` に保存し、
+  変わった段落だけを埋め込み直す（初回だけ全段落の埋め込みに数十秒かかる）。
+- **文字2-gram**（埋め込みサーバーが無い・接続できない・`[admin] assistant_use_embedding = false` のとき）: パスメモリーの類似度検索
+  （`src/path_memory.py`）と同じく、文字を2文字ずつに分けた出現頻度のコサイン類似度で選ぶ（多くの段落に出る2文字ほど軽くする TF-IDF の重み付き）。
+  言い回しが違う相談は漏れやすい。
+
+困りごと→正解のキーの評価（開発用33問・作成時に見ていない20問）では、上位12件に正解が入った割合が、
+文字2-gram だけで 27/33・16/20、埋め込みで 31/33・20/20 だった。
+
+AI には「キーの一覧は検索で選んだ一部なので、一覧に無いことを理由に『その設定は無い』と言い切らない」
+「相談内容とキーの意味（例: ファイルの容量と件数）が合っているかを説明で確かめる」よう指示している。
+`[llm] main_url`/`sub_url` や `api_key`・`password`・`secret`・`token` を含むキーの値は、変更履歴と同じ規則でマスクしてから渡す。
+
+回答に使う LLM は、既定では相談対象インスタンスの `[llm]` 接続先（メイン）。`[admin] assistant_llm_instance` にインスタンス名を
+指定すると、常にそのインスタンスの接続先を使う（相談対象の LLM が止まっていても相談できるようにしたい場合や、本番の利用者を
+待たせたくない場合に、スキル調整ワーカー等を指定する）。思考（thinking）を有効にしたモデルでは、最初の文字が出るまで数分かかることがある
+（待っている間は経過秒数を表示し、「停止」で打ち切れる）。思考部分（`<think>…</think>`）は表示しない。
+
+使わない場合は `[admin] assistant_enabled = false` にすると、ボタンを出さず API も 404 を返す（`[admin]` は config.ini か環境変数で変え、管理ツールを再起動する）。
+
 ### スキル研究室
 
 利用者のドラフトや、開発者が新しく作るスキル・**サブエージェント**を、AI に不具合を自己修正させて本番運用に耐えるものに
@@ -2187,6 +2245,10 @@ MCPサーバー機能（`.locohane/settings.json`、上記「MCPサーバー接�
 ベクターDB（`[vector_db]`、既定は無効）を有効にした場合、埋め込みは `embedding_url` の推論サーバー、
 `backend = qdrant` 時のベクターは `qdrant_url` の Qdrant サーバーへ送る（取り込んだ文書のチャンク本文を含む）。
 どちらもローカルまたは LAN 内のサーバーを指定する前提で、既定の `backend = sqlite_vec` ではローカルファイルにだけ保存する。
+
+管理ツールの「AIに相談」（管理アシスタント）は、インスタンスの `[llm]` 接続先（上と同じ LLM サーバー）へ、相談内容と
+関係する設定キーの説明・値（機密値はマスク済み）・ドキュメントの段落を送り、検索のために相談内容とドキュメントの段落を
+`[vector_db] embedding_url` の埋め込みサーバーへ送るだけで、それ以外の外部通信は行わない。
 
 `web-search` スキル（Tavily APIによるWeb検索）は、スキル専用の
 `skills/web-search/scripts/.env` に `TAVILY_API_KEY` を設定した場合のみ、

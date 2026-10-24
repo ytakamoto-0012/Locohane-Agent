@@ -134,6 +134,8 @@ function showShell(username, version) {
     });
   });
   navigate("instances");
+  // 右上の「AIに相談」（assistant.js）。無効なら何もしない。
+  if (typeof initAssistant === "function") initAssistant(username);
 }
 
 function navigate(view) {

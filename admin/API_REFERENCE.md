@@ -556,6 +556,31 @@ cmd:
 %C% %BASE%/api/instances/default/knowledge/collections/manuals/job
 ```
 
+## 管理アシスタント（AIに相談）
+
+困りごとを送ると、関係する設定キー・画面を AI が助言する（設定は読むだけで変更しない）。
+`GET /api/assistant/status` で有効か（`[admin] assistant_enabled`）と、回答に使う LLM の取得元インスタンス（固定していれば）が分かる。
+
+`POST /api/assistant/chat` は NDJSON（1行1イベント）で少しずつ返す。`messages` は会話全体（サーバーは保存しないため、
+続きの質問では前の回答も含めて送る）で、最後は `role: "user"`。`view` は任意（今開いている画面の手がかり）。
+
+| イベント | 内容 |
+|---|---|
+| `{"type":"delta","text":"..."}` | 回答の続き（思考部分は除く） |
+| `{"type":"done","text":"...","html":"...","keys":[{"section":"llm","key":"max_concurrent_requests"}]}` | 回答の全文・HTML・回答中で参照された実在するキー |
+| `{"type":"error","message":"..."}` | LLM に接続できない等 |
+
+```bash
+$C $BASE/api/assistant/status
+# => {"enabled":true,"llm_instance":null}
+$C -N -X POST $BASE/api/assistant/chat -H "$H" -H "$J"   -d '{"instance":"default","messages":[{"role":"user","content":"2人同時に使うと待たされる"}]}'
+```
+
+```bat
+%C% %BASE%/api/assistant/status
+%C% -N -X POST %BASE%/api/assistant/chat -H %H% -H %J% -d "{\"instance\":\"default\",\"messages\":[{\"role\":\"user\",\"content\":\"2人同時に使うと待たされる\"}]}"
+```
+
 ## 変更履歴
 
 新しい順に最大 `limit` 件（既定200）。`instance` で絞り込める。

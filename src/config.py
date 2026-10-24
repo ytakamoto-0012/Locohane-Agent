@@ -1320,6 +1320,16 @@ class Config:
     admin_stop_apps_on_exit: bool
     # インスタンス別ディレクトリのルート（resolve_instances_root() 参照）。
     admin_instances_dir: Path
+    # 管理アシスタント（ダッシュボードの「AIに相談」。admin/assistant.py）。
+    admin_assistant_enabled: bool
+    # 回答に使う [llm] 設定の取得元インスタンス名。空文字列なら相談対象のインスタンス自身。
+    admin_assistant_llm_instance: str
+    admin_assistant_max_keys: int
+    admin_assistant_max_docs: int
+    admin_assistant_use_embedding: bool
+    # 埋め込みの接続先の取得元インスタンス名。空文字列なら自動で探す（admin/server.py）。
+    admin_assistant_embedding_instance: str
+    admin_assistant_max_history_messages: int
 
 
 def _resolve(base: Path, value: str) -> Path:
@@ -3642,6 +3652,28 @@ def load_config(
             os.getenv("ADMIN_STOP_APPS_ON_EXIT", admin.get("stop_apps_on_exit", False))
         ),
         admin_instances_dir=resolve_instances_root(path),
+        admin_assistant_enabled=_as_bool(
+            os.getenv("ADMIN_ASSISTANT_ENABLED", admin.get("assistant_enabled", True))
+        ),
+        admin_assistant_llm_instance=os.getenv(
+            "ADMIN_ASSISTANT_LLM_INSTANCE", admin.get("assistant_llm_instance", "")
+        ).strip(),
+        admin_assistant_max_keys=_positive_int(
+            os.getenv("ADMIN_ASSISTANT_MAX_KEYS", admin.get("assistant_max_keys", 12)), "[admin].assistant_max_keys"
+        ),
+        admin_assistant_max_docs=_non_negative_int(
+            os.getenv("ADMIN_ASSISTANT_MAX_DOCS", admin.get("assistant_max_docs", 4)), "[admin].assistant_max_docs"
+        ),
+        admin_assistant_use_embedding=_as_bool(
+            os.getenv("ADMIN_ASSISTANT_USE_EMBEDDING", admin.get("assistant_use_embedding", True))
+        ),
+        admin_assistant_embedding_instance=os.getenv(
+            "ADMIN_ASSISTANT_EMBEDDING_INSTANCE", admin.get("assistant_embedding_instance", "")
+        ).strip(),
+        admin_assistant_max_history_messages=_positive_int(
+            os.getenv("ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES", admin.get("assistant_max_history_messages", 20)),
+            "[admin].assistant_max_history_messages",
+        ),
     )
 
     # .locohane/settings.json の "mcp" ブロックがあれば、config.ini/環境変数由来の

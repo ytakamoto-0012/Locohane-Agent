@@ -28,7 +28,7 @@ from pydantic import BaseModel
 from src.config import PROJECT_ROOT, load_config, resolve_instances_root, resolve_ssl_files
 from src.version import __version__
 
-from . import api_docs, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
+from . import api_docs, assistant, assistant_index, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
 from . import instances as inst
 from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
@@ -1105,6 +1105,71 @@ _knowledge_router = knowledge_api.build_router(
     client_ip=_client_ip,
 )
 app.include_router(_knowledge_router)
+
+
+# ---------------------------------------------------------------------------
+# 管理アシスタント（右上の「AIに相談」。admin/assistant.py。設定は読むだけで変更しない）
+# ---------------------------------------------------------------------------
+
+
+def _assistant_catalog_keys(name: str):
+    kind = _require_instance(name).kind
+    return [k for k in parse_ini_file(CONFIG_INI_PATH).keys if inst.config_key_applies(kind, k.section, k.key)]
+
+
+def _assistant_config_view(name: str) -> dict[str, Any]:
+    return _config_key_view(name, _require_instance(name).kind)
+
+
+def _assistant_instances() -> list[dict[str, str]]:
+    return [
+        {k: str(v) for k, v in _instance_summary(name).items() if k in ("name", "display_name", "kind", "state")}
+        for name in inst.list_instance_names(INSTANCES_ROOT)
+    ]
+
+
+# config.ini・README_DETAIL.md・API_REFERENCE.md の索引（元ファイルが変われば次の相談で作り直す）。
+# 文書側の埋め込みは instances/_assistant_index/ にキャッシュする。
+_assistant_index = assistant_index.AssistantIndex(
+    config_ini_path=CONFIG_INI_PATH,
+    readme_path=PROJECT_ROOT / "README_DETAIL.md",
+    api_reference_path=api_docs.API_REFERENCE_PATH,
+    cache_dir=INSTANCES_ROOT / "_assistant_index",
+)
+
+
+def _assistant_embedding(target: str, llm_instance: str):
+    """検索に使う埋め込み（[admin] assistant_use_embedding・assistant_embedding_instance）。無ければ None。"""
+    if not _cfg.admin_assistant_use_embedding:
+        return None
+    fixed = _cfg.admin_assistant_embedding_instance
+    others = sorted(inst.list_instance_names(INSTANCES_ROOT))
+    for name in dict.fromkeys([fixed] if fixed else [llm_instance, target, *others]):
+        try:
+            cfg = monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name)
+        except monitor.MonitorError as exc:
+            logger.warning("管理アシスタント: インスタンス %r の設定を読めないため、埋め込みの接続先の候補から外します: %s", name, exc)
+            continue
+        provider = assistant_index.provider_from_config(cfg, name)
+        if provider is not None:
+            return provider
+    return None
+
+
+app.include_router(
+    assistant.build_router(
+        require_login=require_login,
+        require_csrf=require_csrf,
+        admin_config=_cfg,
+        catalog_keys=_assistant_catalog_keys,
+        config_view=_assistant_config_view,
+        list_instances=_assistant_instances,
+        instance_kind=lambda name: _require_instance(name).kind,
+        config_loader=lambda name: monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name),
+        index=_assistant_index,
+        embedding_provider=_assistant_embedding,
+    )
+)
 
 
 # ---------------------------------------------------------------------------

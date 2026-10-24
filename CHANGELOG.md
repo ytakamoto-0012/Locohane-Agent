@@ -12,6 +12,16 @@
 
 ## [Unreleased]
 
+### 追加
+
+- 設定ダッシュボードの右上に「AIに相談」（管理アシスタント）を追加しました。困りごとを書くと、どの画面のどこを開き、
+  どの設定キーをどう変えればよいかを AI が助言します。AI は設定を読むだけで、変更・保存・起動停止は管理者が行います。
+  回答中の設定キーには、そのキーを config.ini 画面で開くボタンが付きます。AI に渡す画面ガイドは `admin/ASSISTANT_GUIDE.md`
+  （編集すれば再起動不要で反映）。相談内容に近い config.ini のキーと README_DETAIL.md・API リファレンスの段落を検索して
+  AI に渡します（ナレッジと同じ埋め込みサーバーがあれば意味の近さで、無ければ文字の重なりで検索）。設定は `[admin]` の
+  `assistant_enabled`・`assistant_llm_instance`・`assistant_max_keys`・`assistant_max_docs`・`assistant_use_embedding`・
+  `assistant_embedding_instance`・`assistant_max_history_messages`。
+
 ## [0.3.1] - 2026-10-24
 
 ### 追加
