@@ -1,4 +1,5 @@
 import type { IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { PLAN_PREFIX } from '../utils/messageTree';
 
 interface PlanStepData {
@@ -20,6 +21,7 @@ const STATUS_ICON: Record<PlanStepData['status'], string> = {
 };
 
 export function PlanCard({ step }: { step: IStep | undefined }) {
+  const { t } = useI18n();
   if (!step || typeof step.output !== 'string') return null;
 
   let payload: PlanPayload;
@@ -32,7 +34,7 @@ export function PlanCard({ step }: { step: IStep | undefined }) {
 
   return (
     <div className="plan-card">
-      <div className="plan-card-title">実行計画</div>
+      <div className="plan-card-title">{t('plan.title')}</div>
       <ul className="plan-card-list">
         {payload.steps.map((s, i) => (
           <li key={i} className={`plan-card-item plan-card-item-${s.status}`}>
@@ -41,7 +43,7 @@ export function PlanCard({ step }: { step: IStep | undefined }) {
           </li>
         ))}
       </ul>
-      {payload.finished && <div className="plan-card-done">✅ 計画完了</div>}
+      {payload.finished && <div className="plan-card-done">{t('plan.done')}</div>}
     </div>
   );
 }

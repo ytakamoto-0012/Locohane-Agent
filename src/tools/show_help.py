@@ -6,6 +6,7 @@ from langchain_core.tools import tool
 import logging
 
 from . import _state
+from ..i18n import DEFAULT_LANGUAGE, current_lang
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +30,10 @@ def show_help() -> str:
     if not _state._HELP_PATH.is_file():
         return f"エラー: ヘルプファイルが見つかりません: {_state._HELP_PATH}"
     logger.info("show_help")
-    return _state._HELP_PATH.read_text(encoding="utf-8")
+    # 英語のセッションでは help.en.md があればそちらを返す（無ければ日本語の本文）。
+    localized = _state._HELP_PATH.with_name(f"{_state._HELP_PATH.stem}.{current_lang()}{_state._HELP_PATH.suffix}")
+    path = localized if current_lang() != DEFAULT_LANGUAGE and localized.is_file() else _state._HELP_PATH
+    return path.read_text(encoding="utf-8")
 
 
 # init_tools() の _resolve_agent_types() がこのリストを実行時に参照するだけなので、

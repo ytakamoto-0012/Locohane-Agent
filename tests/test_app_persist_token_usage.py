@@ -92,7 +92,7 @@ async def test_compaction_usage_is_added_to_conversation_total_only(monkeypatch)
     assert session.get("token_usage_cumulative") == {"input": 590, "output": 60, "total": 650}
     assert session.get("token_usage_cumulative_main")["total"] == 50
     assert persisted == [{"input": 590, "output": 60, "total": 650}]
-    assert sent == [{"compaction": {"label": app.COMPACTION_USAGE_LABEL, "input": 500, "output": 50, "total": 550}}]
+    assert sent == [{"compaction": {"label": "圧縮処理（直近1回）", "input": 500, "output": 50, "total": 550}}]
 
 
 @pytest.mark.asyncio

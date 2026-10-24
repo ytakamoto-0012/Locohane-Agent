@@ -12,6 +12,7 @@ from . import _state
 from ._ask_relay_helper import _ask_with_cross_session_relay
 from ._plan_render import _render_plan, _render_plan_payload
 from ._state import _resolve_ask_timeout
+from ..i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -45,16 +46,13 @@ async def approve_plan() -> str:
         if message is not None:
             message.content = _render_plan_payload(plan, approved=True)
             await message.update()
-        await cl.Message(content="⚙️ config.ini の [plan].auto_approve が有効なため、ユーザー確認をスキップして計画を自動承認しました。").send()
+        await cl.Message(content=t("plan.auto_approved")).send()
         logger.info("approve_plan: auto_approve=true のため自動承認しました")
         return "config.ini の [plan].auto_approve が有効なため、ユーザーへの確認をスキップして自動承認しました。書き込み系ツール（run_script/execute_python_code）を実行できます。"
-    content = (
-        _render_plan(plan) + "\n\nこの計画を承認しますか？承認後は各ステップの書き込み系ツール"
-        "（run_script/execute_python_code）が実行できるようになります。"
-    )
+    content = _render_plan(plan, heading=t("plan.heading")) + "\n\n" + t("plan.approve_question")
     actions = [
-        cl.Action(name="approve", payload={"value": "approve"}, label="✅ 計画を承認"),
-        cl.Action(name="deny", payload={"value": "deny"}, label="🚫 却下"),
+        cl.Action(name="approve", payload={"value": "approve"}, label=t("plan.approve_button")),
+        cl.Action(name="deny", payload={"value": "deny"}, label=t("plan.deny_button")),
     ]
     thread_id = cl.user_session.get("thread_id") or "_no_session"
     timeout = _resolve_ask_timeout(_state._APPROVAL_TIMEOUT_SECONDS)

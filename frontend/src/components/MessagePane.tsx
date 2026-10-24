@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { MessageThread } from './MessageThread';
 import { Icon } from './Icon';
 
@@ -14,6 +15,7 @@ const AUTO_SCROLL_ENGAGE_THRESHOLD_PX = 4;
 const AUTO_SCROLL_DISENGAGE_THRESHOLD_PX = 64;
 
 export function MessagePane({ messages, showTyping }: { messages: IStep[]; showTyping: boolean }) {
+  const { t } = useI18n();
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   // ResizeObserver のコールバックや scroll ハンドラは古いクロージャを
@@ -99,8 +101,8 @@ export function MessagePane({ messages, showTyping }: { messages: IStep[]; showT
           type="button"
           className="scroll-to-bottom-button"
           onClick={handleScrollToBottomClick}
-          aria-label="最新のメッセージへスクロール"
-          title="最新のメッセージへ"
+          aria-label={t('messages.scrollToLatest')}
+          title={t('messages.latest')}
         >
           <Icon name="arrow-down" size={16} />
         </button>

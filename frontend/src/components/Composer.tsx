@@ -2,6 +2,7 @@ import { useRef, useState, type ClipboardEvent, type KeyboardEvent } from 'react
 import { v4 as uuidv4 } from 'uuid';
 import { useChatData, useChatInteract } from '@chainlit/react-client';
 import type { IFileRef, IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { WorkDirButton } from './WorkDirButton';
 import { PlanModeBadge } from './PlanModeBadge';
 import { Icon } from './Icon';
@@ -69,6 +70,7 @@ export function Composer({
 }: ComposerProps) {
   const { askUser, disabled, loading } = useChatData();
   const { sendMessage, replyMessage, stopTask } = useChatInteract();
+  const { t } = useI18n();
   const [value, setValue] = useState('');
   const [pasteError, setPasteError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -115,8 +117,10 @@ export function Composer({
     e.preventDefault();
     if (maxInputChars > 0 && totalChars + text.length > maxInputChars) {
       setPasteError(
-        `貼り付けたテキスト（${text.length.toLocaleString()}文字）を追加すると上限` +
-          `（${maxInputChars.toLocaleString()}文字）を超えるため、追加しませんでした。`
+        t('composer.pasteTooLong', {
+          length: text.length.toLocaleString(),
+          limit: maxInputChars.toLocaleString()
+        })
       );
       return;
     }
@@ -164,12 +168,12 @@ export function Composer({
       {remoteGenerating ? (
         <div className="composer-remote-generating-banner">
           <span className="composer-remote-generating-dot" />
-          現在、この会話はタスク処理中です。
+          {t('composer.busyThisThread')}
         </div>
       ) : blockedByOtherThread ? (
         <div className="composer-remote-generating-banner">
           <span className="composer-remote-generating-dot" />
-          他の会話が処理中です。完了するまで新しい送信はできません。
+          {t('composer.busyOtherThread')}
         </div>
       ) : null}
       {attachments.some((a) => a.pastedText !== undefined) ? (
@@ -180,12 +184,12 @@ export function Composer({
                 <div className="composer-pasted-card-header">
                   <span className="composer-pasted-card-title">
                     {a.uploading ? <span className="attachment-chip-spinner" /> : null}
-                    貼り付けテキスト
+                    {t('composer.pastedText')}
                   </span>
                   <button
                     type="button"
                     className="composer-attachment-remove"
-                    title="貼り付けテキストを削除"
+                    title={t('composer.removePastedText')}
                     onClick={() => onRemoveAttachment(i)}
                   >
                     <Icon name="x" size={10} />
@@ -193,7 +197,10 @@ export function Composer({
                 </div>
                 <div className="composer-pasted-card-preview">{a.pastedText.slice(0, PASTED_PREVIEW_CHARS)}</div>
                 <div className="composer-pasted-card-meta">
-                  {a.pastedText.length.toLocaleString()}文字 · {countLines(a.pastedText).toLocaleString()}行
+                  {t('composer.pastedTextStats', {
+                    chars: a.pastedText.length.toLocaleString(),
+                    lines: countLines(a.pastedText).toLocaleString()
+                  })}
                 </div>
               </div>
             )
@@ -211,7 +218,7 @@ export function Composer({
               <button
                 type="button"
                 className="composer-attachment-remove"
-                title="添付を削除"
+                title={t('composer.removeAttachment')}
                 onClick={() => onRemoveAttachment(i)}
               >
                 <Icon name="x" size={10} />
@@ -227,12 +234,12 @@ export function Composer({
           value={value}
           placeholder={
             remoteGenerating
-              ? 'タスク処理中です...'
+              ? t('composer.placeholderBusy')
               : blockedByOtherThread
-                ? '他の会話が処理中です...'
+                ? t('composer.placeholderOtherBusy')
                 : isReplying
-                  ? '応答を入力...'
-                  : 'メッセージを入力...'
+                  ? t('composer.placeholderReply')
+                  : t('composer.placeholder')
           }
           disabled={inputBlocked}
           onChange={(e) => setValue(e.target.value)}
@@ -245,7 +252,7 @@ export function Composer({
             <button
               type="button"
               className="composer-icon-button"
-              title="ファイルを添付"
+              title={t('composer.attachFile')}
               onClick={() => fileInputRef.current?.click()}
             >
               <Icon name="paperclip" />
@@ -263,7 +270,7 @@ export function Composer({
             {showCharCounter ? (
               <span
                 className={`composer-char-counter${overLimit ? ' composer-char-counter--over' : ''}`}
-                title="入力欄と貼り付けテキストの合計文字数 / 上限"
+                title={t('composer.charCountTitle')}
               >
                 {totalChars.toLocaleString()} / {maxInputChars.toLocaleString()}
               </span>
@@ -271,11 +278,11 @@ export function Composer({
             <PlanModeBadge step={plan} />
             {loading ? (
               <button type="button" className="composer-stop-button" onClick={stopTask}>
-                停止
+                {t('common.stop')}
               </button>
             ) : remoteGenerating && onStopRemote ? (
               <button type="button" className="composer-stop-button" onClick={onStopRemote}>
-                停止
+                {t('common.stop')}
               </button>
             ) : (
               <button
@@ -283,9 +290,9 @@ export function Composer({
                 className="composer-submit-button"
                 onClick={submit}
                 disabled={inputBlocked || overLimit || uploading}
-                title={overLimit ? '文字数の上限を超えています' : undefined}
+                title={overLimit ? t('composer.overLimit') : undefined}
               >
-                送信
+                {t('common.send')}
               </button>
             )}
           </div>

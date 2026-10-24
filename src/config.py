@@ -1107,6 +1107,9 @@ class Config:
 
     # --- チャット開始時の定型文ボタン（[chat_starters]） ---
     chat_starter_prompts: list[str]
+    # 英語表示のセッションで使う定型文（[chat_starters].prompts_en）。空なら
+    # chat_starter_prompts をそのまま使う（app.py の on_chat_start 参照）。
+    chat_starter_prompts_en: list[str]
 
     # --- run_script / execute_python_code 共通実行設定 ---
     script_timeout: int
@@ -1303,6 +1306,10 @@ class Config:
     # 作業フォルダの入力欄（WorkDirButton.tsx）に出すパス候補の最大件数
     # （0以下で候補を出さない。src/workdir_suggest.py 参照）。
     ui_work_dir_max_suggestions: int
+    # 表示言語の既定値（UI_DEFAULT_LANGUAGES のいずれか）。利用者が画面で選んだ
+    # 言語（ブラウザの localStorage）が無いときの初期値で、"auto" はブラウザの
+    # 言語に従う（src/i18n.py・frontend/src/i18n.tsx 参照）。
+    ui_default_language: str
     # WebSocket（Socket.IO）のping間隔・タイムアウト秒数。chainlit本体は
     # これらを指定せずAsyncServerを生成しているため、未設定時は
     # python-socketio/engineioのデフォルト（25秒/20秒）が使われる
@@ -1579,6 +1586,28 @@ def _as_optional_reasoning_format(value: str | None) -> str | None:
     if text not in LLM_REASONING_FORMATS:
         choices = "/".join(sorted(LLM_REASONING_FORMATS))
         raise ValueError(f"[llm].reasoning_format は {choices} のいずれかを指定してください（現在値: {text!r}）")
+    return text
+
+
+UI_DEFAULT_LANGUAGES = frozenset({"auto", "ja", "en"})
+
+
+def _as_ui_language(value: str | None) -> str:
+    """[ui].default_language の値を検証して小文字で返す。
+
+    Args:
+        value: config.ini / 環境変数の生の値。空欄・None は "auto" とみなす。
+
+    Returns:
+        UI_DEFAULT_LANGUAGES のいずれか。
+
+    Raises:
+        ValueError: UI_DEFAULT_LANGUAGES に無い値が指定された場合。
+    """
+    text = (_as_optional_str(value) or "auto").lower()
+    if text not in UI_DEFAULT_LANGUAGES:
+        choices = "/".join(sorted(UI_DEFAULT_LANGUAGES))
+        raise ValueError(f"[ui].default_language は {choices} のいずれかを指定してください（現在値: {text!r}）")
     return text
 
 
@@ -3175,6 +3204,9 @@ def load_config(
             os.getenv("THREAD_STORE_CLEANUP_INTERVAL_HOURS", thread_store.get("cleanup_interval_hours", 1))
         ),
         chat_starter_prompts=_as_message_list(os.getenv("CHAT_STARTER_PROMPTS", chat_starters.get("prompts", ""))),
+        chat_starter_prompts_en=_as_message_list(
+            os.getenv("CHAT_STARTER_PROMPTS_EN", chat_starters.get("prompts_en", ""))
+        ),
         script_timeout=int(os.getenv("SCRIPT_TIMEOUT", scripts.get("timeout", 60))),
         # 空欄なら本体を起動している Python（python_env.bat で指定した環境）を使う
         script_python=os.getenv("SCRIPT_PYTHON", scripts.get("python", "")) or sys.executable,
@@ -3636,6 +3668,7 @@ def load_config(
         ui_work_dir_max_suggestions=int(
             os.getenv("UI_WORK_DIR_MAX_SUGGESTIONS", ui.get("work_dir_max_suggestions", 100))
         ),
+        ui_default_language=_as_ui_language(os.getenv("UI_DEFAULT_LANGUAGE", ui.get("default_language", "auto"))),
         websocket_ping_interval_seconds=int(
             os.getenv("WEBSOCKET_PING_INTERVAL_SECONDS", websocket.get("ping_interval_seconds", 25))
         ),

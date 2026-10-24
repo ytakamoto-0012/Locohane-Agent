@@ -11,6 +11,7 @@ from ._ask_echo import _echo_ask_answer
 from ._ask_echo import _is_text_ask_cancelled
 from ._ask_relay_helper import _ask_with_cross_session_relay
 from ._state import _resolve_ask_timeout
+from ..i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +71,7 @@ async def ask_user_question(question: str, labels: list[str] | None = None) -> s
         res = await ask_message.send()
         if res is not None:
             if not res.get("submitted", True):
-                answer = "❌ キャンセル"
+                answer = t("ask.cancel")
             else:
                 # 改行区切りのままだと Markdown 表示で1行に連結されるため、箇条書きで表示する。
                 values = res.get("values") or []

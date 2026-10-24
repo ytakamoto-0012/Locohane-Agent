@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { StepList } from './StepList';
 import { TokenUsageCard } from './TokenUsageCard';
 import { WorkDirCard } from './WorkDirCard';
@@ -23,6 +24,7 @@ export function SidePanel({
   open: boolean;
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(false);
 
   if (mobile && !open) return null;
@@ -30,7 +32,7 @@ export function SidePanel({
   if (!mobile && collapsed) {
     return (
       <button type="button" className="side-panel-collapsed" onClick={() => setCollapsed(false)}>
-        ◂ 詳細
+        {t('side.detailsCollapsed')}
       </button>
     );
   }
@@ -40,11 +42,11 @@ export function SidePanel({
       <div className="side-panel-fixed">
         <WorkDirCard step={workDir} />
         <div className="side-panel-header">
-          <span>実行の詳細</span>
+          <span>{t('side.details')}</span>
           <button
             type="button"
             className="side-panel-toggle"
-            title={mobile ? '実行の詳細を閉じる' : undefined}
+            title={mobile ? t('side.closeDetails') : undefined}
             onClick={() => (mobile ? onClose() : setCollapsed(true))}
           >
             {mobile ? '✕' : '▸'}

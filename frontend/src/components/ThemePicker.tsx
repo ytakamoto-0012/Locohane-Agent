@@ -7,15 +7,17 @@ import {
   getStoredScheme,
   type ColorScheme
 } from '../theme';
+import { LANGUAGE_OPTIONS, useI18n, type MessageKey } from '../i18n';
 import { Icon } from './Icon';
 
-const SCHEME_OPTIONS: { id: ColorScheme; label: string; icon: 'sun' | 'moon' | 'monitor' }[] = [
-  { id: 'light', label: 'ライト', icon: 'sun' },
-  { id: 'dark', label: 'ダーク', icon: 'moon' },
-  { id: 'system', label: '自動', icon: 'monitor' }
+const SCHEME_OPTIONS: { id: ColorScheme; label: MessageKey; icon: 'sun' | 'moon' | 'monitor' }[] = [
+  { id: 'light', label: 'theme.light', icon: 'sun' },
+  { id: 'dark', label: 'theme.dark', icon: 'moon' },
+  { id: 'system', label: 'theme.system', icon: 'monitor' }
 ];
 
 export function ThemePicker() {
+  const { lang, setLang, t } = useI18n();
   const [open, setOpen] = useState(false);
   const [accent, setAccent] = useState(getStoredAccentId());
   const [scheme, setScheme] = useState<ColorScheme>(getStoredScheme());
@@ -60,7 +62,7 @@ export function ThemePicker() {
       <button
         type="button"
         className="theme-picker-trigger"
-        title="表示設定"
+        title={t('theme.title')}
         onClick={() => setOpen((v) => !v)}
       >
         <Icon name="palette" />
@@ -68,7 +70,7 @@ export function ThemePicker() {
       {open ? (
         <div className="theme-picker-popover">
           <div className="theme-picker-section">
-            <div className="theme-picker-section-title">配色モード</div>
+            <div className="theme-picker-section-title">{t('theme.scheme')}</div>
             <div className="scheme-options">
               {SCHEME_OPTIONS.map((opt) => (
                 <button
@@ -78,13 +80,13 @@ export function ThemePicker() {
                   onClick={() => selectScheme(opt.id)}
                 >
                   <Icon name={opt.icon} size={14} />
-                  {opt.label}
+                  {t(opt.label)}
                 </button>
               ))}
             </div>
           </div>
           <div className="theme-picker-section">
-            <div className="theme-picker-section-title">テーマカラー</div>
+            <div className="theme-picker-section-title">{t('theme.accent')}</div>
             <div className="theme-swatches">
               {ACCENT_PRESETS.map((p) => (
                 <button
@@ -92,9 +94,24 @@ export function ThemePicker() {
                   type="button"
                   className={`theme-swatch ${p.id === accent ? 'theme-swatch--active' : ''}`}
                   style={{ background: p.accent }}
-                  title={p.label}
+                  title={t(`accent.${p.id}` as MessageKey)}
                   onClick={() => selectAccent(p.id)}
                 />
+              ))}
+            </div>
+          </div>
+          <div className="theme-picker-section">
+            <div className="theme-picker-section-title">{t('theme.language')}</div>
+            <div className="scheme-options">
+              {LANGUAGE_OPTIONS.map((opt) => (
+                <button
+                  key={opt.id}
+                  type="button"
+                  className={`scheme-option ${opt.id === lang ? 'scheme-option--active' : ''}`}
+                  onClick={() => setLang(opt.id)}
+                >
+                  {opt.label}
+                </button>
               ))}
             </div>
           </div>

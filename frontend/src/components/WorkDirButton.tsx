@@ -1,6 +1,7 @@
 import { useContext, useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { useRecoilValue } from 'recoil';
 import { ChainlitContext, sessionIdState, type IAction } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { Icon } from './Icon';
 import { isLoopbackHost } from '../utils/serverHost';
 
@@ -39,6 +40,7 @@ interface WorkDirButtonProps {
 export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
   const client = useContext(ChainlitContext);
   const sessionId = useRecoilValue(sessionIdState);
+  const { t } = useI18n();
   const [pending, setPending] = useState(false);
   const [open, setOpen] = useState(false);
   const [value, setValue] = useState('');
@@ -106,13 +108,13 @@ export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
       const res = await client.callAction(makeAction('pick_work_dir', { path }), sessionId);
       const response = res?.response;
       if (response && response.ok === false) {
-        setError(response.error || 'フォルダを設定できませんでした。');
+        setError(response.error || t('workdir.setFailed'));
         return;
       }
       setOpen(false);
       setValue('');
     } catch {
-      setError('サーバーとの通信に失敗しました。');
+      setError(t('workdir.networkError'));
     } finally {
       setPending(false);
     }
@@ -163,10 +165,10 @@ export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
         className="work-dir-button"
         title={
           disabled
-            ? '作業フォルダは新規チャットの最初の送信前のみ設定できます'
+            ? t('workdir.lockedTitle')
             : remote
-              ? '作業フォルダ（サーバーPC上のフォルダ）を設定'
-              : '作業フォルダを設定'
+              ? t('workdir.setRemoteTitle')
+              : t('workdir.setTitle')
         }
         disabled={disabled}
         onClick={() => setOpen((v) => !v)}
@@ -178,11 +180,13 @@ export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
           {remote && (
             <>
               <div className="work-dir-popover-title">
-                作業フォルダ（サーバーPC <span className="work-dir-popover-host">{serverHost}</span> 上のパス）
+                {t('workdir.popoverTitleBefore')}
+                <span className="work-dir-popover-host">{serverHost}</span>
+                {t('workdir.popoverTitleAfter')}
               </div>
               <div className="work-dir-popover-note">
-                お使いのPCではなく、Locohane が動いているサーバーPCから見たフォルダを指定します。
-                お使いのPCのフォルダは、サーバーPCと共有されていない限り指定できません。
+                {t('workdir.popoverNote1')}
+                {t('workdir.popoverNote2')}
               </div>
             </>
           )}
@@ -193,8 +197,8 @@ export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
             value={value}
             placeholder={
               remote
-                ? 'サーバーPC上の絶対パス（例: C:\\Users\\you\\project）'
-                : '作業フォルダの絶対パス（例: C:\\Users\\you\\project）'
+                ? t('workdir.placeholderRemote')
+                : t('workdir.placeholder')
             }
             onChange={(e) => {
               setValue(e.target.value);
@@ -206,7 +210,7 @@ export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
             spellCheck={false}
           />
           {suggestions.length > 0 && (
-            <ul className="work-dir-suggestions" role="listbox" aria-label="サーバーPC上のフォルダ候補">
+            <ul className="work-dir-suggestions" role="listbox" aria-label={t('workdir.suggestions')}>
               {suggestions.map((s, i) => (
                 <li
                   key={s}
@@ -238,13 +242,13 @@ export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
               className="work-dir-popover-reset"
               onClick={() => submit('')}
               disabled={pending}
-              title="config.ini の既定フォルダに戻す"
+              title={t('workdir.resetTitle')}
             >
-              既定値に戻す
+              {t('workdir.reset')}
             </button>
             <div className="work-dir-popover-actions-right">
               <button type="button" className="work-dir-popover-cancel" onClick={() => setOpen(false)}>
-                キャンセル
+                {t('common.cancel')}
               </button>
               <button
                 type="button"
@@ -252,7 +256,7 @@ export function WorkDirButton({ disabled = false }: WorkDirButtonProps) {
                 onClick={() => submit(value.trim())}
                 disabled={pending || !value.trim()}
               >
-                設定
+                {t('workdir.apply')}
               </button>
             </div>
           </div>

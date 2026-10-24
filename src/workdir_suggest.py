@@ -16,6 +16,7 @@ import string
 import sys
 from pathlib import Path
 
+from src.i18n import t
 from src.tools.check_work_dir_status import WorkDirAccessStatus
 
 # 候補の最大件数の既定値（実際の件数は config.ini [ui].work_dir_max_suggestions）。
@@ -134,9 +135,9 @@ def work_dir_error_message(resolved: str, status: WorkDirAccessStatus) -> str | 
     フォルダは従来どおり受け付ける（書き込みは既定フォルダへ自動的に回される）。
     """
     if not status.exists:
-        return f"サーバー（Locohaneが動いているPC）から見て存在しないフォルダです: {resolved}"
+        return t("workdir.not_exist", path=resolved)
     if not status.readable:
-        return f"サーバー（Locohaneが動いているPC）からこのフォルダを読み取れません: {resolved}"
+        return t("workdir.not_readable", path=resolved)
     return None
 
 

@@ -158,6 +158,7 @@ from src.skills import (
 from src.subagent import is_truncated_result
 from src.thread_store import ChatThreadDataLayer, _sanitize_filename_component
 from src.tool_labels import tool_label
+from src import i18n
 from src import thread_store
 from src.tools import (
     WorkDirAccessStatus,
@@ -203,7 +204,7 @@ def _tool_step_label(event: dict) -> str:
         tool_input = event["data"].get("input")
         agent_type = tool_input.get("agent_type") if isinstance(tool_input, dict) else None
         if agent_type:
-            return f"SUB: {agent_type}（一括）" if name == "dispatch_agent_batch" else f"SUB: {agent_type}"
+            return f"SUB: {agent_type}{i18n.t('step.batch_suffix')}" if name == "dispatch_agent_batch" else f"SUB: {agent_type}"
     return tool_label(name)
 
 # アプリ全体で共有する状態（起動時に一度だけ構築）。
@@ -215,6 +216,7 @@ def _tool_step_label(event: dict) -> str:
 # そのため config 読み込みと認証コールバックの登録はモジュールのトップレベル
 # （_setup() 内の遅延初期化より前）で行う必要がある。
 _config = load_config()
+i18n.set_default_language(_config.ui_default_language)
 # セッションごとのグラフ構築（on_chat_start）・再構築（_rebuild_graph）に
 # 使い回すため保持しておく。
 _system_prompt = None
@@ -698,7 +700,9 @@ def _patch_chainlit_websocket_ping_timeout() -> None:
 # 呼ばれる action_callback。これらのクリックは「最初の発言」ではないが、
 # Chainlit本体側にその区別が無い（_patch_chainlit_ignore_ui_action_first_interaction
 # のdocstring参照）。
-_NON_CHAT_ACTION_NAMES = frozenset({"pick_work_dir", "suggest_work_dir", "work_dir_server_info", "toggle_plan_mode"})
+_NON_CHAT_ACTION_NAMES = frozenset(
+    {"pick_work_dir", "suggest_work_dir", "work_dir_server_info", "toggle_plan_mode", "set_language"}
+)
 
 
 def _patch_chainlit_ignore_ui_action_first_interaction() -> None:
@@ -1230,6 +1234,20 @@ def _load_settings_text(filename: str, default: str) -> str:
         return default
 
 
+def _load_localized_settings_text(filename: str, default: str) -> str:
+    """表示言語に合わせて表示設定のテキストファイルを読み込む。
+
+    日本語以外のセッションでは、まず言語別のファイル（welcome.md なら welcome.en.md）を
+    探し、無ければ default（言語別の組み込み文言）を返す。日本語の welcome.md へは
+    フォールバックしない（英語画面に日本語の文言が出るのを避けるため）。
+    """
+    lang = i18n.current_lang()
+    if lang == i18n.DEFAULT_LANGUAGE:
+        return _load_settings_text(filename, default)
+    stem, dot, ext = filename.rpartition(".")
+    return _load_settings_text(f"{stem}.{lang}{dot}{ext}", default)
+
+
 def _register_instance_settings_route() -> None:
     """/public/settings/{filename} をインスタンス専用ファイル優先で配信するルートを登録する。
 
@@ -1247,6 +1265,12 @@ def _register_instance_settings_route() -> None:
         # チャット画面のヘッダーのツールチップに出す（ログイン前でも見えてよい情報）。
         return {"version": LOCOHANE_VERSION}
 
+    @_asgi_app.get("/locohane/ui-config")
+    async def _serve_ui_config():
+        # 表示言語の既定値（[ui].default_language）。利用者がまだ言語を選んでいないとき、
+        # ログイン画面から使うため認証なしで返す（frontend/src/i18n.tsx 参照）。
+        return {"default_language": _config.ui_default_language}
+
     @_asgi_app.get("/public/settings/{filename}")
     async def _serve_settings_file(filename: str):
         path = _resolve_settings_file(filename)
@@ -1255,6 +1279,7 @@ def _register_instance_settings_route() -> None:
         return FileResponse(path)
 
     routes = _asgi_app.router.routes
+    routes.insert(0, routes.pop())
     routes.insert(0, routes.pop())
     routes.insert(0, routes.pop())
 
@@ -1302,9 +1327,6 @@ def _token_usage_level(total: int) -> str | None:
     return None
 
 
-MAIN_CALL_USAGE_LABEL = "リクエスト1回あたり（main）"
-
-
 def _format_token_usage(call_usage: dict, cumulative: dict) -> str:
     """出力元ごとの直近リクエスト1回分と会話累計（メイン+サブ合算）を、
     サイドパネルの TokenUsageCard（表形式）表示用に JSON 化する。
@@ -1325,7 +1347,7 @@ def _format_token_usage(call_usage: dict, cumulative: dict) -> str:
     payload = {
         "rows": [
             *call_rows,
-            {"label": "会話累計", **cumulative, "group": "total"},
+            {"label": i18n.t("usage.total"), **cumulative, "group": "total"},
         ]
     }
     return TOKEN_USAGE_PREFIX + json.dumps(payload, ensure_ascii=False)
@@ -1370,12 +1392,6 @@ INPUT_LIMITS_PREFIX = "📝 入力上限\n"
 PASTED_TEXT_FILENAME_RE = re.compile(r"^pasted-text-\d+(?:-\d+)?\.txt$")
 
 
-# public/settings/welcome.md が存在しない場合のフォールバック（{skills} はスキル一覧に置換される）。
-_WELCOME_TEMPLATE_DEFAULT = (
-    "Locohaneを起動しました。利用可能なスキル: {skills}\n\n" "スクリプト実行時の作業ディレクトリは、入力欄の📁アイコンから指定できます。"
-)
-
-
 def _format_work_dir_status(resolved: str | None, status: WorkDirAccessStatus | None = None) -> str:
     """作業ディレクトリの現在値・アクセス状況をサイドパネル表示用にまとめる。
 
@@ -1385,19 +1401,19 @@ def _format_work_dir_status(resolved: str | None, status: WorkDirAccessStatus | 
             プローブ未実行）の場合はパスのみを表示する。
     """
     if resolved is None:
-        return f"{WORK_DIR_PREFIX}: 未設定（既定値 {_config.default_workdir} を使用）"
+        return f"{WORK_DIR_PREFIX}: {i18n.t('workdir.unset', default=_config.default_workdir)}"
     if status is None or (status.exists and status.readable and status.writable):
         return f"{WORK_DIR_PREFIX}: {resolved}"
     if not status.exists:
-        label = "存在しません（このPCから直接アクセスできません）"
+        label = i18n.t("workdir.missing")
     elif not status.readable:
-        label = "アクセスできません（読み取り不可）"
+        label = i18n.t("workdir.unreadable")
     else:
-        label = "読み取り専用（書き込み不可）"
+        label = i18n.t("workdir.readonly")
     return (
         f"{WORK_DIR_PREFIX}: {resolved}\n"
-        f"状態: {label}\n"
-        f"※書き込みが必要な処理は既定フォルダ（{_config.default_workdir}）を自動的に使用します。"
+        f"{i18n.t('workdir.state', label=label)}\n"
+        f"{i18n.t('workdir.redirect_note', default=_config.default_workdir)}"
     )
 
 
@@ -2089,7 +2105,9 @@ async def _rebuild_graph(thread_id: str, *, wait_when_busy: bool = True):
     # がタブをまたいで混線しないようにする（set_current_session docstring参照。
     # 2026-08-26 監査で発見した既存の軽微なエッジケースの修正）。
     set_current_session(thread_id, tab_id=cl.context.session.id)
-    system_prompt = _apply_session_draft_skills()
+    system_prompt = _apply_session_draft_skills() + i18n.response_language_directive()
+    # 組み立てに使った言語。画面で言語を切り替えたら on_message が比べて組み直す。
+    cl.user_session.set("graph_lang", i18n.current_lang())
     graph = await build_graph(_config, system_prompt, _checkpointer, wait_when_busy=wait_when_busy)
     cl.user_session.set("graph", graph)
     return graph
@@ -2191,7 +2209,7 @@ async def on_stop() -> None:
                 exc_info=True,
             )
             await cl.Message(
-                content="セッションの再初期化に失敗しました。反応がなければ" "ページを再読み込みしてください。",
+                content=i18n.t("notice.session_reinit_failed"),
                 type="system_message",
             ).send()
     logging.getLogger(__name__).info(
@@ -2202,6 +2220,31 @@ async def on_stop() -> None:
     )
     if cancelled is not None:
         raise cancelled
+
+
+def _init_session_lang() -> None:
+    """接続時にフロントエンドが userEnv で送った表示言語をセッションへ保存する。
+
+    frontend/src/App.tsx が connect({ userEnv: { LOCOHANE_LANG } }) で送る。送られて
+    こない（古いフロントエンド・evals 等）場合は既定言語（[ui].default_language）にする。
+    グラフを組み立てる（_rebuild_graph）前に呼ぶこと（応答言語の指示に使うため）。
+    """
+    env = cl.user_session.get("env")
+    lang = i18n.normalize(env.get(i18n.USER_ENV_KEY)) if isinstance(env, dict) else None
+    cl.user_session.set(i18n.SESSION_KEY, lang or i18n.current_lang())
+
+
+async def _send_starter_prompts() -> None:
+    """表示言語に合わせた定型文ボタンを送る（定型文が無ければ何もしない）。
+
+    英語のセッションでは [chat_starters].prompts_en を使い、空なら prompts にする。
+    フロントエンドは最新の定型文メッセージだけを表示する（selectLatestStarters）。
+    """
+    prompts = _config.chat_starter_prompts
+    if i18n.current_lang() == "en" and _config.chat_starter_prompts_en:
+        prompts = _config.chat_starter_prompts_en
+    if prompts:
+        await cl.Message(content=STARTER_PREFIX + json.dumps(prompts, ensure_ascii=False)).send()
 
 
 @cl.on_chat_start
@@ -2234,6 +2277,7 @@ async def on_chat_start() -> None:
     # 自動的に一致し、同じ会話状態を引き継げる（[thread_store] 参照）。
     thread_id = cl.context.session.thread_id
     cl.user_session.set("thread_id", thread_id)
+    _init_session_lang()
     # 会話ログ（[chat_log].enabled=true の場合のみ）の書き出し先を
     # セッション開始時に1回だけ確定する（日をまたいでも同じファイルに
     # 追記し続ける。src/chat_log.py 参照）。
@@ -2277,12 +2321,11 @@ async def on_chat_start() -> None:
     await _send_work_dir_settings("")
 
     skills = scan_skills([_config.skills_dir, *_config.locohane_skills_dirs])
-    names = "、".join(s.name for s in skills) or "（なし）"
-    welcome_template = _load_settings_text("welcome.md", _WELCOME_TEMPLATE_DEFAULT)
+    names = i18n.t("list.separator").join(s.name for s in skills) or i18n.t("welcome.no_skills")
+    welcome_template = _load_localized_settings_text("welcome.md", i18n.t("welcome.default"))
     await cl.Message(content=welcome_template.replace("{skills}", names)).send()
 
-    if _config.chat_starter_prompts:
-        await cl.Message(content=STARTER_PREFIX + json.dumps(_config.chat_starter_prompts, ensure_ascii=False)).send()
+    await _send_starter_prompts()
 
     # メインスレッドの表示件数上限をフロントエンドへ伝える（0=無制限も含め常に送信）。
     # 表示専用の設定であり、これ自体がLLMへの会話コンテキストに影響することはない
@@ -2331,6 +2374,7 @@ if _config.thread_store_enabled:
         await _setup()
         thread_id = cl.context.session.thread_id
         cl.user_session.set("thread_id", thread_id)
+        _init_session_lang()
 
         if _config.chat_log_enabled:
             user = cl.user_session.get("user")
@@ -2486,9 +2530,9 @@ async def _send_work_dir_settings(initial: str) -> None:
         [
             TextInput(
                 id="work_dir",
-                label="作業ディレクトリ",
+                label=i18n.t("workdir.setting_label"),
                 initial=initial,
-                placeholder=rf"例: C:\Users\me\project（未入力なら既定値 {_config.default_workdir} を使用）",
+                placeholder=i18n.t("workdir.setting_placeholder", default=_config.default_workdir),
             )
         ]
     ).send()
@@ -2544,9 +2588,9 @@ async def _apply_work_dir(raw: str) -> str | None:
     try:
         resolved, status = await asyncio.wait_for(asyncio.to_thread(_probe_work_dir_input, raw), _WORK_DIR_PROBE_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
-        return f"サーバー（Locohaneが動いているPC）からフォルダの確認が時間内に終わりませんでした: {raw}"
+        return i18n.t("workdir.probe_timeout", path=raw)
     except (OSError, ValueError, RuntimeError) as e:
-        return f"サーバー（Locohaneが動いているPC）からこのパスを解釈できません: {raw}（{e}）"
+        return i18n.t("workdir.probe_invalid", path=raw, error=e)
     error = work_dir_error_message(resolved, status)
     if error is not None:
         return error
@@ -2663,9 +2707,6 @@ async def _persist_token_usage() -> None:
         logging.getLogger(__name__).warning("トークン使用量累計の即時保存に失敗しました thread_id=%s", thread_id, exc_info=True)
 
 
-COMPACTION_USAGE_LABEL = "圧縮処理（直近1回）"
-
-
 async def _on_compaction_usage(kind: str, role: str, usage: dict) -> None:
     """圧縮処理自身のLLM呼び出し（要約・write_thread_note 強制実行）のトークンを会話累計へ加算する。
 
@@ -2685,7 +2726,7 @@ async def _on_compaction_usage(kind: str, role: str, usage: dict) -> None:
     await _persist_token_usage()
     call_totals = _new_usage_totals()
     _accumulate_usage(call_totals, usage)
-    await _send_token_usage({"compaction": {"label": COMPACTION_USAGE_LABEL, **call_totals}})
+    await _send_token_usage({"compaction": {"label": i18n.t("usage.compaction"), **call_totals}})
 
 
 register_compaction_usage_listener(_on_compaction_usage)
@@ -2705,7 +2746,7 @@ async def on_settings_update(settings: dict) -> None:
     if error is not None:
         # 拒否したパスが入力欄・chat_settings に残らないよう、現在の値で送り直す。
         await _send_work_dir_settings(cl.user_session.get("work_dir") or "")
-        await cl.Message(content=f"⚠️ 作業ディレクトリを変更できませんでした。{error}").send()
+        await cl.Message(content=i18n.t("workdir.change_failed", error=error)).send()
 
 
 @cl.action_callback("toggle_plan_mode")
@@ -2750,6 +2791,36 @@ async def on_pick_work_dir(action: cl.Action) -> dict:
     raw = str(action.payload.get("path", ""))
     error = await _apply_work_dir(raw)
     return {"ok": error is None, "error": error}
+
+
+@cl.action_callback("set_language")
+async def on_set_language(action: cl.Action) -> dict:
+    """画面の表示設定で言語を切り替えたときに独自フロントエンドから呼ばれる action_callback。
+
+    セッションの言語だけを更新し、グラフ（応答言語の指示）は次の on_message で
+    組み直す（生成中に切り替えても今の生成を壊さないため）。サイドパネルの
+    作業ディレクトリ表示・歯車の入力欄・定型文ボタンは、新しい言語で送り直す
+    （フロントエンドはいずれも最新のメッセージを表示する）。
+
+    Args:
+        action: payload["lang"] に "ja" / "en" が入る。
+
+    Returns:
+        {"ok": bool, "lang": str}（callAction のレスポンスの response に入る）。
+    """
+    lang = i18n.normalize(action.payload.get("lang"))
+    if lang is None:
+        return {"ok": False, "lang": i18n.current_lang()}
+    if lang == i18n.current_lang():
+        return {"ok": True, "lang": lang}
+    cl.user_session.set(i18n.SESSION_KEY, lang)
+    work_dir = cl.user_session.get("work_dir")
+    await cl.Message(
+        content=_format_work_dir_status(work_dir, cl.user_session.get("work_dir_access") if work_dir else None)
+    ).send()
+    await _send_work_dir_settings(work_dir or "")
+    await _send_starter_prompts()
+    return {"ok": True, "lang": lang}
 
 
 @cl.action_callback("work_dir_server_info")
@@ -2891,7 +2962,7 @@ def _check_input_length(message: cl.Message) -> str | None:
             total += len(_read_pasted_text(src))
     if total <= limit:
         return None
-    return f"入力が長すぎます（{total:,}文字 / 上限{limit:,}文字）。内容を減らして再送信してください。"
+    return i18n.t("notice.input_too_long", total=total, limit=limit)
 
 
 def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice: str | None = None) -> HumanMessage:
@@ -3306,7 +3377,7 @@ async def _mark_background_group_steps(group_run_ids, steps: dict[str, cl.Step])
         if step is None:
             continue
         step.metadata = {"background": True}
-        step.output = _BATCH_GROUP_BACKGROUND_OUTPUT
+        step.output = i18n.t("step.batch_background")
         step.end = utc_now()
         await step.update()
 
@@ -3837,12 +3908,12 @@ async def _run_context_compaction_visible(
         return await _run_context_compaction(graph, config, thread_id, last_usage)
 
     await cl.Message(
-        content="会話が長くなったため、履歴を要約して整理しています（数十秒〜数分かかる場合があります）…",
+        content=i18n.t("notice.compaction_start"),
         type="system_message",
     ).send()
     compacted = await _run_context_compaction(graph, config, thread_id, last_usage)
     await cl.Message(
-        content="会話履歴の整理が完了しました。" if compacted else "会話履歴の整理は対象外だったためスキップしました。",
+        content=i18n.t("notice.compaction_done") if compacted else i18n.t("notice.compaction_skipped"),
         type="system_message",
     ).send()
     return compacted
@@ -3916,7 +3987,10 @@ async def _on_message_impl(message: cl.Message) -> None:
     # run_script_background の完了前に組み直してフラグを下ろしてしまい、新しい
     # ドラフトが出ないままになるため、毎回実際のドラフトの状態と比べる。
     current_drafts = skill_drafts.scan_visible_drafts(_config, cl.user_session.get(skill_drafts.SESSION_USER_KEY))
-    if skill_drafts.drafts_signature(current_drafts) != cl.user_session.get("drafts_signature"):
+    # 画面で表示言語を切り替えた後も、応答言語の指示を差し替えるため組み直す
+    # （set_language アクションは生成中にも届くため、ここで反映する）。
+    drafts_changed = skill_drafts.drafts_signature(current_drafts) != cl.user_session.get("drafts_signature")
+    if drafts_changed or i18n.current_lang() != cl.user_session.get("graph_lang"):
         await _rebuild_graph(thread_id, wait_when_busy=False)
     graph = cl.user_session.get("graph")
     config = {
@@ -4151,7 +4225,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 elif kind == "on_chain_start" and event["name"] == _BATCH_GROUP_RUN_NAME:
                     # dispatch_agent_batch のグループごとの中間Step。配下のサブエージェントの
                     # 思考・ツールStepはこの下へ入る（_resolve_parent_id が一番近い祖先を選ぶ）。
-                    label = (event.get("metadata") or {}).get("batch_group_label") or "SUB: グループ"
+                    label = (event.get("metadata") or {}).get("batch_group_label") or f"SUB: {i18n.t('step.group')}"
                     step = cl.Step(name=label, type="tool", parent_id=_resolve_parent_id(event, steps))
                     step.start = utc_now()
                     await step.send()
@@ -4220,11 +4294,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         await step.update()
                         if _is_dispatch_agent_truncated(event["name"], content):
                             await cl.Message(
-                                content=(
-                                    "サブエージェントのタスクが打ち切られました"
-                                    "（反復回数や応答内容の上限に到達したため）。"
-                                    "ここまでに収集できた結果を踏まえて続行します。"
-                                ),
+                                content=i18n.t("notice.subagent_truncated"),
                                 type="system_message",
                             ).send()
                         if isinstance(content, str):
@@ -4236,9 +4306,9 @@ async def _on_message_impl(message: cl.Message) -> None:
                                     else cl.File(name=path.name, path=str(path))
                                     for path in generated
                                 ]
-                                names = "、".join(path.name for path in generated)
+                                names = i18n.t("list.separator").join(path.name for path in generated)
                                 await cl.Message(
-                                    content=f"生成ファイル: {names}",
+                                    content=i18n.t("notice.generated_files", names=names),
                                     elements=elements,
                                     type="system_message",
                                 ).send()
@@ -4256,7 +4326,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         cl.user_session.set("plan_denied_just_now", False)
                         await _close_all_outputs(thinkings, answers)
                         await cl.Message(
-                            content="実行計画が却下されたため、処理を終了しました。ご指示をお待ちしています。",
+                            content=i18n.t("notice.plan_denied"),
                             type="system_message",
                         ).send()
                         raise _PlanDeniedInterrupt(tool_message=event["data"].get("output"))
@@ -4370,7 +4440,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         if usage_owner is None and is_subagent_usage:
                             usage_owner, usage_label = "sub", "SUB"
                         elif usage_owner is None:
-                            usage_label = MAIN_CALL_USAGE_LABEL
+                            usage_label = i18n.t("usage.main")
                         else:
                             usage_label = owner_labels.get(usage_owner, "SUB")
                         call_usage[usage_owner] = {"label": usage_label, **call_totals}
@@ -4455,10 +4525,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             await _close_all_outputs(thinkings, answers)
             await _finalize_orphaned_steps(steps, "recursion_limit")
             await cl.Message(
-                content=(
-                    f"反復上限（recursion_limit={_config.graph_recursion_limit}）に達したため、"
-                    "処理を打ち切りました。タスクを分割するか、別のアプローチを試してください。"
-                ),
+                content=i18n.t("notice.recursion_limit", limit=_config.graph_recursion_limit),
                 type="system_message",
             ).send()
             await _remove_message_ids_if_present(graph, config, loop_nudge_ids)
@@ -4671,10 +4738,9 @@ async def _on_message_impl(message: cl.Message) -> None:
                 await _remove_message_ids_if_present(graph, config, list(loop_exc.remove_ids))
             await cl.Message(
                 content=(
-                    f"全く同じツール呼び出しが繰り返され、{loop_max_retries}回リトライしましたが"
-                    f"改善しなかったため停止しました。\n\n{loop_exc.detail}"
+                    i18n.t("notice.tool_call_loop", retries=loop_max_retries, detail=loop_exc.detail)
                     if isinstance(loop_exc, ToolCallLoopDetected)
-                    else f"生成がループし、{loop_max_retries}回リトライしましたが改善しなかったため停止しました。"
+                    else i18n.t("notice.generation_loop", retries=loop_max_retries)
                 ),
                 type="system_message",
             ).send()
@@ -4732,7 +4798,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 inputs = None
                 continue
             await cl.Message(
-                content="通信エラーのため中断しました。 少し待って「続けて」と送信してください。",
+                content=i18n.t("notice.connection_error"),
                 type="system_message",
             ).send()
             return
@@ -4857,7 +4923,7 @@ async def on_message(message: cl.Message) -> None:
                 thread_id,
             )
             await cl.Message(
-                content="他の会話が処理中です。完了してから送信してください。",
+                content=i18n.t("notice.other_thread_busy"),
                 type="system_message",
             ).send()
             return

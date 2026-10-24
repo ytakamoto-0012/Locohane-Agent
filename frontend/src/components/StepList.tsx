@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { StepItem } from './StepItem';
 import { Icon } from './Icon';
 
@@ -11,6 +12,7 @@ const AUTO_SCROLL_ENGAGE_THRESHOLD_PX = 4;
 const AUTO_SCROLL_DISENGAGE_THRESHOLD_PX = 64;
 
 export function StepList({ steps }: { steps: IStep[] }) {
+  const { t } = useI18n();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(true);
   // ResizeObserver のコールバックや scroll ハンドラは古いクロージャを
@@ -84,7 +86,7 @@ export function StepList({ steps }: { steps: IStep[] }) {
       <div className="step-list-scroll-wrapper">
         <div className="step-list-scroll" ref={scrollRef} onScroll={handleScroll} onWheel={handleWheel}>
           {steps.length === 0 ? (
-            <div className="step-list-empty">ツール呼び出しはまだありません。</div>
+            <div className="step-list-empty">{t('side.noSteps')}</div>
           ) : (
             <div className="step-list">
               {steps.map((step) => (
@@ -98,8 +100,8 @@ export function StepList({ steps }: { steps: IStep[] }) {
             type="button"
             className="scroll-to-bottom-button"
             onClick={handleScrollToBottomClick}
-            aria-label="最新のStepへスクロール"
-            title="最新のStepへ"
+            aria-label={t('side.scrollToLatestStep')}
+            title={t('side.latestStep')}
           >
             <Icon name="arrow-down" size={16} />
           </button>

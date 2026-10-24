@@ -1,4 +1,5 @@
 import type { IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { TOKEN_USAGE_PREFIX } from '../utils/messageTree';
 
 /** app.py の _token_usage_level と一致させる（"warn"=オレンジ太字, "alert"=赤太字）。 */
@@ -50,6 +51,7 @@ const Rows = ({ rows }: { rows: TokenUsageRow[] }) => (
 );
 
 export function TokenUsageCard({ step }: { step: IStep | undefined }) {
+  const { t } = useI18n();
   if (!step || typeof step.output !== 'string') return null;
 
   let payload: TokenUsagePayload;
@@ -73,9 +75,9 @@ export function TokenUsageCard({ step }: { step: IStep | undefined }) {
           <thead>
             <tr>
               <th></th>
-              <th>入力</th>
-              <th>出力</th>
-              <th>合計</th>
+              <th>{t('usage.input')}</th>
+              <th>{t('usage.output')}</th>
+              <th>{t('usage.total')}</th>
             </tr>
           </thead>
           <Rows rows={callRows} />

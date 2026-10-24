@@ -11,6 +11,7 @@ from ._ask_echo import _echo_ask_answer
 from ._ask_echo import _is_text_ask_cancelled
 from ._ask_relay_helper import _ask_with_cross_session_relay
 from ._state import _resolve_ask_timeout
+from ..i18n import t
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +19,6 @@ logger = logging.getLogger(__name__)
 _ASK_CHOICE_CANCEL_VALUE = "__cancel__"
 _ASK_CHOICE_OTHER_VALUE = "__other__"
 _ASK_CHOICE_CANCEL_MESSAGE = "エラー: ユーザーが選択をキャンセルしました。"
-_ASK_CHOICE_CANCEL_LABEL = "❌ キャンセル"
 
 
 def _multi_select_answer(res: dict) -> str:
@@ -27,7 +27,7 @@ def _multi_select_answer(res: dict) -> str:
     other = (res.get("other") or "").strip()
     if other:
         selected.append(other)
-    return "、".join(selected) if selected else "(選択なし)"
+    return t("list.separator").join(selected) if selected else t("ask.none_selected")
 
 
 @tool
@@ -75,7 +75,7 @@ async def ask_user_choice(question: str, choices: list[str], multi_select: bool 
             res = await ask_message.send()
             if res is not None:
                 submitted = res.get("submitted", True)
-                answer = _multi_select_answer(res) if submitted else _ASK_CHOICE_CANCEL_LABEL
+                answer = _multi_select_answer(res) if submitted else t("ask.cancel")
                 await _echo_ask_answer(ask_message, question, answer)
             return res
 
@@ -88,8 +88,8 @@ async def ask_user_choice(question: str, choices: list[str], multi_select: bool 
 
     async def _factory_single():
         actions = [cl.Action(name=f"choice_{i}", payload={"value": c}, label=c) for i, c in enumerate(choices)]
-        actions.append(cl.Action(name="other", payload={"value": _ASK_CHOICE_OTHER_VALUE}, label="✏️ その他（自由入力）"))
-        actions.append(cl.Action(name="cancel", payload={"value": _ASK_CHOICE_CANCEL_VALUE}, label=_ASK_CHOICE_CANCEL_LABEL))
+        actions.append(cl.Action(name="other", payload={"value": _ASK_CHOICE_OTHER_VALUE}, label=t("ask.other")))
+        actions.append(cl.Action(name="cancel", payload={"value": _ASK_CHOICE_CANCEL_VALUE}, label=t("ask.cancel")))
         ask_message = cl.AskActionMessage(content=question, actions=actions, timeout=timeout)
         res = await ask_message.send()
         if res is not None:

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type MouseEvent } from 'react';
 import { useRecoilValue } from 'recoil';
 import { currentThreadIdState, firstUserInteraction, sessionIdState, useAuth, useConfig } from '@chainlit/react-client';
 import { BACKEND_URL } from '../chainlitClient';
+import { useI18n } from '../i18n';
 import { Icon } from './Icon';
 
 interface ThreadSummary {
@@ -43,6 +44,7 @@ export function Sidebar({
 }) {
   const { config } = useConfig();
   const { user, logout } = useAuth();
+  const { t } = useI18n();
   const currentThreadId = useRecoilValue(currentThreadIdState);
   const firstInteraction = useRecoilValue(firstUserInteraction);
   const sessionId = useRecoilValue(sessionIdState);
@@ -84,7 +86,7 @@ export function Sidebar({
       <button
         type="button"
         className="thread-sidebar-collapsed"
-        title="会話一覧を開く"
+        title={t('header.openThreads')}
         onClick={() => setCollapsed(false)}
       >
         <Icon name="panel-left" size={14} />
@@ -94,7 +96,7 @@ export function Sidebar({
 
   const handleRename = async (thread: ThreadSummary, event: MouseEvent) => {
     event.stopPropagation();
-    const name = window.prompt('会話の名前を変更', thread.name ?? '');
+    const name = window.prompt(t('sidebar.renamePrompt'), thread.name ?? '');
     if (!name || name === thread.name) return;
     await fetch(`${BACKEND_URL}/locohane/threads/${thread.id}`, {
       method: 'PUT',
@@ -112,17 +114,17 @@ export function Sidebar({
     // 見た目のヒントに過ぎない。実際の拒否はサーバー側（409）で行う
     // （生成中に削除されるとタスクを止める手段を失うため）。
     if (thread.isGenerating) {
-      window.alert('この会話は生成中のため削除できません。停止してから削除してください。');
+      window.alert(t('sidebar.deleteBusy'));
       return;
     }
-    if (!window.confirm(`「${thread.name ?? '無題の会話'}」を削除しますか？`)) return;
+    if (!window.confirm(t('sidebar.deleteConfirm', { name: thread.name ?? t('common.untitledThread') }))) return;
     const res = await fetch(`${BACKEND_URL}/locohane/threads/${thread.id}`, {
       method: 'DELETE',
       credentials: 'include'
     });
     if (!res.ok) {
       if (res.status === 409) {
-        window.alert('この会話は生成中のため削除できません。停止してから削除してください。');
+        window.alert(t('sidebar.deleteBusy'));
       }
       refresh();
       return;
@@ -141,12 +143,12 @@ export function Sidebar({
       <div className="thread-sidebar-header">
         <button type="button" className="new-chat-button" onClick={() => goToThread(null)}>
           <Icon name="plus" size={14} />
-          新規チャット
+          {t('common.newChat')}
         </button>
         <button
           type="button"
           className="thread-sidebar-toggle"
-          title={mobile ? '会話一覧を閉じる' : 'サイドバーを折りたたむ'}
+          title={mobile ? t('sidebar.close') : t('sidebar.collapse')}
           onClick={() => (mobile ? onClose() : setCollapsed(true))}
         >
           <Icon name={mobile ? 'x' : 'panel-left'} size={14} />
@@ -164,22 +166,26 @@ export function Sidebar({
             {thread.isWaitingForUser ? (
               <span
                 className="thread-list-item-waiting"
-                title="ユーザーの操作待ち"
-                aria-label="ユーザーの操作待ち"
+                title={t('sidebar.waitingForUser')}
+                aria-label={t('sidebar.waitingForUser')}
               />
             ) : (
               thread.isGenerating && (
-                <span className="thread-list-item-generating" title="生成中" aria-label="生成中" />
+                <span
+                  className="thread-list-item-generating"
+                  title={t('sidebar.generating')}
+                  aria-label={t('sidebar.generating')}
+                />
               )
             )}
-            <span className="thread-list-item-name">{thread.name || '無題の会話'}</span>
+            <span className="thread-list-item-name">{thread.name || t('common.untitledThread')}</span>
             <span className="thread-list-item-actions">
-              <button type="button" title="名前を変更" onClick={(event) => handleRename(thread, event)}>
+              <button type="button" title={t('sidebar.rename')} onClick={(event) => handleRename(thread, event)}>
                 <Icon name="pencil" size={12} />
               </button>
               <button
                 type="button"
-                title={thread.isGenerating ? '生成中は削除できません' : '削除'}
+                title={thread.isGenerating ? t('sidebar.cannotDeleteWhileGenerating') : t('sidebar.delete')}
                 disabled={thread.isGenerating}
                 onClick={(event) => handleDelete(thread, event)}
               >
@@ -196,7 +202,7 @@ export function Sidebar({
           <button
             type="button"
             className="thread-sidebar-logout"
-            title="ログアウト"
+            title={t('sidebar.logout')}
             onClick={() => logout(true)}
           >
             <Icon name="log-out" size={14} />

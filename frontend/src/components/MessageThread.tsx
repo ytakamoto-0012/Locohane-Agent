@@ -6,6 +6,7 @@ import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import { ChainlitContext, elementState, sessionIdState, type IStep } from '@chainlit/react-client';
 import type { IMessageElement } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { FileLink } from './FileLink';
 import { SUBAGENT_MESSAGE_AUTHOR } from '../utils/messageTree';
 
@@ -113,8 +114,9 @@ function TypingIndicator() {
 }
 
 export function MessageThread({ messages, showTyping }: { messages: IStep[]; showTyping: boolean }) {
+  const { t } = useI18n();
   if (messages.length === 0 && !showTyping) {
-    return <div className="message-thread-empty">まだメッセージはありません。下の入力欄から話しかけてください。</div>;
+    return <div className="message-thread-empty">{t('messages.empty')}</div>;
   }
 
   return (
