@@ -73,7 +73,7 @@ def _foreign_tmp_dir_error(path: Path) -> str | None:
             except OSError:
                 is_dir = False
             if is_dir:
-                return f"エラー: 他セッションの一時ディレクトリ（{first}）は読み取れません。"
+                return f"Error: the temporary directory of another session ({first}) cannot be read."
         return None
     return None
 
@@ -143,7 +143,7 @@ def _resolve_workdir(need_write: bool = False) -> Path:
         RuntimeError: init_tools() が未実行で _state._DEFAULT_WORKDIR が None の場合。
     """
     if _state._DEFAULT_WORKDIR is None:
-        raise RuntimeError("init_tools() が未実行です")
+        raise RuntimeError("init_tools() has not been run")
     work_dir = cl.user_session.get("work_dir")
     if not work_dir:
         return _resolve_exec_workdir()
@@ -194,7 +194,7 @@ def _build_workdir_status_info(work_dir: str | None, status: "WorkDirAccessStatu
             "state": "read_write",
             "source": "default",
             "write_dir": resolved,
-            "description": "absolute_pathへ直接読み書きできる。write_dirはabsolute_pathと同じ値。",
+            "description": "You can read and write absolute_path directly. write_dir is the same as absolute_path.",
         }
     if status is None or (status.exists and status.readable and status.writable):
         return {
@@ -202,23 +202,23 @@ def _build_workdir_status_info(work_dir: str | None, status: "WorkDirAccessStatu
             "state": "read_write",
             "source": "user_changed",
             "write_dir": work_dir,
-            "description": "absolute_pathへ直接読み書きできる。write_dirはabsolute_pathと同じ値。",
+            "description": "You can read and write absolute_path directly. write_dir is the same as absolute_path.",
         }
     write_dir = str(_resolve_exec_workdir())
     info = {"absolute_path": work_dir, "source": "user_changed", "write_dir": write_dir}
     if not status.exists:
         info["state"] = "not_found"
         info["read_dir"] = str(_state._DEFAULT_WORKDIR)
-        info["description"] = "absolute_pathが存在しない。読み取りはread_dir、書き込みはwrite_dirを使うこと。"
+        info["description"] = "absolute_path does not exist. Use read_dir for reading and write_dir for writing."
     elif not status.readable:
         info["state"] = "unreadable"
         info["read_dir"] = str(_state._DEFAULT_WORKDIR)
-        info["description"] = "absolute_pathへアクセスできない。読み取りはread_dir、書き込みはwrite_dirを使うこと。"
+        info["description"] = "absolute_path is not accessible. Use read_dir for reading and write_dir for writing."
     else:
         info["state"] = "read_only"
         info["description"] = (
-            "absolute_pathは読み取り専用。書き込みはwrite_dirへ行うこと。読み取りはabsolute_pathのまま。"
-            "既存ファイルを編集する場合はwrite_dirへ出力し、その絶対パスを報告する。"
+            "absolute_path is read-only. Write to write_dir. Keep reading from absolute_path. "
+            "When editing an existing file, output to write_dir and report its absolute path."
         )
     return info
 

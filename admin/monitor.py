@@ -26,6 +26,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
+from admin.i18n import t as _t
 from src.config import load_config
 from src.runtime_status import RUNTIME_STATUS_FILENAME
 
@@ -76,7 +77,7 @@ def instance_config(instances_root: Path, config_ini_path: Path, name: str):
             config_path=config_ini_path, overrides_path=inst.overrides_path(instances_root, name), instance_name=name
         )
     except Exception as exc:  # noqa: BLE001
-        raise MonitorError(f"インスタンス {name!r} の設定を読み込めません: {exc}") from exc
+        raise MonitorError(_t("インスタンス {0!r} の設定を読み込めません: {1}", name, exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -124,7 +125,7 @@ def summarize_runtime(status: dict | None, thread_names: dict[str, str | None]) 
         u = users.setdefault(s["user"], {"user": s["user"], "sessions": 0, "generating": 0})
         u["sessions"] += 1
     for g in generating:
-        owner = g.get("owner") or "（不明）"
+        owner = g.get("owner") or _t("（不明）")
         u = users.setdefault(owner, {"user": owner, "sessions": 0, "generating": 0})
         u["generating"] += 1
     return {
@@ -156,7 +157,7 @@ def _sqlite_ro_uri(db_path: Path) -> str:
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     if not db_path.is_file():
-        raise MonitorError(f"スレッドDBがありません: {db_path}（[thread_store] enabled=false、または未使用）")
+        raise MonitorError(_t("スレッドDBがありません: {0}（[thread_store] enabled=false、または未使用）", db_path))
     # 本体が書き込み中のDBを読むため、読み取り専用で開き、ロック待ちも許す。
     conn = sqlite3.connect(_sqlite_ro_uri(db_path), uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
@@ -577,7 +578,7 @@ def probe_endpoints(cfg, timeout_seconds: float = 2.0) -> list[dict]:
                         # 動いている。到達可否は /health で判断する（スロット数は不明のまま）。
                         slots_status = resp.status_code
                         client.get(f"{_server_root(ep.base_url)}/health").raise_for_status()
-                        probe.error = f"GET /slots が HTTP {slots_status} のためスロット使用状況は不明"
+                        probe.error = _t("GET /slots が HTTP {0} のためスロット使用状況は不明", slots_status)
                     else:
                         slots = resp.json()
                         if isinstance(slots, list):

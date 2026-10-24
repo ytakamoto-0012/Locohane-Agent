@@ -58,7 +58,7 @@ class TestWriteScratchNote:
         _setup(tmp_path, monkeypatch)
 
         result1 = tools.write_scratch_note.func(content="1行目")
-        assert "書き込みました" in result1
+        assert "Written" in result1
         result2 = tools.write_scratch_note.func(content="2行目")
 
         path = write_scratch_note_module._scratch_notes_path()
@@ -69,7 +69,7 @@ class TestWriteScratchNote:
     def test_empty_content_is_rejected(self, tmp_path, monkeypatch) -> None:
         _setup(tmp_path, monkeypatch)
         result = tools.write_scratch_note.func(content="   ")
-        assert result.startswith("エラー:")
+        assert result.startswith("Error:")
         assert not write_scratch_note_module._scratch_notes_path().exists()
 
     def test_scoped_per_subagent_run_id(self, tmp_path, monkeypatch) -> None:
@@ -100,7 +100,7 @@ class TestAppendScratchNoteHint:
     def test_appends_hint_when_truncated_and_file_exists(self, tmp_path, monkeypatch) -> None:
         _setup(tmp_path, monkeypatch)
         tools.write_scratch_note.func(content="途中経過")
-        truncated = "[サブエージェント: トークン使用量が上限(64000トークン)に達したため打ち切りました]"
+        truncated = "[Sub-agent: stopped because token usage reached the limit (64000 tokens)]"
 
         hinted = dispatch_agent_job_module._append_scratch_note_hint(truncated)
 

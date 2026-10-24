@@ -145,13 +145,13 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
     instance = data["instance"]
     result = CheckResult()
     if data.get("status") in themes.CLOSED_STATUSES:
-        result.problems.append(f"このテーマは既に終了しています（{data.get('status')}）")
+        result.problems.append(f"This theme has already ended ({data.get('status')})")
         return result
     if data.get("status") in themes.ACTIVE_STATUSES:
-        result.problems.append("ループ・トライアウトの実行中は昇格できません（停止するか、終わるのを待ってください）")
+        result.problems.append("Cannot promote while a loop or tryout is running (stop it or wait for it to finish)")
     assets = themes.list_assets(directory)
     if not assets["skills"] and not assets["agents"]:
-        result.problems.append("昇格する研究対象（スキル・サブエージェント）がありません")
+        result.problems.append("There are no research targets (skills or sub-agents) to promote")
 
     target_cfg = instance_config(instances_root, instance)
     tryout = data.get("tryout")
@@ -159,12 +159,12 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
     if tryout:
         if (tryout.get("repeat") or 0) < target_cfg.skill_tryout_repeats:
             result.problems.append(
-                f"トライアウトの回数が足りません: {tryout.get('repeat')} 回（必要: {target_cfg.skill_tryout_repeats} 回以上）"
+                f"Not enough tryout runs: {tryout.get('repeat')} (required: {target_cfg.skill_tryout_repeats} or more)"
             )
         if tryout.get("ai_verdict") != "pass":
-            result.problems.append("トライアウトに全回合格していません")
+            result.problems.append("The tryout did not pass every run")
         if tryout.get("instance") != instance:
-            result.problems.append(f"トライアウトの評価対象のインスタンスが違います: {tryout.get('instance')}")
+            result.problems.append(f"The tryout was evaluated against a different instance: {tryout.get('instance')}")
 
     # 取り込み元・複製元
     for asset_type in themes.ASSET_TYPES:
@@ -173,18 +173,18 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
             origin = Path(src["origin"]) if src.get("origin") else None
             if kind == "draft" and origin is not None:
                 if not (origin / "SKILL.md").is_file():
-                    result.notices.append(f"取り込み元のドラフト {src.get('owner')}/{name} はもうありません（アーカイブは省略）")
+                    result.notices.append(f"The source draft {src.get('owner')}/{name} no longer exists (archiving skipped)")
                 elif tree_sha256(origin) != src.get("origin_sha256"):
                     result.confirmations.append(
-                        f"取り込み元のドラフト {src.get('owner')}/{name} が取り込み後に作成者によって変更されています"
-                        "（昇格すると作成者の変更は反映されず、ドラフトはアーカイブされます）"
+                        f"The source draft {src.get('owner')}/{name} was changed by its author after it was imported"
+                        " (promoting will not include the author's changes, and the draft will be archived)"
                     )
             elif kind == "official" and origin is not None:
                 exists = (origin / "SKILL.md").is_file() if asset_type == "skills" else origin.is_file()
                 now = (tree_sha256(origin) if asset_type == "skills" else file_sha256(origin)) if exists else None
                 if now is not None and now != src.get("origin_sha256"):
                     result.problems.append(
-                        f"複製元の正式な {name}（{origin}）が複製後に変更されています（上書きすると変更が失われるため、複製し直してください）"
+                        f"The official {name} ({origin}) it was copied from was changed after copying (overwriting would lose the changes, so copy it again)"
                     )
 
     # 配置先（対象インスタンス + 配布先）
@@ -197,7 +197,7 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
             result.problems.append(str(e))
             continue
         if meta.is_skill_lab:
-            result.problems.append(f"{name} はスキル研究室のため配置先にできません")
+            result.problems.append(f"{name} is a Skill Lab, so it cannot be a placement target")
             continue
         cfg = target_cfg if name == instance else instance_config(instances_root, name)
         dest = cfg.instance_locohane_dir
@@ -213,16 +213,16 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
                         placement["replaces"].append(f"{asset_type}/{asset}")
                     else:
                         result.problems.append(
-                            f"{name} の専用の置き場に同じ名前の {asset} が既にあります（{target}）。"
-                            "それを複製して改善するテーマにするか、名前を変えてください"
+                            f"A {asset} with the same name already exists in the dedicated location of {name} ({target}). "
+                            "Make a theme that copies and improves it, or change the name"
                         )
                 elif _exists_in_shared(cfg, asset_type, asset):
                     placement["overrides_builtin"].append(f"{asset_type}/{asset}")
-                    result.notices.append(f"{name} では同梱・共有の {asset} をこのテーマの {asset} で置き換えます（他のインスタンスは変わりません）")
+                    result.notices.append(f"In {name}, the bundled/shared {asset} will be replaced by this theme's {asset} (other instances do not change)")
         blocked = _env_blocked(instances_root, name, register.keys())
         if blocked:
             result.problems.append(
-                f"{name} の .env（または管理ツールの環境変数）に {blocked} があり、設定の登録が効きません。.env を見直してください"
+                f"The .env of {name} (or the admin tool's environment variables) has {blocked}, so registering the settings has no effect. Review .env"
             )
         try:
             updates, added = compute_updates(instances_root, name, register)
@@ -237,7 +237,7 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
                 )
             placement["register"] = added
         except (overrides.ValidationError, PromotionError, ValueError) as e:
-            result.problems.append(f"{name} の設定の登録内容を検証できません: {e}")
+            result.problems.append(f"Cannot validate the settings to register for {name}: {e}")
         result.placements[name] = placement
     return result
 
@@ -246,7 +246,7 @@ def settings_to_register_safe(directory: Path, result: CheckResult) -> dict:
     try:
         return settings_to_register(directory)
     except Exception as e:  # noqa: BLE001 - 事前確認では理由を並べて返す
-        result.problems.append(f"登録する設定を求められません: {e}")
+        result.problems.append(f"Cannot determine the settings to register: {e}")
         return {}
 
 

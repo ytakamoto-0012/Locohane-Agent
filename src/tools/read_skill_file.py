@@ -16,8 +16,8 @@ from ._safe_path import _missing_skill_prefix_hint, _safe_path
 logger = logging.getLogger(__name__)
 
 _WORKDIR_FILE_HINT = (
-    "（read_skill_file は skills ディレクトリ配下限定です。作業ディレクトリ配下の"
-    "ファイルは Read ツールで読んでください。Read が使えなければ dispatch_agent で委譲してください）"
+    "(read_skill_file is limited to the skills directory. Read files under the working directory "
+    "with the Read tool. If Read is not available, delegate with dispatch_agent)"
 )
 
 
@@ -38,42 +38,42 @@ def _resolve_skill_file_path(relative_path: str) -> Path:
         raise ValueError(error)
     path = Path(resolved).resolve()
     if not any(path.is_relative_to(root) for root in _state._SKILLS_ROOTS or []):
-        raise ValueError(f"{relative_path} は skills ディレクトリ外のファイルです")
+        raise ValueError(f"{relative_path} is outside the skills directory")
     draft_error = skill_drafts.access_error(path, "read", _state._LLM_CONFIG, skill_drafts.current_draft_user())
     if draft_error:
-        raise ValueError(draft_error.removeprefix("エラー: "))
+        raise ValueError(draft_error.removeprefix("Error: "))
     return path
 
 
 @tool
 def read_skill_file(relative_path: str) -> str:
-    """skills ディレクトリ配下のファイルを読み込んで返す。
+    """Read and return a file under the skills directory.
 
-    SKILL.md 本文が references/assets を参照している場合など、必要時のみ使う。
-    Agent Skills 標準の progressive disclosure における第3段階（Execute）の一部。
+    Use it only when needed, e.g. when the SKILL.md body refers to references/assets.
+    Part of the third stage (Execute) of progressive disclosure in the Agent Skills standard.
 
     Args:
-        relative_path: skills ルートからの相対パス、または read_skill の
-            references/ 一覧にある `@N`。相対パスの場合、read_skill(skill_name) で
-            そのスキルを読んだ後でも、先頭に必ずスキルフォルダ名を含めること
-            （例: "references/notes.md" ではなく
-            "excel-knowledge/references/notes.md"）。
+        relative_path: A path relative to the skills root, or an `@N` from the references/ list of
+            read_skill. For a relative path, always include the skill folder name at the start,
+            even after reading the skill with read_skill(skill_name)
+            (e.g. "excel-knowledge/references/notes.md", not
+            "references/notes.md").
 
     Returns:
-        ファイル内容（UTF-8、デコード不能なバイト列は errors="replace" で置換）。
-        skills ルート外を指す場合やファイルが存在しない場合は、例外を送出せず
-        「エラー: ...」形式の文字列を返す。
+        The file contents (UTF-8; undecodable bytes are replaced with errors="replace").
+        If it points outside the skills root or the file does not exist, it returns an
+        "Error: ..." string instead of raising.
     """
     try:
         path = _resolve_skill_file_path(relative_path)
     except ValueError as e:
-        return f"エラー: {e}{_WORKDIR_FILE_HINT}"
+        return f"Error: {e}{_WORKDIR_FILE_HINT}"
     if not path.is_file():
         # スキル名プレフィックス漏れか、作業ディレクトリのファイルを渡したのかは
         # 区別できないため、両方の代替行動を示す（メインエージェントが作業
         # ディレクトリのファイル名をそのまま渡す誤りが実際にあった）。
         hint = _missing_skill_prefix_hint(relative_path)
-        return f"エラー: ファイルが見つかりません: {relative_path}{hint}{_WORKDIR_FILE_HINT}"
+        return f"Error: file not found: {relative_path}{hint}{_WORKDIR_FILE_HINT}"
     dup_error = _check_file_tools_duplicate("read_skill_file", f"read_skill_file\x00{path}")
     if dup_error:
         return dup_error

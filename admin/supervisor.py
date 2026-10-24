@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from admin.i18n import t as _t
 from src import instance_lock
 from src.config import PROJECT_ROOT, load_config
 
@@ -136,14 +137,14 @@ class Supervisor:
         with self._lock:
             current = self.status(name)
             if current.state == InstanceState.RUNNING:
-                raise SupervisorError(f"インスタンス {name!r} は既に稼働中です。")
+                raise SupervisorError(_t("インスタンス {0!r} は既に稼働中です。", name))
             if current.state == InstanceState.EXTERNAL:
                 raise SupervisorError(
-                    f"インスタンス {name!r} は管理ツール以外のプロセスで起動中のため、ここからは操作できません。"
-                    "先にそちらを終了してください。"
+                    _t("インスタンス {0!r} は管理ツール以外のプロセスで起動中のため、ここからは操作できません。"
+                    "先にそちらを終了してください。", name)
                 )
             if current.state == InstanceState.ERROR:
-                raise SupervisorError(f"インスタンス {name!r} の設定を解決できないため起動できません。config_overrides.json を確認してください。")
+                raise SupervisorError(_t("インスタンス {0!r} の設定を解決できないため起動できません。config_overrides.json を確認してください。", name))
             try:
                 meta = inst.read_instance(self._instances_root, name)
                 inst.check_conflicts(

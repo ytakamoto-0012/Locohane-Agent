@@ -304,10 +304,10 @@ def difference_label(query: str, path: str) -> str:
     folder_differs = bool(q_folder) and q_folder != p_folder
     name_differs = q_name != p_name
     if folder_differs and name_differs:
-        return "フォルダ・ファイル名違い"
+        return "different folder and file name"
     if folder_differs:
-        return "フォルダ違い"
-    return "ファイル名違い"
+        return "different folder"
+    return "different file name"
 
 
 def _exists(path: str | None) -> bool | None:

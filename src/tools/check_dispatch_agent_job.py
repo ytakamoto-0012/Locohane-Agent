@@ -11,37 +11,35 @@ from ._dispatch_agent_job import _finalize_dispatch_agent_job_result, _format_di
 
 @tool
 async def check_dispatch_agent_job(job_id: str) -> str:
-    """dispatch_agent で起動したジョブの状況・結果を確認する。
+    """Check the status and result of a job started by dispatch_agent.
 
-    通常は dispatch_agent 自身がジョブ完了まで待ってから最終回答を
-    直接返すため、このツールを呼ぶ必要は無い。呼ぶのは、dispatch_agent
-    が安全上限に達して job_id を返した場合（＝よほど長時間のジョブ）のみ。
+    Normally dispatch_agent itself waits until the job finishes and returns the final answer
+    directly, so you do not need to call this tool. Call it only when dispatch_agent reached the
+    safety limit and returned a job_id (that is, a very long job).
 
-    実行中であれば経過秒数・反復回数と、write_scratch_note で書き残した
-    進捗メモ（あれば、末尾最大4000文字）を返す。完了・強制終了・エラーの
-    いずれかで終わっていれば最終回答（dispatch_agent と同じ形式のテキスト）
-    を返し、以降は同じ job_id を指定できなくなる（登録から削除される）。
-    他セッションが起動した job_id は参照できない。
+    While running, it returns the elapsed seconds, the iteration count and the progress notes
+    written with write_scratch_note (if any, the last 4000 characters at most). If it ended as
+    done, killed or error, it returns the final answer (text in the same form as dispatch_agent),
+    and the same job_id can no longer be used afterwards (it is removed from the registry).
+    job_ids started by other sessions cannot be viewed.
 
-    サブエージェントの内部進捗を取得する手段はスクラッチノート以外に無い。
-    agent_type によっては（write_scratch_note を持たない種別、または一度も
-    書いていない場合）実行中の進捗欄が空のままとなるが、これは異常ではない。
+    Scratch notes are the only way to get the sub-agent's internal progress. Depending on the
+    agent_type (a type without write_scratch_note, or if it never wrote any), the progress part
+    stays empty while running; this is not abnormal.
 
-    実行中が返ってきた場合、数秒間隔で連続して呼び直さないこと。経過を
-    ユーザーへ一言伝えたらそのターンを終えて次のユーザー発言を待つか、
-    十分な間隔（数十秒〜）を空けてから改めて呼ぶこと。処理に時間が
-    かかっていること自体は異常でも打ち切る理由でもない。この指示に反して
-    短い間隔で呼び直した場合はサーバー側で拒否され、「まだ確認間隔が
-    短すぎます」のような拒否メッセージが返る。
+    When it returns "running", do not call it again every few seconds. Tell the user the progress
+    in a word and end the turn to wait for the user's next message, or call it again after a
+    sufficient interval (tens of seconds or more). Taking a long time is neither abnormal nor a
+    reason to stop it. If you call it again too soon against this instruction, the server rejects
+    it and returns a message like "Checked too soon".
 
     Args:
-        job_id: dispatch_agent の戻り値に含まれるID。
+        job_id: The ID included in the return value of dispatch_agent.
 
     Returns:
-        状況または最終結果を表す文字列。job_id が不明・他セッションのもので
-        ある場合、または直前の「実行中」応答から
-        [subagent].background_min_poll_interval_seconds 未満しか経っていない
-        場合は「エラー: ...」/拒否メッセージ形式の文字列。
+        A string with the status or the final result. If the job_id is unknown or belongs to
+        another session, or less than [subagent].background_min_poll_interval_seconds has passed
+        since the previous "running" response, an "Error: ..." / rejection message string.
     """
     resolved = _resolve_dispatch_agent_job(job_id)
     if isinstance(resolved, str):

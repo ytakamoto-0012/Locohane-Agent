@@ -16,25 +16,24 @@ logger = logging.getLogger(__name__)
 
 @tool
 def provide_download(file_paths: list[str]) -> str:
-    """既存のファイルをチャット画面にダウンロードボタンとして提示する。
+    """Offer existing files in the chat as download buttons.
 
-    アップロード済みファイルや、Read/Glob 等で見つけた既存ファイル、以前の
-    作業で生成済みのファイルなどを、あらためてユーザーがダウンロードできる
-    ようにしたいときに使う。Read 等と同様にパスの制限は行わない
-    （ローカルファイルシステム上の任意の絶対パスを指定できる。ただし
-    `_tmp_<作成時刻>_<短縮ID>` の他セッション分だけは例外で提供できない）。複数指定
-    した場合、1つのメッセージにダウンロードボタンがまとめて並んで表示
-    される（1件だけの場合はリストに1件だけ入れて渡す）。
+    Use it when you want the user to be able to download uploaded files, existing files found with
+    Read/Glob etc., or files generated in earlier work again. Like Read, it does not restrict paths
+    (any absolute path on the local file system can be specified, except other sessions'
+    `_tmp_<created time>_<short ID>` folders, which cannot be offered). If several are specified,
+    the download buttons are shown together in one message (for just one file, pass a list with one
+    entry).
 
     Args:
-        file_paths: ダウンロードさせたいファイルの絶対パスのリスト
-            （相対パスの場合はセッションの作業ディレクトリ基準で解決する）。
+        file_paths: A list of absolute paths of the files to offer for download
+            (relative paths are resolved against the session's working directory).
 
     Returns:
-        成功時: {"output_paths": ["...", ...]} 形式のJSON文字列
-            （自動的にチャットへダウンロードボタンがまとめて表示される）。
-        1件でも見つからないファイルがあれば「エラー: ...」形式の文字列を
-            返す（部分的な成功はしない）。
+        On success: a JSON string of the form {"output_paths": ["...", ...]}
+            (download buttons are shown together in the chat automatically).
+        If even one file is not found, it returns an "Error: ..." string
+            (no partial success).
     """
     resolved: list[Path] = []
     for file_path in file_paths:
@@ -48,7 +47,7 @@ def provide_download(file_paths: list[str]) -> str:
         if tmp_error:
             return tmp_error
         if not path.is_file():
-            return f"エラー: ファイルが見つかりません: {file_path}"
+            return f"Error: file not found: {file_path}"
         resolved.append(path)
     logger.info("provide_download: %s", resolved)
     return json.dumps({"output_paths": [str(p) for p in resolved]}, ensure_ascii=False)

@@ -232,7 +232,7 @@ class ChatLlamaCpp(ChatOpenAI):
                         "Detected an LLM response loop, stopping generation (recent text: %r)",
                         snippet,
                     )
-                    raise ThinkingLoopDetected("LLM応答が反復ループに陥ったため打ち切りました", snippet=snippet)
+                    raise ThinkingLoopDetected("Stopped because the LLM response fell into a repetition loop", snippet=snippet)
                 if not first_chunk_seen:
                     first_chunk_seen = True
                     _log_first_chunk_latency(time.time() - stream_started_at, sync=True)
@@ -304,7 +304,7 @@ class ChatLlamaCpp(ChatOpenAI):
                         snippet,
                         diag,
                     )
-                    loop_exc = ThinkingLoopDetected("LLM応答が反復ループに陥ったため打ち切りました", snippet=snippet)
+                    loop_exc = ThinkingLoopDetected("Stopped because the LLM response fell into a repetition loop", snippet=snippet)
                     raise loop_exc
                 if not first_chunk_seen:
                     first_chunk_seen = True
@@ -626,8 +626,8 @@ def enable_thinking_control(model: Any, config: Config, role: Literal["main", "s
     if config.enable_thinking is False or config.reasoning_effort == "none":
         _warn_once(
             ("*", "thinking_control"),
-            "[thinking_control].enabled=true ですが [llm] 側で思考が無効"
-            "（enable_thinking=false / reasoning_effort=none）のため、思考レベルの切り替えは行いません",
+            "[thinking_control].enabled=true, but thinking is disabled on the [llm] side "
+            "(enable_thinking=false / reasoning_effort=none), so the thinking level is not switched",
         )
         return model
     model.thinking_control = settings_from_config(config)

@@ -44,18 +44,18 @@ class TestReadFile:
         assert "日本語" in result["content"]
 
     def test_missing_file_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="見つかりません"):
+        with pytest.raises(ValueError, match="not found"):
             read_file(tmp_path / "nope.txt")
 
     def test_directory_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="ディレクトリ"):
+        with pytest.raises(ValueError, match="directory"):
             read_file(tmp_path)
 
     def test_binary_raises(self, tmp_path) -> None:
         target = tmp_path / "bin.dat"
         target.write_bytes(b"\x00\x01\x02")
 
-        with pytest.raises(ValueError, match="バイナリ"):
+        with pytest.raises(ValueError, match="binary"):
             read_file(target)
 
 
@@ -89,7 +89,7 @@ class TestGlobSearch:
         assert directory["file_count"] == 1
 
     def test_missing_base_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="見つかりません"):
+        with pytest.raises(ValueError, match="not found"):
             glob_search(tmp_path / "nope", "*.py")
 
     def test_undecodable_file_does_not_abort_search(self, tmp_path) -> None:
@@ -106,7 +106,7 @@ class TestGlobSearch:
         f = tmp_path / "a.txt"
         f.write_text("x", encoding="utf-8")
 
-        with pytest.raises(ValueError, match="ディレクトリではありません"):
+        with pytest.raises(ValueError, match="is not a directory"):
             glob_search(f, "*.py")
 
     def test_brace_alternation_expands_to_union(self, tmp_path) -> None:
@@ -179,7 +179,7 @@ class TestGrepSearch:
         assert result == {"matched": False, "files": [], "matches": [], "counts": []}
 
     def test_missing_base_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="見つかりません"):
+        with pytest.raises(ValueError, match="not found"):
             grep_search(tmp_path / "nope", "TODO")
 
     def test_undecodable_file_is_skipped_not_fatal(self, tmp_path) -> None:
@@ -192,7 +192,7 @@ class TestGrepSearch:
         assert result["files"] == [str((tmp_path / "a.py").resolve())]
 
     def test_invalid_regex_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="正規表現"):
+        with pytest.raises(ValueError, match="regular expression"):
             grep_search(tmp_path, "(unterminated")
 
     def test_invalid_output_mode_raises(self, tmp_path) -> None:
@@ -231,11 +231,11 @@ class TestQueryJson:
         f = tmp_path / "data.json"
         f.write_text("{}", encoding="utf-8")
 
-        with pytest.raises(ValueError, match="同時に指定"):
+        with pytest.raises(ValueError, match="cannot be specified together"):
             query_json("a", file_path=f, json_text="{}")
 
     def test_neither_specified_raises(self) -> None:
-        with pytest.raises(ValueError, match="どちらか一方"):
+        with pytest.raises(ValueError, match="Specify either"):
             query_json("a")
 
     def test_invalid_json_raises(self) -> None:
@@ -247,5 +247,5 @@ class TestQueryJson:
             query_json("a[?", json_text="{}")
 
     def test_missing_file_raises(self, tmp_path) -> None:
-        with pytest.raises(ValueError, match="見つかりません"):
+        with pytest.raises(ValueError, match="not found"):
             query_json("a", file_path=tmp_path / "nope.json")

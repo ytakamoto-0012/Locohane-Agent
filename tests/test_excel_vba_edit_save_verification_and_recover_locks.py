@@ -119,7 +119,7 @@ class TestSaveVerification:
         workbook = _FakeWorkbook(target, touch_on_save=False)
         _install_fake_com(monkeypatch, workbook)
 
-        with pytest.raises(ValueError, match="更新時刻が変化していません"):
+        with pytest.raises(ValueError, match="modification time did not change"):
             edit_vba._edit_vba(target, target, ops=[], is_new=False, overwrite=False)
 
     def test_succeeds_when_mtime_actually_changes(self, tmp_path, monkeypatch):
@@ -192,7 +192,7 @@ class TestRecoverLocksCli:
         exit_code = edit_vba.main()
 
         assert exit_code == 1
-        assert "pathは必須です" in capsys.readouterr().err
+        assert "path is required" in capsys.readouterr().err
 
     def test_missing_ops_without_recover_locks_is_an_error(self, monkeypatch, capsys):
         monkeypatch.setattr(sys, "argv", ["edit_vba.py", "C:\\foo\\book.xlsm"])

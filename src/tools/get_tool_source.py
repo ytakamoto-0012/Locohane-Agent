@@ -13,28 +13,27 @@ logger = logging.getLogger(__name__)
 
 @tool
 def get_tool_source(skill_name: str, script_filename: str) -> str:
-    """run_script で実行したスクリプトの絶対パスを返す（中身は返さない）。
+    """Return the absolute path of a script run with run_script (not its contents).
 
-    run_script がエラー（非0終了コード・スタックトレース）を返した場合の原因調査に使う。
-    このツールでソースファイルの絶対パスを取得し、必要なら read_skill_file で中身を
-    確認するか、execute_python_code 内で `sys.path.insert(0, "<このパスの親ディレクトリ>")`
-    のようにして _common.py 等の同スキル内ヘルパーモジュールを直接 import して調査・
-    代替コードの実行に使う。
+    Use it to investigate the cause when run_script returns an error (non-zero exit code, stack
+    trace). Get the absolute path of the source file with this tool, then if needed check its
+    contents with read_skill_file, or inside execute_python_code do something like
+    `sys.path.insert(0, "<parent directory of this path>")` to import helper modules of the same
+    skill such as _common.py directly, to investigate or run alternative code.
 
     Args:
-        skill_name: スクリプトを持つスキルのフォルダ名。
-        script_filename: 探したいファイル名（例: "read_file.py"）。パスや scripts/
-            プレフィックスは不要 — スキルフォルダの scripts/ 配下から自動検索される。
+        skill_name: The folder name of the skill that has the script.
+        script_filename: The file name to look for (e.g. "read_file.py"). No path or scripts/
+            prefix is needed; it is searched automatically under the scripts/ folder of the skill.
 
     Returns:
-        スクリプトの絶対パス文字列。skill_name に scripts/ ディレクトリが無い場合、
-        スクリプトが見つからない場合は、例外を送出せず「エラー: ...」形式の
-        文字列を返す。
+        The absolute path of the script. If skill_name has no scripts/ directory or the script is
+        not found, it returns an "Error: ..." string instead of raising.
     """
     try:
         script_path = _resolve_script_filename(skill_name, script_filename)
     except ValueError as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     dup_error = _check_file_tools_duplicate("get_tool_source", f"get_tool_source\x00{skill_name}\x00{script_filename}")
     if dup_error:
         return dup_error

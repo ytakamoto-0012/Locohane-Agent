@@ -44,8 +44,8 @@ def test_messages_to_text_replaces_images_with_refs() -> None:
 
     assert "base64" not in text
     assert "説明" in text
-    assert r"[画像: @3 C:\img\a.jpg]" in text and r"[画像: C:\img\b.jpg]" in text
-    assert "[画像]" in text
+    assert r"[image: @3 C:\img\a.jpg]" in text and r"[image: C:\img\b.jpg]" in text
+    assert "[image]" in text
 
 
 def test_image_followup_carries_ref_but_does_not_send_it_to_llm() -> None:

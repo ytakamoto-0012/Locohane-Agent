@@ -97,8 +97,8 @@ async def test_set_language_rejects_unknown_language(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("lang", "has_directive"), [("ja", False), ("en", True)])
-async def test_rebuild_graph_appends_response_language_only_for_english(monkeypatch, lang, has_directive) -> None:
+@pytest.mark.parametrize(("lang", "language_name"), [("ja", "Japanese"), ("en", "English")])
+async def test_rebuild_graph_appends_response_language(monkeypatch, lang, language_name) -> None:
     session = _UserSession({"lang": lang})
     monkeypatch.setattr(app.cl, "user_session", session)
     monkeypatch.setattr(app.cl, "context", types.SimpleNamespace(session=types.SimpleNamespace(id="tab")))
@@ -113,7 +113,7 @@ async def test_rebuild_graph_appends_response_language_only_for_english(monkeypa
 
     await app._rebuild_graph("t1", wait_when_busy=False)
 
-    # 日本語のときはプロンプトを一切変えない（evals のチューニング結果を守るため）。
-    assert (captured[0] != "BASE PROMPT") is has_directive
-    assert ("## Response language" in captured[0]) is has_directive
+    # プロンプト本体は英語のため、日本語のときも応答言語の指示を足す。
+    assert captured[0].startswith("BASE PROMPT\n\n## Response language")
+    assert f"display language is {language_name}" in captured[0]
     assert session.get("graph_lang") == lang

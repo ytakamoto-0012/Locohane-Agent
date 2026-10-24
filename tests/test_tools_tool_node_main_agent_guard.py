@@ -55,7 +55,7 @@ def test_unregistered_tool_is_blocked(monkeypatch) -> None:
     assert result is not None
     content = result["messages"][0].content
     assert "some_unlisted_tool" in content
-    assert "許可されていません" in content
+    assert "is not allowed for the main agent" in content
 
 
 def test_max_calls_minus_one_is_unlimited(monkeypatch) -> None:
@@ -89,7 +89,7 @@ def test_positive_max_calls_blocks_after_limit(monkeypatch) -> None:
     assert first is None
     assert second is None
     assert third is not None
-    assert "呼び出し上限" in third["messages"][0].content
+    assert "call limit" in third["messages"][0].content
 
 
 def test_run_script_pair_unregistered_is_blocked(monkeypatch) -> None:
@@ -101,7 +101,7 @@ def test_run_script_pair_unregistered_is_blocked(monkeypatch) -> None:
     )
 
     assert result is not None
-    assert "許可されていません" in result["messages"][0].content
+    assert "is not allowed for the main agent" in result["messages"][0].content
 
 
 def test_run_script_pair_registered_unlimited(monkeypatch) -> None:
@@ -169,19 +169,19 @@ def test_parse_rejects_duplicate_key_with_different_max_calls() -> None:
     """同じ対象を異なるmax_callsで重複登録すると、_guard_main_agent_tool_limit側で
     frozenset を dict() 化する際にどちらが勝つかがPYTHONHASHSEED依存の非決定動作に
     なる（実測確認済みの回帰）。パース時点で拒否する。"""
-    with pytest.raises(ValueError, match="重複登録"):
+    with pytest.raises(ValueError, match="registered twice"):
         _parse_main_agent_tool_guard_allow_entries('[["Glob", 1], ["Glob", 5]]')
 
 
 def test_parse_rejects_duplicate_key_with_identical_max_calls() -> None:
     """max_callsが同じ完全同一の重複も、設定ミスとして拒否する。"""
-    with pytest.raises(ValueError, match="重複登録"):
+    with pytest.raises(ValueError, match="registered twice"):
         _parse_main_agent_tool_guard_allow_entries('[["Glob", 1], ["Glob", 1]]')
 
 
 def test_parse_rejects_duplicate_run_script_pair() -> None:
     """[skill, script] ペア形式の対象も同様に重複登録を拒否する。"""
-    with pytest.raises(ValueError, match="重複登録"):
+    with pytest.raises(ValueError, match="registered twice"):
         _parse_main_agent_tool_guard_allow_entries(
             '[[["pdf-tools","render_pdf_pages.py"], 0], [["pdf-tools","render_pdf_pages.py"], -1]]'
         )

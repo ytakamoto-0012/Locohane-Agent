@@ -102,16 +102,16 @@ async def test_batch_splits_files_by_name_into_groups(monkeypatch, tmp_path) -> 
 
     assert len(captured) == 3
     # 各グループの task には共通指示と、ファイル名順に割り当てた担当ファイルの絶対パスが入る。
-    by_group = sorted(captured, key=lambda t: t.split("グループ")[1])
+    by_group = sorted(captured, key=lambda t: t.split("(group ")[1])
     expected = [names[0:3], names[3:6], names[6:7]]
     for task, group in zip(by_group, expected):
         assert "画像を解析して md へ書き出す" in task
         for name in group:
             assert str((images / name).resolve()) in task
         assert "memo.txt" not in task
-    assert "7 件を 3 グループ" in result
-    assert "完了 3" in result
-    assert len(notes) == 1 and "dispatch_agent_batch結果" in notes[0]["topic"]
+    assert "Split the 7 files" in result and "into 3 groups" in result
+    assert "done 3" in result
+    assert len(notes) == 1 and "dispatch_agent_batch results" in notes[0]["topic"]
 
 
 @pytest.mark.asyncio
@@ -156,7 +156,7 @@ async def test_batch_returns_error_without_jobs_when_no_files(monkeypatch, tmp_p
 
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path=str(images))
 
-    assert result.startswith("エラー:")
+    assert result.startswith("Error:")
     assert captured == []
     assert tools._dispatch_agent_job._DISPATCH_AGENT_JOBS == {}
 
@@ -167,7 +167,7 @@ async def test_batch_rejects_unknown_agent_type(monkeypatch, tmp_path) -> None:
 
     result = await _invoke(task="t", agent_type="nope", pattern="*.png", path=str(images))
 
-    assert result.startswith("エラー: 不明な agent_type")
+    assert result.startswith("Error: unknown agent_type")
 
 
 @pytest.mark.asyncio
@@ -181,7 +181,7 @@ async def test_batch_truncates_long_group_results_in_return_value(monkeypatch, t
 
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path=str(images))
 
-    assert "（以下略）" in result
+    assert "... (rest omitted)" in result
     assert len(result) < 1500
     # 全文は thread note 側へ保存される。
     assert "長い結果" * 500 in notes[0]["content"]
@@ -207,8 +207,8 @@ async def test_batch_absolute_pattern_returns_error_instead_of_raising(monkeypat
 
     result = await _invoke(task="t", agent_type="worker", pattern=str(images / "*.png"), path=str(images))
 
-    assert result.startswith("エラー: パターンが不正です")
-    assert "path に渡す" in result
+    assert result.startswith("Error: Invalid pattern")
+    assert "pass the folder in path" in result
     assert captured == []
 
 
@@ -220,7 +220,7 @@ async def test_batch_rejects_too_many_groups_without_starting_jobs(monkeypatch, 
 
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path=str(images), group_size=1)
 
-    assert result.startswith("エラー:") and "4 グループ" in result
+    assert result.startswith("Error:") and "4 groups" in result
     assert captured == []
     assert tools._dispatch_agent_job._DISPATCH_AGENT_JOBS == {}
 
@@ -233,7 +233,7 @@ async def test_batch_max_groups_zero_means_unlimited(monkeypatch, tmp_path) -> N
 
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path=str(images), group_size=1)
 
-    assert not result.startswith("エラー:")
+    assert not result.startswith("Error:")
     assert len(captured) == 4
 
 
@@ -252,12 +252,12 @@ async def test_batch_lists_files_only_for_failed_groups(monkeypatch, tmp_path) -
 
     failed, ok = result.split("### ")[1:3]
     ok = ok.split("\n\n")[0]  # 末尾の thread note 案内・再委任案内を除いた、グループ2のブロックだけ
-    assert failed.startswith("グループ1") and ": エラー" in failed
+    assert failed.startswith("Group 1") and ": error" in failed
     # 再委任でLLMがファイル名を推測しないよう、失敗グループには担当ファイルの絶対パスが載る。
     assert f"- {(images / 'a.png').resolve()}" in failed
-    assert ok.startswith("グループ2") and ": 完了" in ok
-    assert "担当ファイル" not in ok
-    assert "dispatch_agent で再委任" in result
+    assert ok.startswith("Group 2") and ": done" in ok
+    assert "Assigned files" not in ok
+    assert "re-delegate with dispatch_agent" in result
     # thread note には全グループの担当ファイルが残る。
     assert str((images / "b.png").resolve()) in notes[0]["content"]
 
@@ -283,7 +283,7 @@ async def test_batch_timeout_returns_completed_results_and_pending_job_ids(monke
     assert len(jobs) == 1
     (pending_id, pending_job), = jobs.items()
     assert "速いグループ" in result
-    assert "完了 1" in result and "実行中 1" in result
+    assert "done 1" in result and "running 1" in result
     assert f"job_id={pending_id}" in result
     assert "check_dispatch_agent_job" in result
     assert f"- {(images / 'b.png').resolve()}" in result
@@ -331,9 +331,9 @@ def test_single_job_progress_shows_waiting_until_semaphore_acquired(monkeypatch)
         status="running", result=None, error_message=None, max_iterations=10,
     )
 
-    assert tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j").startswith("順番待ちです")
+    assert tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j").startswith("Waiting in line")
     job.run_started_at = __import__("time").monotonic()
-    assert tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j").startswith("実行中です（経過 0 秒")
+    assert tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j").startswith("Running (elapsed 0 s")
 
 
 def test_progress_shows_current_activity(monkeypatch) -> None:
@@ -345,11 +345,12 @@ def test_progress_shows_current_activity(monkeypatch) -> None:
         run_started_at=__import__("time").monotonic(),
     )
 
-    assert "【" not in tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j")
-    job.current_activity = "ツール: Read"
-    assert "【ツール: Read】" in tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j")
+    assert " [Tool" not in tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j")
+    job.current_activity = ("tools", "Read")
+    assert "[Tool: Read]" in tools._dispatch_agent_job._format_dispatch_agent_progress(job, "j")
 
     job.runner_task = type("_T", (), {"done": lambda self: False})()
+    # 一括の進捗は画面専用で、セッションの表示言語（セッション外は既定の日本語）で出す。
     assert "【ツール: Read】" in _BATCH_MODULE._format_batch_progress([("j", job)], 0.0)
 
 
@@ -422,7 +423,7 @@ async def test_batch_pattern_cannot_escape_path_with_parent_dir(monkeypatch, tmp
     captured = _capture_tasks(monkeypatch)
 
     result = await _invoke(task="t", agent_type="worker", pattern="../outside/*.png", path=str(images))
-    assert result.startswith("エラー:")
+    assert result.startswith("Error:")
     assert captured == []
 
     result = await _invoke(task="t", agent_type="worker", pattern="{*.png,../outside/*.png}", path=str(images))
@@ -439,7 +440,7 @@ async def test_batch_plain_pattern_stays_direct_children_only_with_hint(monkeypa
 
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path=str(images))
 
-    assert result.startswith("エラー:") and "**/*.jpg" in result
+    assert result.startswith("Error:") and "**/*.jpg" in result
     assert captured == []
 
 
@@ -469,7 +470,7 @@ async def test_batch_runs_each_group_as_named_child_runnable(monkeypatch, tmp_pa
     )
 
     labels = sorted(meta["batch_group_label"] for _, meta in started)
-    assert labels == ["SUB: worker（グループ1/2・2件）", "SUB: worker（グループ2/2・1件）"]
+    assert labels == ["SUB: worker (group 1/2, 2 files)", "SUB: worker (group 2/2, 1 files)"]
 
 
 @pytest.mark.asyncio
@@ -479,12 +480,12 @@ async def test_batch_missing_folder_lists_workdir_folders(monkeypatch, tmp_path)
 
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path="no_such_folder")
 
-    assert result.startswith("エラー: 対象フォルダが見つかりません")
-    assert "直下のフォルダ: images" in result
+    assert result.startswith("Error: target folder not found")
+    assert "Folders directly under the working directory" in result and "images" in result
     assert captured == []
 
 
-_UNREACHABLE_RESULT = "[サブエージェント: LLM呼び出しがタイムアウトした(ConnectError)ため打ち切りました]"
+_UNREACHABLE_RESULT = "[Sub-agent: the LLM call timed out(ConnectError), so it was cut off]"
 
 
 @pytest.mark.asyncio
@@ -504,8 +505,8 @@ async def test_batch_stops_starting_groups_after_llm_unreachable(monkeypatch, tm
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path=str(images), group_size=1)
 
     assert len(started) == 1
-    assert "打ち切り 1" in result and "未実行 2" in result
-    assert "LLMサーバーの状態をユーザーに確認" in result
+    assert "truncated 1" in result and "not started 2" in result
+    assert "ask the user to check the state of the LLM server" in result
     # 未実行のグループも担当ファイルを返す（再委任用）。
     assert f"- {(images / 'f2.png').resolve()}" in result
     assert tools._dispatch_agent_job._DISPATCH_AGENT_JOBS == {}
@@ -527,8 +528,8 @@ async def test_batch_unreachable_guard_disabled_with_zero(monkeypatch, tmp_path)
     result = await _invoke(task="t", agent_type="worker", pattern="*.png", path=str(images), group_size=1)
 
     assert len(started) == 3
-    assert "打ち切り 3）" in result
-    assert "LLMサーバーの状態" not in result
+    assert "truncated 3)" in result
+    assert "state of the LLM server" not in result
 
 
 @pytest.mark.asyncio
@@ -565,7 +566,7 @@ async def test_batch_saves_interrupted_note_on_cancel(monkeypatch, tmp_path) -> 
     note = notes[0]
     assert note["topic"] == _BATCH_MODULE.interrupted_note_topic(tool_call_id)
     content = note["content"]
-    assert "完了 1" in content and "強制終了 1" in content and "未実行 1" in content
+    assert "done 1" in content and "killed 1" in content and "not started 1" in content
     assert "グループ1の処理結果" in content
     assert str((images / "c.png").resolve()) in content
     assert tools._dispatch_agent_job._DISPATCH_AGENT_JOBS == {}

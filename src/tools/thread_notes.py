@@ -71,33 +71,34 @@ def _parse_thread_notes(text: str) -> list["_ThreadNoteBlock"]:
 
 @tool
 def write_thread_note(topic: str, content: str) -> str:
-    """調査で分かった詳細を、スレッド全体で共有されるノートへ書き込む。
+    """Write details found in your investigation to a note shared by the whole thread.
 
-    write_scratch_note と違い、このファイルは同一スレッド内であれば
-    メインエージェント・どのサブエージェント（agent_type）からも
-    list_thread_notes / read_thread_note で読める（run_id には縛られない）。
-    委譲元への最終回答を要約に留めたい場合、根拠となる具体的な事実
-    （値・件数・該当箇所等）はここに書き、最終回答では topic 名を参照する形にする。
+    Unlike write_scratch_note, within the same thread this file can be read by the main agent and
+    by any sub-agent (agent_type) with list_thread_notes / read_thread_note (it is not tied to a
+    run_id). When you want to keep the final answer to the delegator to a summary, write the
+    concrete facts behind it (values, counts, locations, etc.) here, and refer to the topic name in
+    the final answer.
 
-    生データの丸写しではなく、抽出済みの事実を凝縮して書くこと
-    （このノート自体が肥大化すると、後で読む側のコンテキストを圧迫する）。
-    同じ topic で複数回呼べば追記されていく（既存内容は上書きされない）。
+    Write condensed, extracted facts, not raw data copied as is
+    (if the note itself grows large, it squeezes the context of whoever reads it later).
+    Calling it several times with the same topic appends (existing content is not overwritten).
 
     Args:
-        topic: この書き込みの見出し。以後 list_thread_notes / read_thread_note
-            から同じ文字列で参照する（表記ゆれがあると別トピック扱いになるので、
-            既存トピックへ追記したい場合は list_thread_notes で正確な表記を確認する）。
-        content: 書き込む内容（Markdown等の自由形式）。
+        topic: The heading of this entry. Refer to it later with the same string from
+            list_thread_notes / read_thread_note (different spellings are treated as different
+            topics, so to append to an existing topic, check its exact spelling with
+            list_thread_notes).
+        content: The content to write (free form, such as Markdown).
 
     Returns:
-        書き込み先の絶対パスと、この topic の累計文字数・ファイル全体の文字数。
-        topic/content が空、または書き込みに失敗した場合は「エラー: ...」形式で返す。
+        The absolute path written to, the total characters of this topic and of the whole file.
+        If topic/content is empty or writing fails, it returns an "Error: ..." string.
     """
     topic_clean = topic.strip()
     if not topic_clean:
-        return "エラー: topic が空です。"
+        return "Error: topic is empty."
     if not content.strip():
-        return "エラー: content が空です。"
+        return "Error: content is empty."
     path = _thread_notes_path()
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     author = _thread_note_author()
@@ -107,11 +108,11 @@ def write_thread_note(topic: str, content: str) -> str:
             f.write(block)
         full_text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
-        return f"エラー: thread note への書き込みに失敗しました: {e}"
+        return f"Error: failed to write to the thread note: {e}"
     topic_chars = sum(b.content.__len__() for b in _parse_thread_notes(full_text) if b.topic == topic_clean)
     return (
-        f'書き込みました: topic="{topic_clean}"（このtopic累計 {topic_chars} 文字、'
-        f"ファイル全体 {len(full_text)} 文字）。パス: {path}"
+        f'Written: topic="{topic_clean}" (this topic in total {topic_chars} chars, '
+        f"whole file {len(full_text)} chars). Path: {path}"
     )
 
 
@@ -134,37 +135,37 @@ def _format_thread_notes_listing(path: Path) -> str | None:
     grouped: dict[str, list[_ThreadNoteBlock]] = {}
     for b in blocks:
         grouped.setdefault(b.topic, []).append(b)
-    lines = [f"thread note のトピック一覧（{len(grouped)}件、ファイル全体 {len(text)} 文字）:"]
+    lines = [f"Thread note topics ({len(grouped)}, whole file {len(text)} chars):"]
     for topic, items in grouped.items():
         total_chars = sum(len(b.content) for b in items)
         last = items[-1]
         lines.append(
-            f'- "{topic}": {total_chars}文字（{len(items)}件の書き込み、最終更新 {last.timestamp} by {last.author}）'
+            f'- "{topic}": {total_chars} chars ({len(items)} writes, last updated {last.timestamp} by {last.author})'
         )
     return "\n".join(lines)
 
 
 @tool
 def list_thread_notes() -> str:
-    """スレッド全体で共有されるノート（write_thread_note の書き込み先）の
-    トピック一覧を、本文抜きで返す。
+    """Return the list of topics of the note shared by the whole thread (where write_thread_note writes),
+    without their bodies.
 
-    本文を読む前に必ずこれを呼び、対象トピックの文字数を確認すること。
-    ノートはスレッドが進むほど肥大化するため、read_thread_note でいきなり
-    本文を読むとコンテキストを圧迫しうる。文字数が大きいトピックは、
-    read_thread_note が案内する通り dispatch_agent での分析委譲を検討する。
+    Always call this before reading a body, and check the size of the target topic. The note grows
+    as the thread goes on, so reading a body directly with read_thread_note can squeeze the
+    context. For large topics, consider delegating the analysis with dispatch_agent, as
+    read_thread_note suggests.
 
     Returns:
-        トピックごとの「文字数・書き込み件数・最終更新日時と書き込み者
-        （main または agent_type）」の一覧。ノートがまだ無ければその旨を返す。
+        A list with, for each topic, its "characters, number of writes, last update time and writer
+        (main or agent_type)". If there is no note yet, a text saying so.
     """
     path = _thread_notes_path()
     listing = _format_thread_notes_listing(path)
     if listing is not None:
         return listing
     if not path.is_file():
-        return "thread note はまだありません。write_thread_note で最初のトピックを書き込めます。"
-    return "thread note ファイルは存在しますが、有効なトピックがまだありません。"
+        return "There are no thread notes yet. You can write the first topic with write_thread_note."
+    return "The thread note file exists, but there are no valid topics yet."
 
 
 def thread_note_status_text() -> str:
@@ -190,32 +191,31 @@ def thread_note_status_text() -> str:
 
 @tool
 def read_thread_note(topic: str) -> str:
-    """スレッド全体で共有されるノートから、指定した topic の内容だけを読む。
+    """Read only the content of the specified topic from the note shared by the whole thread.
 
-    呼ぶ前に必ず list_thread_notes で対象トピックの文字数を確認すること。
-    このtopicの合計文字数が大きい場合、この関数は先頭・末尾のみを返し
-    中略する（このツール自身の出力でコンテキストを圧迫しないため）。
-    全量の精読・分析が必要な場合は、切り詰め時に返る案内の通り
-    dispatch_agent で worker または explore へ、このファイルパスと
-    topic名を指定して分析を委譲すること（サブエージェントの Read は
-    メインエージェントのようなツール呼び出し回数ガードの対象外のため、
-    このファイルを直接 Read して全文を精読できる）。
+    Always check the size of the target topic with list_thread_notes before calling it.
+    If the topic is large in total, this function returns only the beginning and the end and omits
+    the middle (so this tool's own output does not squeeze the context).
+    If you need to read and analyze all of it, follow the notice returned when truncated and
+    delegate the analysis with dispatch_agent to worker or explore, specifying this file path and
+    the topic name (a sub-agent's Read is not subject to the main agent's tool call guard, so it can
+    Read this file directly and study the whole text).
 
     Args:
-        topic: list_thread_notes に表示された、正確なトピック名。
+        topic: The exact topic name shown by list_thread_notes.
 
     Returns:
-        topicの内容（大きい場合は先頭・末尾のみ＋案内）。ノートが無い、
-        またはtopicが見つからない場合は「エラー: ...」形式で返す。
+        The content of the topic (only the beginning and end plus a notice if large). If there is
+        no note or the topic is not found, it returns an "Error: ..." string.
     """
     path = _thread_notes_path()
     if not path.is_file():
-        return "エラー: thread note はまだありません。"
+        return "Error: there are no thread notes yet."
     text = path.read_text(encoding="utf-8", errors="replace")
     topic_clean = topic.strip()
     blocks = [b for b in _parse_thread_notes(text) if b.topic == topic_clean]
     if not blocks:
-        return f'エラー: topic "{topic_clean}" は見つかりません。list_thread_notes で確認してください。'
+        return f'Error: topic "{topic_clean}" not found. Check with list_thread_notes.'
     merged = "\n\n".join(f"[{b.timestamp} by {b.author}]\n{b.content}" for b in blocks)
     if len(merged) <= _JOB_OUTPUT_TAIL_CHARS:
         return merged
@@ -224,8 +224,8 @@ def read_thread_note(topic: str) -> str:
     tail = merged[-half:]
     return (
         f"{head}\n\n"
-        f'...(中略: topic "{topic_clean}" は合計 {len(merged)} 文字あり、先頭・末尾のみ表示)...\n\n'
+        f'...(omitted: topic "{topic_clean}" has {len(merged)} chars in total; only the beginning and end are shown)...\n\n'
         f"{tail}\n\n"
-        f'[全量の精読・分析が必要な場合は dispatch_agent で worker または explore へ、'
-        f'「{path} の "{topic_clean}" セクションをReadして分析・要約せよ」という形で委譲してください。]'
+        f'[If you need to read and analyze all of it, delegate to worker or explore with dispatch_agent, '
+        f'in the form "Read the \"{topic_clean}\" section of {path} and analyze/summarize it".]'
     )

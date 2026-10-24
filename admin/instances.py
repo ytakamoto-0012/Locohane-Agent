@@ -568,7 +568,7 @@ def list_data_paths(instances_root: Path, config_ini_path: Path, name: str) -> l
     guard_roots = [project_root, Path.home().resolve(), instances_root.resolve()]
 
     # 他インスタンスのデータパス・共有パスと、自インスタンスの共有パス（重複検出用）。
-    others: list[tuple[str, Path]] = [(f"インスタンス {name!r} 自身の共有パス", p) for p in _protected_paths(cfg)]
+    others: list[tuple[str, Path]] = [(_t("インスタンス {0!r} 自身の共有パス", name), p) for p in _protected_paths(cfg)]
     unreadable: list[str] = []
     for other_name in list_instance_names(instances_root):
         if other_name == name:
@@ -581,29 +581,29 @@ def list_data_paths(instances_root: Path, config_ini_path: Path, name: str) -> l
             unreadable.append(other_name)
             continue
         for key, _ in DATA_PATH_FIELDS:
-            others.append((f"インスタンス {other_name!r} の {key}", getattr(other_cfg, key).resolve()))
-        others += [(f"インスタンス {other_name!r} の共有パス", p) for p in _protected_paths(other_cfg)]
+            others.append((_t("インスタンス {0!r} の {1}", other_name, key), getattr(other_cfg, key).resolve()))
+        others += [(_t("インスタンス {0!r} の共有パス", other_name), p) for p in _protected_paths(other_cfg)]
 
     entries: list[DataPathEntry] = []
     for key, label in DATA_PATH_FIELDS:
         path = getattr(cfg, key).resolve()
-        entry = DataPathEntry(key=key, label=label, path=path, exists=path.exists(), deletable=False)
+        entry = DataPathEntry(key=key, label=_t(label), path=path, exists=path.exists(), deletable=False)
         entries.append(entry)
         if not entry.exists:
-            entry.reason = "存在しません"
+            entry.reason = _t("存在しません")
             continue
         if path == Path(path.anchor) or any(root.is_relative_to(path) for root in guard_roots):
-            entry.reason = "ドライブのルート・ホーム・プロジェクト等の上位ディレクトリのため削除できません"
+            entry.reason = _t("ドライブのルート・ホーム・プロジェクト等の上位ディレクトリのため削除できません")
             continue
         if path.is_relative_to(project_root) and not path.is_relative_to(own_default_data):
-            entry.reason = f"プロジェクト内の data/{name}/ 配下ではないため削除できません"
+            entry.reason = _t("プロジェクト内の data/{0}/ 配下ではないため削除できません", name)
             continue
         if unreadable:
-            entry.reason = f"インスタンス {', '.join(unreadable)} の設定を読み込めず、重複を確認できないため削除できません"
+            entry.reason = _t("インスタンス {0} の設定を読み込めず、重複を確認できないため削除できません", ", ".join(unreadable))
             continue
         conflict = next((desc for desc, other in others if _overlaps(path, other)), None)
         if conflict is not None:
-            entry.reason = f"{conflict} と重複しているため削除できません"
+            entry.reason = _t("{0} と重複しているため削除できません", conflict)
             continue
         entry.deletable = True
         entry.default_selected = path.is_relative_to(own_default_data)

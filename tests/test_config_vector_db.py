@@ -103,9 +103,9 @@ def test_prefix_explicit_value_and_blank_override_auto(tmp_path):
         ({"top_k": "0"}, "top_k"),
         (
             {"embedding_url": '[{"base_url": "http://a/v1", "model": "m1"}, {"base_url": "http://b/v1", "model": "m2"}]'},
-            "同じ",
+            "must be the same",
         ),
-        ({"embedding_url": '[{"base_url": "http://a/v1", "model": "m1", "start": 9, "end": 18}]'}, "start/end"),
+        ({"embedding_url": '[{"base_url": "http://a/v1", "model": "m1", "start": 9, "end": 18}]'}, "neither start nor end"),
         ({"embedding_url": '[{"base_url": "http://a/v1"}]'}, r"\[vector_db\]\.embedding_url"),
     ],
 )
@@ -134,7 +134,7 @@ def test_distance_rejects_unknown_value(tmp_path):
 
 
 def test_sqlite_vec_rejects_dot(tmp_path):
-    with pytest.raises(ValueError, match="sqlite-vec は Dot"):
+    with pytest.raises(ValueError, match="sqlite-vec does not support Dot"):
         _load(tmp_path, {"backend": "sqlite_vec", "distance": "dot"})
 
 

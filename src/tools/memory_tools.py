@@ -16,148 +16,147 @@ logger = logging.getLogger(__name__)
 def _require_memory_root() -> Path:
     """_state._MEMORY_ROOT を返す。init_tools() が未実行なら RuntimeError。"""
     if _state._MEMORY_ROOT is None:
-        raise RuntimeError("init_tools() が未実行です")
+        raise RuntimeError("init_tools() has not been run")
     return _state._MEMORY_ROOT
 
 
 @tool
 def create_memory(name: str, description: str, memory_type: str, content: str) -> str:
-    """新しい永続メモリーを保存する。
+    """Save a new persistent memory.
 
-    スレッドをまたいで将来の会話へ引き継ぎたい価値ある事実を学んだときに使う。
-    memory_type ごとの保存タイミング・保存してはいけないものはシステムプロンプトの
-    Memory System セクションを参照すること。同名のメモリーが既にある場合はエラーに
-    なるので、既存メモリーの更新には update_memory を使うこと（迷ったら先に
-    search_memory / list_memories で重複が無いか確認する）。
+    Use it when you learn a valuable fact worth carrying over to future conversations across
+    threads. For when to save each memory_type and what must not be saved, see the Memory System
+    section of the system prompt. If a memory with the same name already exists it is an error,
+    so use update_memory to update an existing memory (if in doubt, first check for duplicates with
+    search_memory / list_memories).
 
     Args:
-        name: 一意な名前（英数字・ハイフン・アンダースコアのみ、64文字以内）。
-        description: 一行の説明文（索引 MEMORY.md にそのまま載る）。
-        memory_type: "user" | "feedback" | "project" | "reference" のいずれか。
-        content: メモリー本文。feedback/project タイプはルール/事実の後に
-            「**Why:**」「**How to apply:**」の行を含めることが望ましい。
+        name: A unique name (letters, digits, hyphens and underscores only, up to 64 characters).
+        description: A one-line description (shown as is in the index MEMORY.md).
+        memory_type: One of "user" | "feedback" | "project" | "reference".
+        content: The memory body. For the feedback/project types, it is best to include
+            "**Why:**" and "**How to apply:**" lines after the rule/fact.
 
     Returns:
-        保存したファイルパスを伝えるテキスト。name/memory_type が不正、
-        description/content が空、同名のメモリーが既に存在する場合は、
-        例外を送出せず「エラー: ...」形式の文字列を返す。
+        A text telling the saved file path. If name/memory_type is invalid,
+        description/content is empty, or a memory with the same name already exists,
+        it returns an "Error: ..." string instead of raising.
     """
     try:
         path = memory.create_memory(_require_memory_root(), name, description, memory_type, content)
     except (RuntimeError, ValueError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     logger.info("create_memory: %s", name)
-    return f"メモリーを保存しました: {path}"
+    return f"Saved the memory: {path}"
 
 
 @tool
 def update_memory(name: str, content: str) -> str:
-    """既存の永続メモリーの本文を更新する（name/description/memory_typeは変わらない）。
+    """Update the body of an existing persistent memory (name/description/memory_type do not change).
 
     Args:
-        name: 更新対象メモリーの名前。
-        content: 新しい本文（既存の本文を丸ごと置き換える）。
+        name: The name of the memory to update.
+        content: The new body (replaces the existing body entirely).
 
     Returns:
-        更新したファイルパスを伝えるテキスト。content が空、または name の
-        メモリーが存在しない場合は、例外を送出せず「エラー: ...」形式の文字列を返す。
+        A text telling the updated file path. If content is empty or no memory has that name,
+        it returns an "Error: ..." string instead of raising.
     """
     try:
         path = memory.update_memory(_require_memory_root(), name, content)
     except (RuntimeError, ValueError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     logger.info("update_memory: %s", name)
-    return f"メモリーを更新しました: {path}"
+    return f"Updated the memory: {path}"
 
 
 @tool
 def delete_memory(name: str) -> str:
-    """永続メモリーを削除する。
+    """Delete a persistent memory.
 
     Args:
-        name: 削除対象メモリーの名前。
+        name: The name of the memory to delete.
 
     Returns:
-        削除したファイルパスを伝えるテキスト。name のメモリーが存在しない場合は、
-        例外を送出せず「エラー: ...」形式の文字列を返す。
+        A text telling the deleted file path. If no memory has that name,
+        it returns an "Error: ..." string instead of raising.
     """
     try:
         path = memory.delete_memory(_require_memory_root(), name)
     except (RuntimeError, ValueError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     logger.info("delete_memory: %s", name)
-    return f"メモリーを削除しました: {path}"
+    return f"Deleted the memory: {path}"
 
 
 @tool
 def read_memory(name: str) -> str:
-    """永続メモリー1件を本文込みで全文読み込む。
+    """Read one persistent memory in full, including its body.
 
-    search_memory / list_memories は一覧（name+description）しか返さないため、
-    メモリーの内容そのものを確認・引用する前には必ずこのツールで全文を読むこと。
+    search_memory / list_memories return only a list (name+description), so always read the full
+    text with this tool before checking or quoting the content of a memory.
 
     Args:
-        name: 読み込むメモリーの名前。
+        name: The name of the memory to read.
 
     Returns:
-        「[type] name\\ndescription\\n\\ncontent」形式の全文。name のメモリーが
-        存在しない場合は、例外を送出せず「エラー: ...」形式の文字列を返す。
+        The full text in the form "[type] name\\ndescription\\n\\ncontent". If no memory has that
+        name, it returns an "Error: ..." string instead of raising.
     """
     try:
         mem = memory.read_memory(_require_memory_root(), name)
     except (RuntimeError, ValueError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     logger.info("read_memory: %s", name)
     return f"[{mem.memory_type}] {mem.name}\n{mem.description}\n\n{mem.content}"
 
 
 @tool
 def search_memory(query: str, memory_type: str | None = None) -> str:
-    """永続メモリーを name/description/本文に対するキーワード部分一致で検索する。
+    """Search persistent memories by keyword substring match on name/description/body.
 
-    本文は返さず一覧（name+description）のみを返す（コンテキスト節約のため）。
-    内容そのものが必要な場合は、ヒットした name を read_memory へ渡すこと。
+    Returns only a list (name+description), not the bodies (to save context).
+    If you need the content itself, pass the name of a hit to read_memory.
 
     Args:
-        query: 検索キーワード（大文字小文字は区別しない）。
-        memory_type: 指定すれば "user"|"feedback"|"project"|"reference" の
-            いずれかに絞り込む（省略時は全type対象）。
+        query: The search keyword (case-insensitive).
+        memory_type: If given, narrow to one of "user"|"feedback"|"project"|"reference"
+            (all types if omitted).
 
     Returns:
-        ヒットしたメモリーの「- [type] name: description」一覧と件数。
-        0件の場合は「一致するメモリーはありません」。query が空、または
-        memory_type が不正な値の場合は、例外を送出せず「エラー: ...」形式の
-        文字列を返す。
+        A list of hits as "- [type] name: description" and the count.
+        With no hits, "No matching memories." If query is empty or memory_type is invalid,
+        it returns an "Error: ..." string instead of raising.
     """
     try:
         hits = memory.search_memories(_require_memory_root(), query, memory_type)
     except (RuntimeError, ValueError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     logger.info("search_memory: query=%r type=%s hits=%d", query, memory_type, len(hits))
     if not hits:
-        return "一致するメモリーはありません。"
+        return "No matching memories."
     lines = [f"- [{m.memory_type}] {m.name}: {m.description}" for m in hits]
-    return f"{len(hits)}件ヒットしました。\n" + "\n".join(lines)
+    return f"{len(hits)} hits.\n" + "\n".join(lines)
 
 
 @tool
 def list_memories(memory_type: str | None = None) -> str:
-    """保存されている永続メモリーを一覧表示する。
+    """List the saved persistent memories.
 
     Args:
-        memory_type: 指定すれば "user"|"feedback"|"project"|"reference" の
-            いずれかに絞り込む（省略時は全type対象）。
+        memory_type: If given, narrow to one of "user"|"feedback"|"project"|"reference"
+            (all types if omitted).
 
     Returns:
-        「- [type] name: description」一覧。0件の場合は
-        「保存されているメモリーはありません」。memory_type が不正な値の
-        場合は、例外を送出せず「エラー: ...」形式の文字列を返す。
+        A list of "- [type] name: description". With none,
+        "No memories saved." If memory_type is invalid,
+        it returns an "Error: ..." string instead of raising.
     """
     try:
         mems = memory.list_memories(_require_memory_root(), memory_type)
     except (RuntimeError, ValueError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     logger.info("list_memories: type=%s count=%d", memory_type, len(mems))
     if not mems:
-        return "保存されているメモリーはありません。"
+        return "No memories saved."
     return "\n".join(f"- [{m.memory_type}] {m.name}: {m.description}" for m in mems)

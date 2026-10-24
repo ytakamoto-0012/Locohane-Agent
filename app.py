@@ -547,13 +547,11 @@ async def _rebuild_checkpointer(thread_id: str):
 if _config.auth_enabled:
     if not os.environ.get("CHAINLIT_AUTH_SECRET"):
         raise RuntimeError(
-            "config.ini の [auth] enabled=true ですが、.env に CHAINLIT_AUTH_SECRET が"
-            "設定されていません。`chainlit create-secret` の出力を .env に追記してください。"
+            "[auth] enabled=true in config.ini, but CHAINLIT_AUTH_SECRET is not set in .env. Add the output of `chainlit create-secret` to .env."
         )
     if not _config.auth_users:
         raise RuntimeError(
-            "config.ini の [auth] enabled=true ですが、.env の AUTH_USERS が"
-            "未設定または空です。少なくとも1組のユーザー名/パスワードを登録してください。"
+            "[auth] enabled=true in config.ini, but AUTH_USERS in .env is not set or empty. Register at least one username/password pair."
         )
 
     @cl.password_auth_callback
@@ -587,7 +585,7 @@ if _config.thread_store_enabled:
         で、サーバーがリクエストの受付を開始する前に必ず構築しておく
         （この関数定義自体はそれより前で構わない。遅延実行されるため）。
         """
-        assert _thread_data_layer is not None, "_on_app_startup() が完了する前に data layer が参照されました"
+        assert _thread_data_layer is not None, "The data layer was accessed before _on_app_startup() completed"
         return _thread_data_layer
 
 
@@ -865,7 +863,7 @@ if _config.thread_store_enabled:
         """
         await _assert_owns_thread(thread_id, current_user)
         if thread_id in _generating_thread_ids:
-            raise HTTPException(status_code=409, detail="この会話は生成中のため削除できません。停止してから削除してください。")
+            raise HTTPException(status_code=409, detail="This conversation is generating and cannot be deleted. Stop it first, then delete it.")
         await thread_store.delete_thread_row(_thread_store_conn, thread_id, _config.elements_dir)
         return {"success": True}
 
@@ -1442,15 +1440,15 @@ def _build_work_dir_notice() -> str:
     status: WorkDirAccessStatus | None = cl.user_session.get("work_dir_access") if work_dir else None
     info = _build_workdir_status_info(work_dir, status)
     return (
-        "[作業ディレクトリ]\n"
+        "[Working directory]\n"
         f"{json.dumps(info, ensure_ascii=False)}\n"
-        "absolute_path をそのまま Read/Glob/Grep/analyze_image の対象パスとして使う"
-        "（他の説明文と連結せず、この値単体をパスとして扱う）。"
-        "書き込みは常に write_dir へ行う。state は書き込み先の判断に使わない"
-        "（write_dir が absolute_path と同じ値なら直接書ける、異なる値ならリダイレクトされている）。"
-        "サブフォルダ名しか分からない場合は Glob の path 引数を省略すれば自動的に"
-        "absolute_path 配下が検索対象になる（pattern 側にサブフォルダ名を含めてよい。例:"
-        ' pattern="**/images/**/*"）。パスを記憶や推測で組み立てない。'
+        "Use absolute_path as is for the target path of Read/Glob/Grep/analyze_image "
+        "(treat this value alone as the path; do not join it with other text). "
+        "Always write to write_dir. Do not use state to decide where to write "
+        "(if write_dir equals absolute_path you can write there directly; if it differs, writes are redirected). "
+        "If you only know a subfolder name, omit the path argument of Glob and it automatically "
+        "searches under absolute_path (you may put the subfolder name in pattern, e.g. "
+        'pattern="**/images/**/*"). Never build paths from memory or guesswork.'
     )
 
 
@@ -1718,7 +1716,7 @@ async def _setup() -> None:
     log_level = _config.log_level
     if log_level not in ("info", "debug", "none"):
         raise ValueError(
-            f"unknown log_level: {_config.log_level!r}（config.ini の " "[log].level は info/debug/none のいずれかで指定してください）"
+            f"unknown log_level: {_config.log_level!r} (set [log].level in config.ini to one of info/debug/none)"
         )
     if log_level == "none":
         logging.disable(logging.CRITICAL)
@@ -1815,8 +1813,7 @@ async def _setup() -> None:
             main_skills_block = render_skills_block_with_hint(skills, _config)
         blocked_names = list_blocked_tool_names_for_hint(get_all_tools(), _config)
         blocked_tools_hint = (
-            "以下のビルトインツールは直接呼び出せません（詳細確認・実行が必要な場合は"
-            "dispatch_agentへ委譲してください）: " + "、".join(blocked_names)
+            "The following built-in tools cannot be called directly (delegate to dispatch_agent if you need details or execution): " + ", ".join(blocked_names)
             if blocked_names
             else ""
         )
@@ -2996,18 +2993,18 @@ def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice
     text = user_text
     for i, p in enumerate(pasted_paths, start=1):
         # 保存先パスも添えておく（長文をスクリプトで処理させたい場合に渡せるように）。
-        text += f"\n\n[貼り付けテキスト{i}（保存先: {p}）]\n{_read_pasted_text(p)}\n[貼り付けテキスト{i} ここまで]"
+        text += f"\n\n[Pasted text {i} (saved to: {p})]\n{_read_pasted_text(p)}\n[End of pasted text {i}]"
     if work_dir_notice:
         text += f"\n\n{work_dir_notice}"
     if other_paths:
-        tokens = {path: token for token, path in _register_path_memory(other_paths, description="アップロード").items()}
+        tokens = {path: token for token, path in _register_path_memory(other_paths, description="upload").items()}
         lines = [f"- {tokens[p]}: {p}" if p in tokens else f"- {p}" for p in other_paths]
         folders = list(dict.fromkeys(str(Path(p).parent) for p in other_paths))
         if len(other_paths) >= 2 and len(folders) == 1:
-            folder_token = next(iter(_register_path_memory(folders, description="アップロード（送信フォルダ）")), None)
-            lines.append(f"（フォルダ: {folder_token}: {folders[0]}）" if folder_token else f"（フォルダ: {folders[0]}）")
+            folder_token = next(iter(_register_path_memory(folders, description="upload (sent folder)")), None)
+            lines.append(f"(folder: {folder_token}: {folders[0]})" if folder_token else f"(folder: {folders[0]})")
         paths = "\n".join(lines)
-        text += f"\n\n[アップロードされたファイルの保存先（ツールには @N を渡す）]\n{paths}"
+        text += f"\n\n[Saved locations of uploaded files (pass @N to tools)]\n{paths}"
 
     # ユーザー自身の発話の目印（[llm].reasoning_preserve 有効時、thinking を
     # 載せ直す範囲の境界になる。src/llm/dialect.py の mark_user_turn 参照）。
@@ -3197,7 +3194,7 @@ async def _get_or_open_thinking(
     if thinking is not None:
         return thinking
     thinking = cl.Step(
-        name="思考中",
+        name="Thinking",
         type="llm",
         parent_id=_resolve_parent_id(event, steps),
         metadata={"subagent_output": True} if owner is not None else None,
@@ -3286,7 +3283,7 @@ def _is_dispatch_agent_error(tool_name: str, content: object) -> bool:
     終了として扱ってしまうため、ここで検知して呼び出し元が is_error を
     立てられるようにする。
     """
-    return tool_name in _SUBAGENT_DISPATCH_TOOLS and isinstance(content, str) and content.startswith("エラー:")
+    return tool_name in _SUBAGENT_DISPATCH_TOOLS and isinstance(content, str) and content.startswith("Error:")
 
 
 def _is_dispatch_agent_truncated(tool_name: str, content: object) -> bool:
@@ -3353,8 +3350,7 @@ async def _finalize_orphaned_steps(steps: dict[str, cl.Step], reason: str) -> No
 
 # 安全上限で dispatch_agent_batch が先に返った後も裏で動き続けるグループStepの出力欄の文言。
 _BATCH_GROUP_BACKGROUND_OUTPUT = (
-    "安全上限に達したため、このグループはバックグラウンドで実行を続けています"
-    "（結果は check_dispatch_agent_job で取得します）。"
+    "This group keeps running in the background because the safety limit was reached (its result is collected with check_dispatch_agent_job)."
 )
 
 
@@ -3537,9 +3533,9 @@ def _batch_interrupted_note_line(tc: dict) -> str:
     except Exception:  # noqa: BLE001 - 確認できなければ案内しないだけ
         return ""
     return (
-        f'中断した時点の各グループの状態（完了済みグループの結果と、未完了グループの担当ファイル）を thread note "{topic}" に'
-        "保存済みです。再開時はまず read_thread_note でこれを読み、完了済みのグループはやり直さず、"
-        "未完了のグループだけを再委任してください。"
+        f'The state of each group at the interruption (results of completed groups and the files assigned to unfinished groups) has been saved to thread note "{topic}". '
+        "When resuming, first read it with read_thread_note, do not redo completed groups, "
+        "and re-delegate only the unfinished groups."
     )
 
 
@@ -3547,26 +3543,25 @@ def _dispatch_agent_rescue_files_hint(paths: list[Path]) -> str:
     """緊急退避ファイルの一覧から案内文を組み立てる（_dispatch_agent_rescue_note_hint 参照）。"""
     if len(paths) == 1:
         return (
-            "このサブエージェントへの委譲は中断直前まで会話内容を次のファイルへ"
-            f"緊急退避済みです: {paths[0]}\n"
-            "次にこのタスクを再開する際は、まずexploreサブエージェントへ委譲して"
-            "このファイルを把握し、write_thread_noteで要点を記録してから、"
-            "続きの作業に着手してください。"
+            "The conversation of this sub-agent delegation up to the interruption has been "
+            f"saved for recovery to the following file: {paths[0]}\n"
+            "When you resume this task, first delegate to the explore sub-agent to "
+            "understand this file, record the key points with write_thread_note, and then "
+            "continue the work."
         )
     if paths:
         listing = "\n".join(f"- {p}" for p in paths)
         return (
-            "この一括委譲は、中断時点で実行中だった各グループのサブエージェントの会話内容を"
-            f"次のファイルへ緊急退避済みです:\n{listing}\n"
-            "次にこのタスクを再開する際は、まずexploreサブエージェントへ委譲して"
-            "これらのファイルを把握し、write_thread_noteで要点を記録してから、"
-            "続きの作業に着手してください。"
+            "For this batch delegation, the conversations of the sub-agents of each group running at the interruption "
+            f"have been saved for recovery to the following files:\n{listing}\n"
+            "When you resume this task, first delegate to the explore sub-agent to "
+            "understand these files, record the key points with write_thread_note, and then "
+            "continue the work."
         )
     return (
-        "このサブエージェントへの委譲は中断直前まで会話内容の緊急退避を"
-        "試みていますが、退避先ファイルを確認できませんでした（退避前に"
-        "停止した可能性があります）。その場合は通常どおりユーザーの指示に"
-        "従ってください。"
+        "An attempt was made to save the conversation of this sub-agent delegation up to the interruption "
+        "for recovery, but the saved file could not be confirmed (it may have stopped "
+        "before saving). In that case, follow the user's instructions as usual."
     )
 
 
@@ -3589,9 +3584,9 @@ def _dispatch_agent_rescue_nudge_text(hint: str, tool_name: str = "dispatch_agen
     ならないため）。
     """
     return (
-        f"[システム通知] 直前の{tool_name}への委譲は中断されました。{hint} "
-        "ただし、この直後の指示が明確に別の作業内容への変更や中断を"
-        "求めている場合は、そちらを優先してください。"
+        f"[System notice] The previous delegation to {tool_name} was interrupted. {hint} "
+        "However, if the next instruction clearly asks to change to different work or to stop, "
+        "follow that instead."
     )
 
 
@@ -3616,7 +3611,7 @@ def _build_orphaned_placeholder_messages(tc: dict, base_reason: str) -> list:
     Returns:
         補完用のメッセージ列（dispatch_agent・dispatch_agent_batch以外はToolMessage1件のみ）。
     """
-    content = f"エラー: {base_reason}このツール呼び出しの実行が中断されました。"
+    content = f"Error: {base_reason}the execution of this tool call was interrupted."
     if tc.get("name") not in _SUBAGENT_DISPATCH_TOOLS:
         return [ToolMessage(content=content, tool_call_id=tc["id"], name=tc.get("name", ""))]
     hint = _dispatch_agent_rescue_note_hint(tc)
@@ -3656,7 +3651,7 @@ async def _repair_orphaned_tool_calls(graph, config: dict) -> int:
             "messages": [
                 msg
                 for tc in orphaned
-                for msg in _build_orphaned_placeholder_messages(tc, "直前のセッション異常により、")
+                for msg in _build_orphaned_placeholder_messages(tc, "Because the previous session ended abnormally, ")
             ]
         },
         as_node="tools",
@@ -4242,7 +4237,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         output = event["data"].get("output")
                         step.output = output if isinstance(output, str) else ""
                         step.end = utc_now()
-                        if isinstance(output, str) and output.startswith("エラー:"):
+                        if isinstance(output, str) and output.startswith("Error:"):
                             step.is_error = True
                         await step.update()
 
@@ -4602,7 +4597,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                             "messages": [
                                 msg
                                 for tc in orphaned
-                                for msg in _build_orphaned_placeholder_messages(tc, "ユーザーの停止操作等により、")
+                                for msg in _build_orphaned_placeholder_messages(tc, "Because the user stopped it (or similar), ")
                             ]
                         },
                         as_node="tools",

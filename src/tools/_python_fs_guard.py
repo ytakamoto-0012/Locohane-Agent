@@ -50,9 +50,9 @@ def _register_exec_output_files(workdir: Path, before_snapshot: dict[Path, float
             continue
         prev = before_snapshot.get(p)
         if prev is None:
-            changed.append((p, "新規作成"))
+            changed.append((p, "created"))
         elif mtime != prev:
-            changed.append((p, "更新"))
+            changed.append((p, "updated"))
     if not changed:
         return ""
 
@@ -65,13 +65,13 @@ def _register_exec_output_files(workdir: Path, before_snapshot: dict[Path, float
                 str(p),
                 _state._PATH_MEMORY_DIR,
                 _state._PATH_MEMORY_MAX_ENTRIES,
-                description=f"execute_python_codeが{kind}",
+                description=f"{kind} by execute_python_code",
             )
         if index is not None:
-            lines.append(f"@{index} {p.name}（{kind}）")
+            lines.append(f"@{index} {p.name} ({kind})")
         else:
-            lines.append(f"{p}（{kind}、パスメモリー登録失敗のため絶対パスをそのまま使用）")
-    return "[生成/更新ファイル]\n" + "\n".join(lines)
+            lines.append(f"{p} ({kind}; absolute path used as is because path memory registration failed)")
+    return "[Created/updated files]\n" + "\n".join(lines)
 
 
 def _exec_guard_roots() -> tuple[list[Path], list[Path]]:
@@ -265,7 +265,7 @@ def _guard_check_deny(_path):
     except TypeError:
         return
     if _guard_under(_target, _GUARD_DENY_ROOTS):
-        raise PermissionError(f"[ドラフトスキルガード] 他ユーザーのドラフトスキルへはアクセスできません: {{_path}}")
+        raise PermissionError(f"[draft skill guard] Another user's draft skills cannot be accessed: {{_path}}")
 
 
 def _guard_check_list(_path):
@@ -276,7 +276,7 @@ def _guard_check_list(_path):
     if _guard_under(_target, _GUARD_LIST_DENY_ROOTS) or any(
         _target.startswith(_root + _guard_os.sep) for _root in _GUARD_DENY_ROOTS
     ):
-        raise PermissionError(f"[ドラフトスキルガード] 他ユーザーのドラフトスキルへはアクセスできません: {{_path}}")
+        raise PermissionError(f"[draft skill guard] Another user's draft skills cannot be accessed: {{_path}}")
 
 
 def _guard_check_foreign_tmp(_path):
@@ -293,9 +293,9 @@ def _guard_check_foreign_tmp(_path):
             if _first.startswith("_tmp_") and _first != _GUARD_OWN_TMP_NAME:
                 _own_dir = _guard_os.path.join(_root, _GUARD_OWN_TMP_NAME)
                 raise PermissionError(
-                    f"[一時ディレクトリガード] 他セッションの一時ディレクトリへは"
-                    f"アクセスできません: {{_path}}\\n"
-                    f"あなた自身の一時フォルダを使ってやり直してください: {{_own_dir}}"
+                    f"[temporary directory guard] The temporary directory of another session "
+                    f"cannot be accessed: {{_path}}\\n"
+                    f"Use your own temporary folder and try again: {{_own_dir}}"
                 )
             return
 
@@ -307,20 +307,20 @@ def _guard_check(_path, _op):
     except TypeError:
         return
     if _guard_under(_target, _GUARD_WRITE_DENY_ROOTS):
-        raise PermissionError(f"[ドラフトスキルガード] 他ユーザーのドラフトスキルへは{{_op}}できません: {{_path}}")
+        raise PermissionError(f"[draft skill guard] Another user's draft skills do not allow {{_op}}: {{_path}}")
     for _root in _GUARD_ALLOWED + _GUARD_LIB_CACHE:
         if _target == _root or _target.startswith(_root + _guard_os.sep):
             return
     if _GUARD_ALLOWED:
-        _allowed_list = "、".join(_GUARD_DISPLAY or _GUARD_ALLOWED)
+        _allowed_list = ", ".join(_GUARD_DISPLAY or _GUARD_ALLOWED)
         raise PermissionError(
-            f"[書き込みサンドボックスガード] 作業ディレクトリ配下以外は{{_op}}できません: {{_path}}\\n"
-            f"次のいずれか配下に書き込み先を変更してやり直してください: {{_allowed_list}}\\n"
-            "パスが分からない・合っているか不安な場合は check_work_dir_status ツールで確認してください。"
+            f"[write sandbox guard] {{_op}} is allowed only under the working directory: {{_path}}\\n"
+            f"Change the destination to somewhere under one of the following and try again: {{_allowed_list}}\\n"
+            "If you do not know the path or are unsure whether it is right, check it with the check_work_dir_status tool."
         )
     raise PermissionError(
-        f"[書き込みサンドボックスガード] このツールは書き込み・削除が一切できません: {{_path}}\\n"
-        "書き込みが必要な場合は execute_python_code ツールを使ってやり直してください。"
+        f"[write sandbox guard] This tool cannot write or delete anything: {{_path}}\\n"
+        "If you need to write, use the execute_python_code tool instead."
     )
 
 
@@ -329,7 +329,7 @@ _guard_orig_open = _guard_builtins.open
 
 def _guard_open(_file, _mode="r", *_args, **_kwargs):
     if any(_c in _mode for _c in ("w", "a", "x", "+")):
-        _guard_check(_file, "書き込み")
+        _guard_check(_file, "write")
     else:
         _guard_check_foreign_tmp(_file)
     return _guard_orig_open(_file, _mode, *_args, **_kwargs)
@@ -436,12 +436,11 @@ def _guard_check_cmd(_args):
         _first = ""
     if _guard_cmd_basename(_first) in _GUARD_BLOCKED_CMDS:
         raise PermissionError(
-            f"[execute_python_codeガード] git/npm/pipコマンドの実行は禁止されています: {{_args}}"
-            "。これはインストール済みかどうかとは無関係の一律禁止です。"
-            "既存ライブラリは大抵インストール済みなので、先にimportやスクリプトの"
-            "実行を試してください。それでも失敗する場合のみ、新規ライブラリが"
-            "必要とユーザーに報告してください（このツールで自分でインストールする"
-            "ことはできません）。"
+            f"[execute_python_code guard] Running git/npm/pip commands is forbidden: {{_args}}"
+            ". This is a blanket ban regardless of whether the package is installed. "
+            "Existing libraries are usually installed already, so first try importing them or "
+            "running the script. Only if that still fails, report to the user that a new library "
+            "is needed (you cannot install it yourself with this tool)."
         )
 
 

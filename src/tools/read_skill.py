@@ -42,39 +42,38 @@ def _render_references_section(skill_name: str, skill_dir: Path) -> str:
     shown = files[:_REFERENCES_LIST_MAX]
     path_memory_map = _register_path_memory([str(p) for p in shown], description=f"{skill_name} references")
     token_by_path = {path: token for token, path in path_memory_map.items()}
-    lines = ["references/ のファイル（read_skill_file に @N をそのまま渡せる）:"]
+    lines = ["Files in references/ (pass the @N to read_skill_file as is):"]
     for p in shown:
         rel = f"{skill_name}/{p.relative_to(skill_dir).as_posix()}"
         token = token_by_path.get(str(p))
         lines.append(f"{token} {rel}" if token else rel)
     if len(files) > len(shown):
-        lines.append(f"（他 {len(files) - len(shown)} 件）")
+        lines.append(f"({len(files) - len(shown)} more)")
     return "\n".join(lines)
 
 
 @tool
 def read_skill(skill_name: str) -> str:
-    """スキルの SKILL.md 本文全体を読み込んで返す。
+    """Read and return the whole body of a skill's SKILL.md.
 
-    ユーザーの要求に合致するスキルを選んだら、まずこのツールで本文（手順）を読むこと。
-    Agent Skills 標準の progressive disclosure における第2段階（Read）に相当する。
-    references/ があれば末尾にファイル一覧（@N 付き）が付く。
+    Once you have chosen a skill that matches the user's request, first read its body (procedure)
+    with this tool. It corresponds to the second stage (Read) of progressive disclosure in the
+    Agent Skills standard. If there is a references/ folder, a file list (with @N) is appended.
 
     Args:
-        skill_name: 読み込むスキルのフォルダ名（= SKILL.md の name）。
+        skill_name: The folder name of the skill to load (= name in SKILL.md).
 
     Returns:
-        `<skill_content name="...">` で囲んだ SKILL.md の本文（frontmatter は
-        除く）と references/ のファイル一覧。skill_name が skills ルート外を
-        指す場合や SKILL.md が存在しない場合は、例外を送出せず
-        「エラー: ...」形式の文字列を返す（LLM がそのまま読める形にするため）。
+        The SKILL.md body wrapped in `<skill_content name="...">` (without the frontmatter) and the
+        file list of references/. If skill_name points outside the skills root or SKILL.md does not
+        exist, it returns an "Error: ..." string instead of raising (so the LLM can read it as is).
     """
     try:
         skill_md = _safe_path(f"{skill_name}/SKILL.md")
     except ValueError as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     if not skill_md.is_file():
-        return f"エラー: スキル '{skill_name}' の SKILL.md が見つかりません。"
+        return f"Error: SKILL.md of skill '{skill_name}' not found."
     dup_error = _check_file_tools_duplicate("read_skill", f"read_skill\x00{skill_name}")
     if dup_error:
         return dup_error
@@ -113,7 +112,7 @@ def _skill_name_schema(names: tuple[str, ...]):
     """skill_name を names の選択肢（Literal）に制約した引数スキーマを作る。"""
     return create_model(
         "read_skill",
-        skill_name=(Literal[names], Field(description="読み込むスキルのフォルダ名（= SKILL.md の name）。")),
+        skill_name=(Literal[names], Field(description="The folder name of the skill to load (= name in SKILL.md).")),
     )
 
 

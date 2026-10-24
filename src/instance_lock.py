@@ -70,10 +70,10 @@ def acquire(lock_path: Path) -> None:
         exc = last_exc
         f.close()
         raise InstanceAlreadyRunningError(
-            f"Locohane は既に別プロセスで起動中です（データディレクトリ: {lock_path.parent}）。"
-            "同じ data/ を共有したまま二重起動すると checkpoints.sqlite / "
-            "chat_threads.sqlite が同時書き込みで破損するため、起動を中止しました。"
-            "先に起動済みのプロセス（別のターミナル/ポート）を終了してから再実行してください。"
+            f"Locohane is already running in another process (data directory: {lock_path.parent}). "
+            "Running twice on the same data/ would corrupt checkpoints.sqlite / "
+            "chat_threads.sqlite through concurrent writes, so startup was aborted. "
+            "Stop the process already running (another terminal/port) and try again."
         ) from exc
     _lock_file = f
 

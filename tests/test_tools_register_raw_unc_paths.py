@@ -43,7 +43,7 @@ def test_registers_unc_path_and_replaces_with_token(path_memory_env) -> None:
     assert result == "@1 を確認して"
     entries = _registry_entries(path_memory_env)
     assert entries[0]["path"] == r"\\cadstr0\DT_CAE\Datas\model.prt"
-    assert entries[0]["description"] == "ユーザー入力"
+    assert entries[0]["description"] == "user input"
 
 
 def test_same_path_reuses_same_token(path_memory_env) -> None:

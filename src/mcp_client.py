@@ -258,30 +258,30 @@ def _wrap_mcp_tool(
     async def _call(**kwargs: Any) -> str:
         session = session_holder.get("session")
         if session is None:
-            return f"エラー: MCPサーバー '{server_name}' に接続されていません。"
+            return f"Error: not connected to MCP server '{server_name}'."
         try:
             result = await asyncio.wait_for(
                 session.call_tool(mcp_tool.name, kwargs), timeout=call_timeout
             )
         except asyncio.TimeoutError:
             return (
-                f"エラー: MCPツール呼び出しが{call_timeout}秒でタイムアウトしました"
-                f"（server={server_name}, tool={mcp_tool.name}）。"
+                f"Error: the MCP tool call timed out after {call_timeout} seconds "
+                f"(server={server_name}, tool={mcp_tool.name})."
             )
         except McpError as e:
-            return f"エラー: MCPツール呼び出しに失敗しました（server={server_name}, tool={mcp_tool.name}）: {e}"
+            return f"Error: the MCP tool call failed (server={server_name}, tool={mcp_tool.name}): {e}"
         except Exception as e:  # noqa: BLE001 - 予期しない伝送層エラーもグラフを壊さず返す
             return (
-                f"エラー: MCPツール呼び出し中に予期しないエラーが発生しました"
-                f"（server={server_name}, tool={mcp_tool.name}）: {e}\n{traceback.format_exc()}"
+                f"Error: unexpected error during the MCP tool call "
+                f"(server={server_name}, tool={mcp_tool.name}): {e}\n{traceback.format_exc()}"
             )
         texts = [b.text for b in result.content if getattr(b, "type", None) == "text"]
-        text = "\n".join(texts) if texts else "(テキスト以外の応答、または空の応答)"
-        return f"エラー（MCPツール側）: {text}" if result.isError else text
+        text = "\n".join(texts) if texts else "(non-text or empty response)"
+        return f"Error (on the MCP tool side): {text}" if result.isError else text
 
     return StructuredTool(
         name=name,
-        description=mcp_tool.description or f"(説明なし: {server_name}/{mcp_tool.name})",
+        description=mcp_tool.description or f"(no description: {server_name}/{mcp_tool.name})",
         args_schema=mcp_tool.inputSchema,
         coroutine=_call,
     )

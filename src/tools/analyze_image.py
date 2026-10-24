@@ -50,7 +50,7 @@ def _resolve_analyze_image_path(raw: str) -> Path:
         RuntimeError: init_tools() が未実行の場合。
     """
     if not _state._SKILLS_ROOTS:
-        raise RuntimeError("init_tools() が未実行です")
+        raise RuntimeError("init_tools() has not been run")
     p = Path(raw)
     if p.is_absolute():
         return p.resolve()
@@ -65,43 +65,41 @@ def _resolve_analyze_image_path(raw: str) -> Path:
 
 @tool(response_format="content_and_artifact")
 def analyze_image(relative_path: str, show_in_chat: bool = False) -> tuple[str, dict | None]:
-    """画像ファイルをLLMへ視覚情報として見せ、自分（LLM）がその内容を解析・説明・判断するために使う。
-    SKILL.md参照画像・生成物（run_script出力等）・ユーザー提供画像いずれの解析にも
-    使う。読み込み系ツールのため絶対パスを指定できる（`_tmp_<作成時刻>_<短縮ID>` の他セッ
-    ション分だけ例外で解析できない）。
+    """Show an image file to the LLM as visual information so that you (the LLM) can analyze, describe or judge its content.
+    Use it to analyze images referenced by SKILL.md, generated artifacts (run_script output, etc.) and images
+    provided by the user. As a read tool it accepts absolute paths (only other sessions'
+    `_tmp_<created time>_<short ID>` folders are an exception and cannot be analyzed).
 
-    `show_in_chat=True` を指定すると、自分（LLM）が内容を理解するのと同時に、
-    その画像をチャット画面にも表示する（ユーザーが「見せて」「表示して」のように
-    画像そのものを見たい依頼をしてきた場合はこちらを使う）。**画像を表示する
-    ときは必ず自分もその内容を理解している状態にする**ため、「表示だけして
-    中身は見ない」という呼び方はできない（既定 `show_in_chat=False` は表示せず
-    解析だけを行う。大量の画像を機械的に確認する場合はチャットが荒れないよう
-    こちらを使う）。
-    戻り値はテキストの確認メッセージのみで、画像本体は次のモデル呼び出しで
-    実際にLLMへ見えるようになる。
+    With `show_in_chat=True`, the image is also shown in the chat at the same time as you (the LLM)
+    understand its content (use this when the user wants to see the image itself, e.g. "show me" or
+    "display it"). **When showing an image, you always understand its content too**, so it cannot be
+    called to "only show it without looking". The default `show_in_chat=False` only analyzes without
+    showing (use this when checking many images mechanically, so the chat does not get cluttered).
+    The return value is only a confirmation text; the image itself becomes visible to the LLM on the
+    next model call.
 
     Args:
-        relative_path: 相対パスを渡すと skills ルートからの相対パスとして
-            解決する（例: excel-vba-read/references/example.png）。それ以外の
-            場所の画像を見る場合は絶対パス（例:
-            C:\\Users\\foo\\data\\2019\\img1.png）で指定すること。
-            Glob/Grep/Read の結果に付与されたパスメモリー参照（`@N` 形式）を
-            そのまま渡すこともできる。
-        show_in_chat: True にすると、画像をチャット画面にも表示する
-            （既定 False は表示せずLLMへの解析のみ）。
+        relative_path: A relative path is resolved relative to the skills root
+            (e.g. excel-vba-read/references/example.png). To look at an image anywhere else,
+            specify an absolute path (e.g.
+            C:\\Users\\foo\\data\\2019\\img1.png).
+            You can also pass a path memory reference (`@N` form) attached to
+            Glob/Grep/Read results as is.
+        show_in_chat: If True, the image is also shown in the chat
+            (the default False only analyzes for the LLM without showing it).
 
     Returns:
-        (確認テキスト, artifact) のタプル。artifact は画像を読み込めた場合のみ
-        {"image_url": "data:<mime>;base64,<...>"} を持つ dict、それ以外は None。
-        `show_in_chat=True` の場合、確認テキストは `{"output_path": "..."}`
-        形式のJSON文字列になり、チャットUIへの自動表示（cl.Image添付）が
-        発火する。ファイルが存在しない場合・対応拡張子
-        （png/jpg/jpeg/gif/webp/bmp）でない場合、`@N` が未登録の場合は、
-        例外を送出せず「エラー: ...」形式のテキストと None を返す。
+        A tuple (confirmation text, artifact). artifact is a dict with
+        {"image_url": "data:<mime>;base64,<...>"} only if the image could be loaded, otherwise None.
+        With `show_in_chat=True`, the confirmation text is a JSON string of the form
+        `{"output_path": "..."}`, which triggers automatic display in the chat UI (cl.Image attachment).
+        If the file does not exist, the extension is not supported
+        (png/jpg/jpeg/gif/webp/bmp), or `@N` is not registered,
+        it returns an "Error: ..." text and None instead of raising.
     """
     resolved_path, error = _resolve_path_memory_token(relative_path)
     if error:
-        return f"エラー: {error}", None
+        return f"Error: {error}", None
     path = _resolve_analyze_image_path(resolved_path)
     tmp_error = _foreign_tmp_dir_error(path) or skill_drafts.access_error(
         path, "read", _state._LLM_CONFIG, skill_drafts.current_draft_user()
@@ -110,10 +108,10 @@ def analyze_image(relative_path: str, show_in_chat: bool = False) -> tuple[str, 
         return tmp_error, None
     if not path.is_file():
         hint = suggest_from_path_memory(str(path)) if not path.exists() else ""
-        return f"エラー: ファイルが見つかりません: {relative_path}{hint}", None
+        return f"Error: file not found: {relative_path}{hint}", None
     if not is_image_file(path):
         return (
-            f"エラー: 対応していない画像形式です（png/jpg/jpeg/gif/webp/bmpのみ）: {relative_path}",
+            f"Error: unsupported image format (png/jpg/jpeg/gif/webp/bmp only): {relative_path}",
             None,
         )
     # 同一画像の重複解析を検知する（tune-prompt調査で同じ画像を14回重複して
@@ -129,9 +127,9 @@ def analyze_image(relative_path: str, show_in_chat: bool = False) -> tuple[str, 
     )
     if is_duplicate and not show_in_chat:
         return (
-            f"エラー: この画像は既に一度確認済みです: {relative_path}。"
-            "同一画像の再表示は省略しました。会話履歴にある前回の説明を参照するか、"
-            "他の画像・他の手段に進んでください。",
+            f"Error: this image has already been checked once: {relative_path}. "
+            "Showing the same image again was skipped. Refer to the previous description in the conversation history, "
+            "or move on to other images or approaches.",
             None,
         )
     logger.info("analyze_image: %s show_in_chat=%s duplicate=%s", relative_path, show_in_chat, is_duplicate)
@@ -162,7 +160,7 @@ def analyze_image(relative_path: str, show_in_chat: bool = False) -> tuple[str, 
         # 内部由来かを区別せずこの規約を処理するため、サブエージェントから
         # 呼んだ場合もその場でチャットに画像が表示される。
         return json.dumps({"output_path": str(path)}, ensure_ascii=False), artifact
-    return f"画像を読み込みました: {relative_path}", artifact
+    return f"Loaded the image: {relative_path}", artifact
 
 
 def _with_image_followups(result: dict) -> dict:

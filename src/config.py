@@ -1398,11 +1398,11 @@ def resolve_ssl_files(config_path: Path | None = None) -> tuple[Path, Path] | No
     if not cert and not key:
         return None
     if not cert or not key:
-        raise ValueError("[admin].ssl_certfile と ssl_keyfile は両方指定してください（HTTPで待ち受けるなら両方空にする）。")
+        raise ValueError("Specify both [admin].ssl_certfile and ssl_keyfile (leave both empty to listen on HTTP).")
     cert_path, key_path = _resolve(PROJECT_ROOT, cert), _resolve(PROJECT_ROOT, key)
     for label, p in (("ssl_certfile", cert_path), ("ssl_keyfile", key_path)):
         if not p.is_file():
-            raise ValueError(f"[admin].{label} のファイルが見つかりません: {p}")
+            raise ValueError(f"[admin].{label} file not found: {p}")
     return cert_path, key_path
 
 
@@ -1585,7 +1585,7 @@ def _as_optional_reasoning_format(value: str | None) -> str | None:
         return None
     if text not in LLM_REASONING_FORMATS:
         choices = "/".join(sorted(LLM_REASONING_FORMATS))
-        raise ValueError(f"[llm].reasoning_format は {choices} のいずれかを指定してください（現在値: {text!r}）")
+        raise ValueError(f"[llm].reasoning_format must be one of {choices} (current value: {text!r})")
     return text
 
 
@@ -1607,7 +1607,7 @@ def _as_ui_language(value: str | None) -> str:
     text = (_as_optional_str(value) or "auto").lower()
     if text not in UI_DEFAULT_LANGUAGES:
         choices = "/".join(sorted(UI_DEFAULT_LANGUAGES))
-        raise ValueError(f"[ui].default_language は {choices} のいずれかを指定してください（現在値: {text!r}）")
+        raise ValueError(f"[ui].default_language must be one of {choices} (current value: {text!r})")
     return text
 
 
@@ -1629,7 +1629,7 @@ def _as_optional_reasoning_effort(value: str | None) -> str | None:
         return None
     if text not in LLM_REASONING_EFFORTS:
         choices = "/".join(sorted(LLM_REASONING_EFFORTS))
-        raise ValueError(f"[llm].reasoning_effort は {choices} のいずれかを指定してください（現在値: {text!r}）")
+        raise ValueError(f"[llm].reasoning_effort must be one of {choices} (current value: {text!r})")
     return text
 
 
@@ -1648,7 +1648,7 @@ def _as_thinking_loop_guard_target(value: str | None) -> str:
     text = str(value or "").strip()
     if text not in THINKING_LOOP_GUARD_TARGETS:
         choices = "/".join(THINKING_LOOP_GUARD_TARGETS)
-        raise ValueError(f"[thinking_loop_guard].target は {choices} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[thinking_loop_guard].target must be one of {choices}: {value!r}")
     return text
 
 
@@ -1668,7 +1668,7 @@ def _as_thinking_level(value: str | None, key_name: str) -> str:
     text = str(value or "").strip()
     if text not in THINKING_LEVELS:
         choices = "/".join(THINKING_LEVELS)
-        raise ValueError(f"[thinking_control].{key_name} は {choices} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[thinking_control].{key_name} must be one of {choices}: {value!r}")
     return text
 
 
@@ -1691,7 +1691,7 @@ def _as_optional_thinking_level(value: str | None, key_name: str) -> str | None:
     text = str(value or "").strip()
     if text not in THINKING_LEVELS:
         choices = "/".join(("false", *THINKING_LEVELS))
-        raise ValueError(f"[thinking_control].{key_name} は {choices} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[thinking_control].{key_name} must be one of {choices}: {value!r}")
     return text
 
 
@@ -1728,9 +1728,9 @@ def _as_message_list(value: str | None) -> list[str]:
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"config.ini の値はJSON/Pythonのリスト（配列）形式で指定してください: {text!r}") from e
+        raise ValueError(f"The config.ini value must be a JSON/Python list (array): {text!r}") from e
     if not isinstance(parsed, list):
-        raise ValueError(f"config.ini の値はリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"The config.ini value must be a list (array): {text!r}")
     return [str(item) for item in parsed if str(item).strip()]
 
 
@@ -1742,9 +1742,9 @@ _DEFAULT_LLM_URL = '[{"base_url": "http://localhost:8080/v1", "api_key": "dummy-
 # 返す文字列のテンプレート。.format() で {wait_remaining}/{job_id}/
 # {min_interval} を埋め込む（src/tools.py 参照）。
 DEFAULT_SCRIPT_BACKGROUND_MIN_POLL_MESSAGE = (
-    "まだ確認間隔が短すぎます。あと約{wait_remaining}秒待ってから、"
-    "改めて check_script_job(job_id={job_id!r}) を呼び直してください"
-    "（最短確認間隔: {min_interval}秒）。"
+    "Checked too soon. Wait about {wait_remaining} more seconds, "
+    "then call check_script_job(job_id={job_id!r}) again "
+    "(minimum check interval: {min_interval} seconds)."
 )
 
 # [subagent].background_min_poll_message が空の場合に使う既定メッセージ。
@@ -1753,18 +1753,18 @@ DEFAULT_SCRIPT_BACKGROUND_MIN_POLL_MESSAGE = (
 # DEFAULT_SCRIPT_BACKGROUND_MIN_POLL_MESSAGE と同じ
 # （.format() で {wait_remaining}/{job_id}/{min_interval} を埋め込む）。
 DEFAULT_DISPATCH_AGENT_BACKGROUND_MIN_POLL_MESSAGE = (
-    "まだ確認間隔が短すぎます。あと約{wait_remaining}秒待ってから、"
-    "改めて check_dispatch_agent_job(job_id={job_id!r}) を呼び直してください"
-    "（最短確認間隔: {min_interval}秒）。"
+    "Checked too soon. Wait about {wait_remaining} more seconds, "
+    "then call check_dispatch_agent_job(job_id={job_id!r}) again "
+    "(minimum check interval: {min_interval} seconds)."
 )
 
 # [context_compaction].pre_note_warning_text / [context_compaction.subagent]の
 # 同項目が空の場合に使う既定メッセージ。
 _DEFAULT_CONTEXT_COMPACTION_PRE_NOTE_WARNING_TEXT = (
-    "[システム通知: まもなくコンテキスト圧縮（古い会話履歴の要約）が"
-    "行われます。要約後は書き出していない事実が失われるおそれがあるため、"
-    "write_thread_noteにまだ記録していない重要な事実（値・件数・該当箇所等）"
-    "があれば、次の応答でツールを呼ぶ前に書き出してください]"
+    "[System notice: context compaction (summarizing the old conversation history) "
+    "will happen soon. Facts not written down may be lost after the summary, so "
+    "if there are important facts (values, counts, locations, etc.) not yet recorded in write_thread_note, "
+    "write them down before calling any tool in your next response]"
 )
 
 
@@ -1789,7 +1789,7 @@ def _validate_poll_message_template(text: str) -> str:
         text.format(wait_remaining=1, job_id="dummy", min_interval=1)
     except (KeyError, IndexError, ValueError) as e:
         raise ValueError(
-            f"[scripts].background_min_poll_message のプレースホルダーが不正です: {text!r} ({e})"
+            f"[scripts].background_min_poll_message has an invalid placeholder: {text!r} ({e})"
         ) from e
     return text
 
@@ -1815,9 +1815,9 @@ def _as_llm_endpoint_time(value: Any, key_name: str, field_name: str, section: s
     try:
         hour = float(value)
     except (TypeError, ValueError) as e:
-        raise ValueError(f"[{section}].{key_name} の {field_name} は数値（時間、分は小数で指定）にしてください: {value!r}") from e
+        raise ValueError(f"{field_name} of [{section}].{key_name} must be a number (hours; use decimals for minutes): {value!r}") from e
     if not (0.0 <= hour <= 24.0):
-        raise ValueError(f"[{section}].{key_name} の {field_name} は0〜24の範囲で指定してください: {value!r}")
+        raise ValueError(f"{field_name} of [{section}].{key_name} must be between 0 and 24: {value!r}")
     return hour
 
 
@@ -1855,29 +1855,29 @@ def _as_llm_endpoints(value: str | None, key_name: str, section: str = "llm") ->
     """
     text = str(value or "").strip()
     if not text:
-        raise ValueError(f"[{section}].{key_name} は最低1件の接続先を指定してください: {value!r}")
+        raise ValueError(f"[{section}].{key_name} must specify at least one endpoint: {value!r}")
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"[{section}].{key_name} はJSON/Pythonのリスト（配列）形式で指定してください: {text!r}") from e
+        raise ValueError(f"[{section}].{key_name} must be a JSON/Python list (array): {text!r}") from e
     if not isinstance(parsed, list) or not parsed:
-        raise ValueError(f"[{section}].{key_name} は最低1件を含むリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"[{section}].{key_name} must be a list (array) with at least one element: {text!r}")
     endpoints: list[LLMEndpoint] = []
     for item in parsed:
         if not isinstance(item, dict):
-            raise ValueError(f"[{section}].{key_name} の各要素は " '{"base_url":..., "api_key":..., "model":...} の' f"dict にしてください: {item!r}")
+            raise ValueError(f"Each element of [{section}].{key_name} must be a " '{"base_url":..., "api_key":..., "model":...} ' f"dict: {item!r}")
         if not item.get("base_url") or not item.get("model"):
-            raise ValueError(f"[{section}].{key_name} の各要素には base_url と model が必須です: {item!r}")
+            raise ValueError(f"Each element of [{section}].{key_name} requires base_url and model: {item!r}")
         start = _as_llm_endpoint_time(item.get("start"), key_name, "start", section)
         end = _as_llm_endpoint_time(item.get("end"), key_name, "end", section)
         if (start is None) != (end is None):
-            raise ValueError(f"[{section}].{key_name} の各要素は start と end をどちらも指定するか、どちらも省略してください: {item!r}")
+            raise ValueError(f"Each element of [{section}].{key_name} must specify both start and end, or neither: {item!r}")
         if start is not None and end is not None and start == end:
-            raise ValueError(f"[{section}].{key_name} の start と end が同じ値です（使用可能な時間帯が無くなります）: {item!r}")
+            raise ValueError(f"start and end of [{section}].{key_name} are the same (there would be no available time window): {item!r}")
         provider = str(item.get("provider") or "openai_compatible").strip()
         if provider not in LLM_PROVIDERS:
             choices = "/".join(sorted(LLM_PROVIDERS))
-            raise ValueError(f"[{section}].{key_name} の provider は {choices} のいずれかにしてください: {item!r}")
+            raise ValueError(f"provider of [{section}].{key_name} must be one of {choices}: {item!r}")
         endpoints.append(
             LLMEndpoint(
                 base_url=str(item["base_url"]),
@@ -1889,7 +1889,7 @@ def _as_llm_endpoints(value: str | None, key_name: str, section: str = "llm") ->
             )
         )
     if not any(e.start is None and e.end is None for e in endpoints):
-        raise ValueError(f"[{section}].{key_name} には start/end を両方省略した（常時使用可能な）接続先が最低1件必要です: {text!r}")
+        raise ValueError(f"[{section}].{key_name} needs at least one endpoint with neither start nor end (always available): {text!r}")
     return tuple(endpoints)
 
 
@@ -1908,9 +1908,9 @@ def _as_embedding_endpoints(value: str | None) -> tuple[LLMEndpoint, ...]:
         return ()
     endpoints = _as_llm_endpoints(value, "embedding_url", section="vector_db")
     if any(e.start is not None for e in endpoints):
-        raise ValueError(f"[vector_db].embedding_url には start/end を指定できません（時間帯で埋め込みモデルが変わると検索できなくなるため）: {value!r}")
+        raise ValueError(f"[vector_db].embedding_url cannot have start/end (search breaks if the embedding model changes by time of day): {value!r}")
     if len({e.model.lower() for e in endpoints}) > 1:
-        raise ValueError(f"[vector_db].embedding_url の model はすべて同じにしてください（接続先ごとにベクターが変わると検索できなくなるため）: {value!r}")
+        raise ValueError(f"All models in [vector_db].embedding_url must be the same (search breaks if vectors differ per endpoint): {value!r}")
     return endpoints
 
 
@@ -1918,7 +1918,7 @@ def _as_vector_db_backend(value: str | None) -> str:
     """[vector_db].backend の値を検証する（VECTOR_DB_BACKENDS のいずれか）。"""
     text = str(value or "").strip().lower()
     if text not in VECTOR_DB_BACKENDS:
-        raise ValueError(f"[vector_db].backend は {'/'.join(VECTOR_DB_BACKENDS)} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[vector_db].backend must be one of {'/'.join(VECTOR_DB_BACKENDS)}: {value!r}")
     return text
 
 
@@ -1926,7 +1926,7 @@ def _as_vector_db_qdrant_preset(value: str | None) -> str:
     """[vector_db].qdrant_preset の値を検証する（VECTOR_DB_QDRANT_PRESETS のいずれか、大文字小文字は問わない）。"""
     text = str(value or "").strip().lower()
     if text not in VECTOR_DB_QDRANT_PRESETS:
-        raise ValueError(f"[vector_db].qdrant_preset は {'/'.join(VECTOR_DB_QDRANT_PRESETS)} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[vector_db].qdrant_preset must be one of {'/'.join(VECTOR_DB_QDRANT_PRESETS)}: {value!r}")
     return text
 
 
@@ -1935,7 +1935,7 @@ def _as_vector_db_encoding_format(value: str | None) -> str:
     text = str(value or "").strip().lower()
     if text not in VECTOR_DB_EMBEDDING_ENCODING_FORMATS:
         raise ValueError(
-            f"[vector_db].embedding_encoding_format は {'/'.join(VECTOR_DB_EMBEDDING_ENCODING_FORMATS)} のいずれかにしてください: {value!r}"
+            f"[vector_db].embedding_encoding_format must be one of {'/'.join(VECTOR_DB_EMBEDDING_ENCODING_FORMATS)}: {value!r}"
         )
     return text
 
@@ -1946,7 +1946,7 @@ def _as_vector_db_distance(value: str | None) -> str:
     for distance in VECTOR_DB_DISTANCES:
         if text == distance.lower():
             return distance
-    raise ValueError(f"[vector_db].distance は {'/'.join(VECTOR_DB_DISTANCES)} のいずれかにしてください: {value!r}")
+    raise ValueError(f"[vector_db].distance must be one of {'/'.join(VECTOR_DB_DISTANCES)}: {value!r}")
 
 
 def _as_extension_list(value: str | None) -> tuple[str, ...]:
@@ -2029,28 +2029,28 @@ def _validate_vector_db(cfg: "Config") -> None:
     """
     if not (0 <= cfg.vector_db_chunk_overlap < cfg.vector_db_chunk_size):
         raise ValueError(
-            f"[vector_db].chunk_overlap は 0 以上 chunk_size（{cfg.vector_db_chunk_size}）未満にしてください: {cfg.vector_db_chunk_overlap}"
+            f"[vector_db].chunk_overlap must be at least 0 and less than chunk_size ({cfg.vector_db_chunk_size}): {cfg.vector_db_chunk_overlap}"
         )
     if not (0.0 <= cfg.vector_db_min_score <= 1.0):
-        raise ValueError(f"[vector_db].min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_min_score}")
+        raise ValueError(f"[vector_db].min_score must be between 0.0 and 1.0: {cfg.vector_db_min_score}")
     if not (0.0 <= cfg.vector_db_image_min_score <= 1.0):
-        raise ValueError(f"[vector_db].image_min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_image_min_score}")
+        raise ValueError(f"[vector_db].image_min_score must be between 0.0 and 1.0: {cfg.vector_db_image_min_score}")
     if not (0.0 <= cfg.vector_db_path_min_score <= 1.0):
-        raise ValueError(f"[vector_db].path_min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_path_min_score}")
+        raise ValueError(f"[vector_db].path_min_score must be between 0.0 and 1.0: {cfg.vector_db_path_min_score}")
     for key in ("text", "keyword", "image", "path_keyword"):
         if getattr(cfg, f"vector_db_rrf_weight_{key}") < 0:
-            raise ValueError(f"[vector_db].rrf_weight_{key} は 0 以上で指定してください: {getattr(cfg, f'vector_db_rrf_weight_{key}')}")
+            raise ValueError(f"[vector_db].rrf_weight_{key} must be 0 or more: {getattr(cfg, f'vector_db_rrf_weight_{key}')}")
     if cfg.vector_db_backend == "sqlite_vec" and cfg.vector_db_distance not in VECTOR_DB_SQLITE_VEC_DISTANCES:
         raise ValueError(
-            f"[vector_db].backend = sqlite_vec では distance に {'/'.join(VECTOR_DB_SQLITE_VEC_DISTANCES)} のいずれかを指定してください"
-            f"（sqlite-vec は {cfg.vector_db_distance} に対応していません）。"
+            f"With [vector_db].backend = sqlite_vec, distance must be one of {'/'.join(VECTOR_DB_SQLITE_VEC_DISTANCES)} "
+            f"(sqlite-vec does not support {cfg.vector_db_distance})."
         )
     if not cfg.vector_db_enabled:
         return
     if not cfg.vector_db_embedding_endpoints:
-        raise ValueError("[vector_db].enabled = true のときは embedding_url を指定してください。")
+        raise ValueError("Specify embedding_url when [vector_db].enabled = true.")
     if cfg.vector_db_backend == "qdrant" and not cfg.vector_db_qdrant_url:
-        raise ValueError("[vector_db].backend = qdrant のときは qdrant_url を指定してください。")
+        raise ValueError("Specify qdrant_url when [vector_db].backend = qdrant.")
 
 
 def _as_routing_strategy(value: str | None, key_name: str, section: str = "llm") -> str:
@@ -2070,7 +2070,7 @@ def _as_routing_strategy(value: str | None, key_name: str, section: str = "llm")
     text = str(value or "").strip()
     if text not in LLM_ROUTING_STRATEGIES:
         choices = "/".join(sorted(LLM_ROUTING_STRATEGIES))
-        raise ValueError(f"[{section}].{key_name} は {choices} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[{section}].{key_name} must be one of {choices}: {value!r}")
     return text
 
 
@@ -2094,7 +2094,7 @@ def _as_main_agent_tool_guard_visibility_mode(value: str | None) -> str:
     text = str(value or "").strip() or "strict"
     if text not in MAIN_AGENT_TOOL_GUARD_VISIBILITY_MODES:
         choices = "/".join(sorted(MAIN_AGENT_TOOL_GUARD_VISIBILITY_MODES))
-        raise ValueError(f"[main_agent_tool_guard].visibility_mode は {choices} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[main_agent_tool_guard].visibility_mode must be one of {choices}: {value!r}")
     return text
 
 
@@ -2120,7 +2120,7 @@ def _as_main_agent_tool_guard_mode(value: str | None) -> str:
     text = str(value or "").strip().lower() or "all"
     if text not in MAIN_AGENT_TOOL_GUARD_MODES:
         choices = "/".join(sorted(MAIN_AGENT_TOOL_GUARD_MODES))
-        raise ValueError(f"[main_agent_tool_guard].mode は {choices} のいずれかにしてください: {value!r}")
+        raise ValueError(f"[main_agent_tool_guard].mode must be one of {choices}: {value!r}")
     return text
 
 
@@ -2178,9 +2178,9 @@ def _parse_project_locohane_dirs(value: str | None, base: Path) -> list[tuple[Pa
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"project_locohane_dir はPythonのリスト形式で指定してください: {text!r}") from e
+        raise ValueError(f"project_locohane_dir must be a Python list: {text!r}") from e
     if not isinstance(parsed, list):
-        raise ValueError(f"project_locohane_dir はリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"project_locohane_dir must be a list (array): {text!r}")
     result: list[tuple[Path, str | None]] = []
     for item in parsed:
         if isinstance(item, str):
@@ -2188,13 +2188,13 @@ def _parse_project_locohane_dirs(value: str | None, base: Path) -> list[tuple[Pa
                 result.append((_resolve(base, item.strip()), None))
             continue
         if not isinstance(item, dict):
-            raise ValueError(f'project_locohane_dir の各要素は文字列、または {{"dir": ..., "python": ...}} の辞書にしてください: {item!r}')
+            raise ValueError(f'Each element of project_locohane_dir must be a string or a dict {{"dir": ..., "python": ...}}: {item!r}')
         dir_value = item.get("dir")
         if not isinstance(dir_value, str) or not dir_value.strip():
-            raise ValueError(f"project_locohane_dir の dir は空でない文字列にしてください: {item!r}")
+            raise ValueError(f"dir of project_locohane_dir must be a non-empty string: {item!r}")
         python_value = item.get("python")
         if python_value is not None and not isinstance(python_value, str):
-            raise ValueError(f"project_locohane_dir の python は文字列にしてください: {item!r}")
+            raise ValueError(f"python of project_locohane_dir must be a string: {item!r}")
         python = python_value.strip() if python_value else ""
         if python and ("/" in python or "\\" in python):
             python = str(_resolve(base, python))
@@ -2219,7 +2219,7 @@ def _parse_skill_draft_visibility(value: object) -> str:
     mode = str(value).strip().lower()
     if mode not in SKILL_DRAFT_VISIBILITY_MODES:
         raise ValueError(
-            f"[skill_creator].other_users_drafts は {'/'.join(SKILL_DRAFT_VISIBILITY_MODES)} のいずれかで指定してください: {value!r}"
+            f"[skill_creator].other_users_drafts must be one of {'/'.join(SKILL_DRAFT_VISIBILITY_MODES)}: {value!r}"
         )
     return mode
 
@@ -2233,9 +2233,9 @@ def _positive_float(value: object, key: str) -> float:
     try:
         number = float(str(value).strip())
     except ValueError as e:
-        raise ValueError(f"{key} は0より大きい数値で指定してください: {value!r}") from e
+        raise ValueError(f"{key} must be a number greater than 0: {value!r}") from e
     if number <= 0:
-        raise ValueError(f"{key} は0より大きい数値で指定してください: {value!r}")
+        raise ValueError(f"{key} must be a number greater than 0: {value!r}")
     return number
 
 
@@ -2248,9 +2248,9 @@ def _non_negative_int(value: object, key: str) -> int:
     try:
         number = int(str(value).strip())
     except ValueError as e:
-        raise ValueError(f"{key} は0以上の整数で指定してください: {value!r}") from e
+        raise ValueError(f"{key} must be an integer of 0 or more: {value!r}") from e
     if number < 0:
-        raise ValueError(f"{key} は0以上の整数で指定してください: {value!r}")
+        raise ValueError(f"{key} must be an integer of 0 or more: {value!r}")
     return number
 
 
@@ -2263,9 +2263,9 @@ def _positive_int(value: object, key: str) -> int:
     try:
         number = int(str(value).strip())
     except ValueError as e:
-        raise ValueError(f"{key} は1以上の整数で指定してください: {value!r}") from e
+        raise ValueError(f"{key} must be an integer of 1 or more: {value!r}") from e
     if number < 1:
-        raise ValueError(f"{key} は1以上の整数で指定してください: {value!r}")
+        raise ValueError(f"{key} must be an integer of 1 or more: {value!r}")
     return number
 
 
@@ -2294,14 +2294,14 @@ def _validate_skill_draft_dir(cfg: "Config") -> None:
             resolved = other.resolve()
             if draft == resolved or draft.is_relative_to(resolved) or resolved.is_relative_to(draft):
                 raise ValueError(
-                    f"[skill_creator].{key}（{draft}）は {label}（{resolved}）と重ならない場所にしてください"
-                    "（ドラフトが全ユーザーのスキル一覧に混入するのを防ぐため）"
+                    f"[skill_creator].{key} ({draft}) must not overlap with {label} ({resolved}) "
+                    "(to keep drafts out of every user's skill list)"
                 )
     draft, archive = cfg.skill_draft_dir.resolve(), cfg.skill_archive_dir.resolve()
     if draft == archive or draft.is_relative_to(archive) or archive.is_relative_to(draft):
         raise ValueError(
-            f"[skill_creator].archive_dir（{archive}）は draft_dir（{draft}）と重ならない場所にしてください"
-            "（アーカイブしたドラフトが作成者の一覧に戻ってしまうため）"
+            f"[skill_creator].archive_dir ({archive}) must not overlap with draft_dir ({draft}) "
+            "(otherwise archived drafts would come back into the author's list)"
         )
 
 
@@ -2328,13 +2328,13 @@ def _parse_auth_users(value: str | None) -> dict[str, str]:
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"AUTH_USERS はPythonのリスト形式で指定してください: {text!r}") from e
+        raise ValueError(f"AUTH_USERS must be a Python list: {text!r}") from e
     if not isinstance(parsed, list):
-        raise ValueError(f"AUTH_USERS はリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"AUTH_USERS must be a list (array): {text!r}")
     users: dict[str, str] = {}
     for item in parsed:
         if not (isinstance(item, (list, tuple)) and len(item) == 2):
-            raise ValueError(f"AUTH_USERS の各要素は [ユーザー名, パスワード] の2要素にしてください: {item!r}")
+            raise ValueError(f"Each element of AUTH_USERS must be a two-element [username, password]: {item!r}")
         users[str(item[0])] = str(item[1])
     return users
 
@@ -2364,13 +2364,13 @@ def _parse_plan_approval_exempt_scripts(value: str | None) -> frozenset[tuple[st
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"plan_approval_exempt_scripts はPythonのリスト形式で指定してください: {text!r}") from e
+        raise ValueError(f"plan_approval_exempt_scripts must be a Python list: {text!r}") from e
     if not isinstance(parsed, list):
-        raise ValueError(f"plan_approval_exempt_scripts はリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"plan_approval_exempt_scripts must be a list (array): {text!r}")
     entries: set[tuple[str, str]] = set()
     for item in parsed:
         if not (isinstance(item, (list, tuple)) and len(item) == 2):
-            raise ValueError(f"plan_approval_exempt_scripts の各要素は [スキル名, スクリプトファイル名] の" f"2要素にしてください: {item!r}")
+            raise ValueError(f"Each element of plan_approval_exempt_scripts must be a two-element [skill name, script file name]: {item!r}")
         entries.add((str(item[0]), str(item[1])))
     return frozenset(entries)
 
@@ -2412,18 +2412,18 @@ def _parse_agent_type_run_script_allowlist(value: str | None) -> frozenset[tuple
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"agent_type_run_script_allowlist はPythonのリスト形式で指定してください: {text!r}") from e
+        raise ValueError(f"agent_type_run_script_allowlist must be a Python list: {text!r}") from e
     if not isinstance(parsed, list):
-        raise ValueError(f"agent_type_run_script_allowlist はリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"agent_type_run_script_allowlist must be a list (array): {text!r}")
     entries: set[tuple[str, str | tuple[str, str]]] = set()
     for item in parsed:
         if not (isinstance(item, (list, tuple)) and len(item) == 2):
             raise ValueError(
-                f"agent_type_run_script_allowlist の各要素は [agent_type, 対象] の" f"2要素にしてください: {item!r}"
+                f"Each element of agent_type_run_script_allowlist must be a two-element [agent_type, target]: {item!r}"
             )
         agent_type, target = item
         if not isinstance(agent_type, str):
-            raise ValueError(f"agent_type_run_script_allowlist の agent_type は文字列にしてください: {agent_type!r}")
+            raise ValueError(f"agent_type of agent_type_run_script_allowlist must be a string: {agent_type!r}")
         key: str | tuple[str, str]
         if isinstance(target, str):
             key = target
@@ -2431,8 +2431,8 @@ def _parse_agent_type_run_script_allowlist(value: str | None) -> frozenset[tuple
             key = (str(target[0]), str(target[1]))
         else:
             raise ValueError(
-                "agent_type_run_script_allowlist の対象はスキル名の文字列、または"
-                f"[スキル名, スクリプトファイル名] の2要素にしてください: {target!r}"
+                "The target of agent_type_run_script_allowlist must be a skill name string or "
+                f"a two-element [skill name, script file name]: {target!r}"
             )
         entries.add((agent_type, key))
     return frozenset(entries)
@@ -2492,14 +2492,14 @@ def _parse_main_agent_tool_guard_allow_entries(value: str | None) -> frozenset[t
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"main_agent_tool_guard.allow_entries はPythonのリスト形式で指定してください: {text!r}") from e
+        raise ValueError(f"main_agent_tool_guard.allow_entries must be a Python list: {text!r}") from e
     if not isinstance(parsed, list):
-        raise ValueError(f"main_agent_tool_guard.allow_entries はリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"main_agent_tool_guard.allow_entries must be a list (array): {text!r}")
     entries: set[tuple[str | tuple[str, str], int]] = set()
     seen_keys: set[str | tuple[str, str]] = set()
     for item in parsed:
         if not (isinstance(item, (list, tuple)) and len(item) == 2):
-            raise ValueError(f"main_agent_tool_guard.allow_entries の各要素は [対象, max_calls] の2要素にしてください: {item!r}")
+            raise ValueError(f"Each element of main_agent_tool_guard.allow_entries must be a two-element [target, max_calls]: {item!r}")
         target, max_calls = item
         key: str | tuple[str, str]
         if isinstance(target, str):
@@ -2508,15 +2508,15 @@ def _parse_main_agent_tool_guard_allow_entries(value: str | None) -> frozenset[t
             key = (str(target[0]), str(target[1]))
         else:
             raise ValueError(
-                "main_agent_tool_guard.allow_entries の対象はツール名の文字列、または"
-                f"[スキル名, スクリプトファイル名] の2要素にしてください: {target!r}"
+                "The target of main_agent_tool_guard.allow_entries must be a tool name string or "
+                f"a two-element [skill name, script file name]: {target!r}"
             )
         if not isinstance(max_calls, int) or isinstance(max_calls, bool):
-            raise ValueError(f"main_agent_tool_guard.allow_entries の max_calls は整数にしてください: {max_calls!r}")
+            raise ValueError(f"max_calls of main_agent_tool_guard.allow_entries must be an integer: {max_calls!r}")
         if max_calls < -1:
             raise ValueError(
-                "main_agent_tool_guard.allow_entries の max_calls は -1以上の整数にしてください"
-                f"（0=完全ブロック、-1=無制限、1以上=その回数まで許可）: {max_calls!r}"
+                "max_calls of main_agent_tool_guard.allow_entries must be an integer of -1 or more "
+                f"(0=fully blocked, -1=unlimited, 1 or more=allowed up to that many times): {max_calls!r}"
             )
         if key in seen_keys:
             # 同じ対象を異なる max_calls で複数回登録すると、_guard_main_agent_tool_limit
@@ -2524,7 +2524,7 @@ def _parse_main_agent_tool_guard_allow_entries(value: str | None) -> frozenset[t
             # ハッシュシード（PYTHONHASHSEED）依存になり、プロセス起動ごとに
             # 有効な max_calls が非決定的に変わってしまう（同一設定でも実行の
             # たびに結果が変わる実害を実測確認済み）。設定ミスとして早期に拒否する。
-            raise ValueError(f"main_agent_tool_guard.allow_entries に同じ対象が重複登録されています: {key!r}")
+            raise ValueError(f"The same target is registered twice in main_agent_tool_guard.allow_entries: {key!r}")
         seen_keys.add(key)
         entries.add((key, max_calls))
     return frozenset(entries)
@@ -2567,19 +2567,19 @@ def _parse_allow_sandbox_dir(value: str | None, base: Path) -> tuple[SandboxDirE
     try:
         parsed = ast.literal_eval(text)
     except (ValueError, SyntaxError) as e:
-        raise ValueError(f"allow_sandbox_dir はPythonのリスト形式で指定してください: {text!r}") from e
+        raise ValueError(f"allow_sandbox_dir must be a Python list: {text!r}") from e
     if not isinstance(parsed, list):
-        raise ValueError(f"allow_sandbox_dir はリスト（配列）形式で指定してください: {text!r}")
+        raise ValueError(f"allow_sandbox_dir must be a list (array): {text!r}")
     result: list[SandboxDirEntry] = []
     for item in parsed:
         if not isinstance(item, dict):
-            raise ValueError(f'allow_sandbox_dir の各要素は {{"dir": ..., "allow_entries": [...]}} の辞書にしてください: {item!r}')
+            raise ValueError(f'Each element of allow_sandbox_dir must be a dict {{"dir": ..., "allow_entries": [...]}}: {item!r}')
         dir_value = item.get("dir")
         if not isinstance(dir_value, str) or not dir_value.strip():
-            raise ValueError(f"allow_sandbox_dir の dir は空でない文字列にしてください: {item!r}")
+            raise ValueError(f"dir of allow_sandbox_dir must be a non-empty string: {item!r}")
         allow_entries_raw = item.get("allow_entries", [])
         if not isinstance(allow_entries_raw, list):
-            raise ValueError(f"allow_sandbox_dir の allow_entries はリスト（配列）形式にしてください: {item!r}")
+            raise ValueError(f"allow_entries of allow_sandbox_dir must be a list (array): {item!r}")
         entries: set[str | tuple[str, str]] = set()
         for target in allow_entries_raw:
             if isinstance(target, str):
@@ -2588,8 +2588,8 @@ def _parse_allow_sandbox_dir(value: str | None, base: Path) -> tuple[SandboxDirE
                 entries.add((str(target[0]), str(target[1])))
             else:
                 raise ValueError(
-                    "allow_sandbox_dir の allow_entries の各要素はツール名の文字列、または"
-                    f"[スキル名, スクリプトファイル名] の2要素にしてください: {target!r}"
+                    "Each element of allow_entries of allow_sandbox_dir must be a tool name string or "
+                    f"a two-element [skill name, script file name]: {target!r}"
                 )
         result.append(SandboxDirEntry(dir=_resolve(base, dir_value), allow_entries=frozenset(entries)))
     return tuple(result)
@@ -2609,7 +2609,7 @@ def render_plan_approval_exempt_scripts_block(entries: frozenset[tuple[str, str]
         差し込み用テキスト。空集合の場合は「（登録なし）」を返す。
     """
     if not entries:
-        return "（登録なし）"
+        return "(none registered)"
     return "\n".join(f"- `{skill}` / `{script}`" for skill, script in sorted(entries))
 
 
@@ -2636,13 +2636,13 @@ def render_agent_type_run_script_allowlist_block(agent_type: str, entries: froze
     """
     targets = [target for a, target in entries if a == agent_type]
     if not targets:
-        return "（登録なし＝制限なし。run_scriptで全スキルのスクリプトを呼べる）"
+        return "(none registered = no restriction; run_script can call the scripts of every skill)"
 
     def _format(target: str | tuple[str, str]) -> str:
         if isinstance(target, tuple):
             skill, script = target
             return f"- `{skill}` / `{script}`"
-        return f"- `{target}`（配下の全スクリプト）"
+        return f"- `{target}` (all scripts in it)"
 
     def _sort_key(target: str | tuple[str, str]) -> tuple[str, str]:
         return target if isinstance(target, tuple) else (target, "")
@@ -3361,9 +3361,9 @@ def load_config(
             "SUBAGENT_TOKEN_GUARD_SOFT_WARNING_TEXT",
             subagent.get(
                 "token_guard_soft_warning_text",
-                "[システム通知: このタスクのトークン使用量が上限に近づいています。"
-                "これ以上ツール呼び出しを追加せず、次の応答でこれまでに分かったことと"
-                "未処理の残り（あれば）をまとめて回答してください]",
+                "[System notice: the token usage of this task is approaching the limit. "
+                "Do not add more tool calls; in your next response, summarize what you have found so far "
+                "and what remains unprocessed (if anything)]",
             ),
         ),
         subagent_token_guard_hard_threshold=int(
@@ -3527,7 +3527,7 @@ def load_config(
         )
         or [],
         thinking_control_error_prefixes=_as_optional_str_list(
-            os.getenv("THINKING_CONTROL_ERROR_PREFIXES", thinking_control.get("error_prefixes", '["エラー"]'))
+            os.getenv("THINKING_CONTROL_ERROR_PREFIXES", thinking_control.get("error_prefixes", '["Error"]'))
         )
         or [],
         thinking_control_max_consecutive_reduced=int(
@@ -3801,10 +3801,10 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
         return
     data = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: トップレベルはオブジェクト（セクション名をキーとするdict）である必要があります。")
+        raise ValueError(f"{path}: the top level must be an object (a dict keyed by section name).")
     for section, section_values in data.items():
         if not isinstance(section_values, dict):
-            raise ValueError(f"{path}: セクション {section!r} の値はオブジェクト（キー名をキーとするdict）である必要があります。")
+            raise ValueError(f"{path}: the value of section {section!r} must be an object (a dict keyed by key name).")
         if section == _ADMIN_OVERRIDE_EXEMPT_SECTION:
             logger.warning(
                 "%s: ignoring section [%s] because it cannot be overridden (edit config.ini directly for the admin tool's own startup settings).",
@@ -3860,7 +3860,7 @@ def expand_config_vars(template: str, config: Config) -> str:
     def _replace(match: re.Match[str]) -> str:
         name = match.group(1)
         if name not in values:
-            raise ValueError(f"未定義のconfig変数が参照されています: ${{{name}}}")
+            raise ValueError(f"Undefined config variable referenced: ${{{name}}}")
         return str(values[name])
 
     return _CONFIG_VAR_PATTERN.sub(_replace, template)

@@ -138,7 +138,7 @@ def _warn_once(warn_key: tuple[str, str], message: str) -> None:
 
 
 def _warn_unsupported_once(provider: str, key: str) -> None:
-    _warn_once((provider, key), f"[llm].{key} は provider={provider} の接続先では対応するパラメータが無いため送信しません")
+    _warn_once((provider, key), f"[llm].{key} is not sent to endpoints with provider={provider} because they have no matching parameter")
 
 
 def build_extra_body(config: Config, provider: str) -> dict[str, Any]:
@@ -203,7 +203,7 @@ def build_extra_body(config: Config, provider: str) -> dict[str, Any]:
         if config.enable_thinking:
             _warn_once(
                 ("*", "reasoning_effort=none"),
-                "[llm].reasoning_effort=none のため [llm].enable_thinking=true を無視し、enable_thinking=false で送信します",
+                "[llm].reasoning_effort=none, so [llm].enable_thinking=true is ignored and enable_thinking=false is sent",
             )
         chat_template_kwargs["enable_thinking"] = False
     elif config.enable_thinking is not None:

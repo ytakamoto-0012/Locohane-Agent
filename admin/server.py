@@ -31,6 +31,7 @@ from src.config import PROJECT_ROOT, load_config, resolve_instances_root, resolv
 from src.version import __version__
 
 from . import api_docs, assistant, assistant_index, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
+from . import ini_catalog_en
 from . import instances as inst
 from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
@@ -62,9 +63,9 @@ _cfg = load_config()
 _admin_users = auth.load_admin_users(PROJECT_ENV_PATH)
 if not _admin_users:
     raise RuntimeError(
-        "ADMIN_USERS が設定されていません。プロジェクト直下の .env に "
-        'ADMIN_USERS=[["ユーザー名","パスワード"]] を設定してから、管理ツールを起動し直してください'
-        "（.env.example 参照）。"
+        "ADMIN_USERS is not set. Set "
+        'ADMIN_USERS=[["username","password"]] in .env at the project root, then restart the admin tool'
+        " (see .env.example)."
     )
 
 _sessions = auth.SessionStore(timeout_minutes=_cfg.admin_session_timeout_minutes)
@@ -99,7 +100,7 @@ async def _lifespan(_app: FastAPI):
         _supervisor.stop_all()
 
 
-app = FastAPI(title="Locohane 設定ダッシュボード", version=__version__, lifespan=_lifespan)
+app = FastAPI(title="Locohane Settings Dashboard", version=__version__, lifespan=_lifespan)
 # X-Locohane-Lang ヘッダー（admin/static/admin.js の api()）でエラーメッセージ等の言語を決める。
 app.add_middleware(admin_i18n.LanguageMiddleware)
 
@@ -422,6 +423,18 @@ _SKILL_LAB_SCOPE_NOTE = (
 )
 
 
+def _localize_schema(schema: Any) -> Any:
+    """リスト編集用スキーマ（admin/ini_catalog.py の _KEY_SCHEMAS）の表示ラベル・入力例を表示言語に訳す。"""
+    if isinstance(schema, list):
+        return [_localize_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        k: _t(v) if k in ("label", "placeholder", "group_placeholder") and isinstance(v, str) else _localize_schema(v)
+        for k, v in schema.items()
+    }
+
+
 def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     catalog = parse_ini_file(CONFIG_INI_PATH)
     ov_path = inst.overrides_path(INSTANCES_ROOT, name)
@@ -437,6 +450,8 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     }
     active_env = env_overrides.active_overrides(_env_var_mapping, effective_env)
     keys = []
+    # 英語表示では説明・見出しを英訳カタログ（admin/ini_catalog_en.py）から返す（日本語の正本は config.ini のコメント）。
+    english = admin_i18n.current_lang() == "en"
     for info in catalog.keys:
         if not inst.config_key_applies(kind, info.section, info.key):
             continue
@@ -448,11 +463,11 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
                 "default": info.default_value,
                 "override": override_value,
                 "effective": override_value if override_value is not None else info.default_value,
-                "description": info.description,
-                "group_heading": info.group_heading,
+                "description": ini_catalog_en.DESCRIPTIONS.get(f"{info.section}.{info.key}", info.description) if english else info.description,
+                "group_heading": ini_catalog_en.HEADINGS.get(info.group_heading or "", info.group_heading) if english else info.group_heading,
                 "ui_kind": info.ui_kind,
                 "choices": list(info.choices),
-                "schema": info.schema,
+                "schema": _localize_schema(info.schema),
                 "env_name": _env_var_mapping.get((info.section, info.key)),
                 "env_override_active": (info.section, info.key) in active_env,
                 "is_admin_section": info.section == "admin",
@@ -461,7 +476,7 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     return {
         "keys": keys,
         "mtime": overrides.mtime_or_none(ov_path),
-        "scope_note": _SKILL_LAB_SCOPE_NOTE if kind == inst.KIND_SKILL_LAB else None,
+        "scope_note": _t(_SKILL_LAB_SCOPE_NOTE) if kind == inst.KIND_SKILL_LAB else None,
     }
 
 
@@ -482,7 +497,7 @@ def _flatten_updates(updates: dict[str, dict[str, str]], kind: str) -> dict[tupl
     # 画面に出していないキー（その種類のインスタンスでは効かない設定）は、API を直接叩いても保存させない。
     rejected = [f"[{section}].{key}" for section, key in flat if not inst.config_key_applies(kind, section, key)]
     if rejected:
-        target = "スキル調整ワーカー" if kind == inst.KIND_SKILL_LAB else "本体のインスタンス"
+        target = _t("スキル調整ワーカー") if kind == inst.KIND_SKILL_LAB else _t("本体のインスタンス")
         raise HTTPException(status_code=400, detail=_t("{0}では効かない設定のため変更できません: {1}", target, ', '.join(rejected)))
     return flat
 

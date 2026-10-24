@@ -191,7 +191,7 @@ def build_router(
             # 壊れた theme.json は一覧に理由付きで出す（開くと 500 にならず、ほかのテーマは見られる）
             return {
                 "id": directory.name,
-                "title": f"（{directory.name}: theme.json を読めません）",
+                "title": f"({directory.name}: cannot read theme.json)",
                 "status": themes.STATUS_ERROR,
                 "lab": None,
                 "updated_at": None,
@@ -575,7 +575,7 @@ def build_router(
             if d.get("status") == themes.STATUS_QUEUED or (d.get("status") == themes.STATUS_RUNNING and not worker_alive):
                 d["status"] = themes.STATUS_STOPPED
                 if d.get("loop"):
-                    d["loop"].update({"deadline": None, "stop_requested": False, "message": "停止しました"})
+                    d["loop"].update({"deadline": None, "stop_requested": False, "message": "Stopped"})
             elif d.get("status") == themes.STATUS_RUNNING:
                 d["loop"] = {**(d.get("loop") or {}), "stop_requested": True}
             else:
@@ -680,8 +680,8 @@ def build_router(
                         difflib.unified_diff(
                             (old_text or "").splitlines(keepends=True),
                             (new_text or "").splitlines(keepends=True),
-                            fromfile=f"元/{rel}",
-                            tofile=f"今/{rel}",
+                            fromfile=f"before/{rel}",
+                            tofile=f"now/{rel}",
                         )
                     )[:_MAX_DIFF_CHARS],
                 }
@@ -739,4 +739,4 @@ def _text_or_none(path: Path | None) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
-        return f"（バイナリファイル {path.stat().st_size} バイト）"
+        return f"(binary file, {path.stat().st_size} bytes)"

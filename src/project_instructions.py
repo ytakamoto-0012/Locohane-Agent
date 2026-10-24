@@ -37,8 +37,8 @@ def render_project_instructions_block(paths: Sequence[Path], max_lines: int = _M
         if len(lines) > max_lines:
             lines = lines[:max_lines] + [
                 "",
-                f"…（{max_lines}行を超えたため以降は切り詰められました。"
-                f"全文は {path} を直接確認してください）",
+                f"... (truncated after {max_lines} lines. "
+                f"Read {path} directly for the full text)",
             ]
         text = "\n".join(lines).strip()
         if not text:
@@ -46,4 +46,4 @@ def render_project_instructions_block(paths: Sequence[Path], max_lines: int = _M
         if len(paths) > 1:
             text = f"### {path}\n\n{text}"
         blocks.append(text)
-    return "\n\n---\n\n".join(blocks) if blocks else "（プロジェクト固有の指示はありません）"
+    return "\n\n---\n\n".join(blocks) if blocks else "(no project-specific instructions)"

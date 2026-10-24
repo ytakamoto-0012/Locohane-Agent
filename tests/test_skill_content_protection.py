@@ -87,14 +87,14 @@ class TestRenderReattachedSkills:
 
         assert text.startswith('<skill_content name="skill-b">')
         assert 'name="skill-a"' not in text
-        assert "省略しました" in text and "skill-a" in text
+        assert "omitted" in text and "skill-a" in text
 
     def test_per_skill_limit_truncates_with_hint(self) -> None:
         old = _round_trip("read_skill", _skill("skill-a", 1000), "c1")
 
         text = _render_reattached_skills(old, [], max_chars_per_skill=200, total_max_chars=10_000)
 
-        assert "先頭 200 文字のみ" in text
+        assert "only the first 200 characters" in text
         assert "a" * 1000 not in text
 
     def test_previous_reattachment_is_carried_over(self) -> None:
@@ -112,7 +112,7 @@ class TestRenderReattachedSkills:
 
         assert text.startswith('<skill_content name="skill-c">')
         assert _skill("skill-b", 300) in text
-        assert text.endswith("省略しました（必要なら read_skill で再読込）: skill-a")
+        assert text.endswith("omitted (reload with read_skill if needed): skill-a")
 
     def test_newer_read_overrides_previous_reattachment(self) -> None:
         summary = HumanMessage(content="要約" + _SKILL_REATTACH_SEPARATOR + wrap_skill_content("skill-a", "old"))

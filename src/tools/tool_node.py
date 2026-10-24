@@ -188,7 +188,7 @@ def _guard_awaiting_approve_plan(input):  # noqa: A002
     return {
         "messages": [
             ToolMessage(
-                content=("エラー: create_planの直後はapprove_planを呼んでください" "（他のツールは実行されませんでした）。"),
+                content=("Error: call approve_plan right after create_plan" " (the other tools were not run)."),
                 name=name,
                 tool_call_id=call.get("id"),
                 status="error",
@@ -285,25 +285,25 @@ def _guard_main_agent_tool_limit(input):  # noqa: A002
             guard_max_calls = entries_by_key[pair]
     if signature is None:
         # 許可リストに存在しない＝メインエージェントからは一切呼び出せない。
-        content = f"エラー: {name} はメインエージェントとして許可されていません（main_agent_tool_guard.allow_entries未登録）。"
+        content = f"Error: {name} is not allowed for the main agent (not registered in main_agent_tool_guard.allow_entries)."
     elif guard_max_calls == -1:
         return None
     elif guard_max_calls <= 0:
-        content = f"エラー: {name} はメインエージェントとして呼び出しを禁止されています（max_calls=0）。"
+        content = f"Error: {name} is forbidden for the main agent (max_calls=0)."
     elif not _record_and_check_duplicate("main_agent_tool_guard_call_count", signature, guard_max_calls):
         return None
     else:
-        content = f"エラー: {name} はメインエージェントとして既に呼び出し上限（{guard_max_calls}回）に達しています。"
+        content = f"Error: {name} has already reached the call limit for the main agent ({guard_max_calls} times)."
     # agent_type一覧はagents/*.mdの走査結果（_state._AGENT_TYPES）から動的に組み立てる。
     # 種別を文言へ決め打ちすると、将来 agent_type が増減しても案内が追従せず、
     # 存在しない/古い種別へ誘導してしまう（dispatch_agentの不明agent_typeエラー
     # メッセージと同じ組み立て方、2972行目付近参照）。
-    available_agent_types = ", ".join(sorted(_state._AGENT_TYPES)) or "dispatch_agentのagent_type一覧を確認"
+    available_agent_types = ", ".join(sorted(_state._AGENT_TYPES)) or "see the agent_type list of dispatch_agent"
     return {
         "messages": [
             ToolMessage(
                 content=(
-                    f"{content}これ以上自分で実行せず、残りの調査・処理は dispatch_agent（agent_type: {available_agent_types}）へ委譲してください。"
+                    f"{content} Do not run any more yourself; delegate the remaining investigation/processing to dispatch_agent (agent_type: {available_agent_types})."
                 ),
                 name=name,
                 tool_call_id=call.get("id"),

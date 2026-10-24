@@ -47,14 +47,13 @@ def t(text: str, *args: object) -> str:
 
 
 def response_language_instruction() -> str:
-    """管理アシスタントのシステムプロンプト末尾に足す応答言語の指示（日本語なら空文字）。"""
-    if _LANG.get() != "en":
-        return ""
+    """管理アシスタントのシステムプロンプト末尾に足す応答言語の指示（プロンプト本体は英語）。"""
+    language = "English" if _LANG.get() == "en" else "Japanese"
     return (
         "\n\n## Response language\n"
-        "The administrator is using the dashboard in English. Always answer in English, even though the "
-        "instructions and reference material above are in Japanese. Keep config keys, section names, screen "
-        "names in brackets and file paths exactly as they are."
+        f"The administrator is using the dashboard in {language}. Always answer in {language}, whatever the "
+        "language of the instructions and reference material above. Keep config keys, section names, screen "
+        "names and file paths exactly as they are."
     )
 
 
@@ -209,4 +208,62 @@ EN: dict[str, str] = {
     "回答を考えています…": "Thinking about the answer…",
     "LLM（インスタンス {0!r} の [llm] 接続先）から応答を得られませんでした: {1}": "Got no response from the LLM (the [llm] endpoints of instance {0!r}): {1}",
     "LLM の応答が空でした。": "The LLM returned an empty response.",
+    'インスタンス {0!r} 自身の共有パス': 'the shared paths of instance {0!r} itself',
+    '存在しません': 'Does not exist',
+    'ドライブのルート・ホーム・プロジェクト等の上位ディレクトリのため削除できません': 'Cannot be deleted because it is a top-level directory such as a drive root, the home folder or the project',
+    'プロジェクト内の data/{0}/ 配下ではないため削除できません': 'Cannot be deleted because it is inside the project but not under data/{0}/',
+    'インスタンス {0} の設定を読み込めず、重複を確認できないため削除できません': 'Cannot be deleted because the settings of instance {0} cannot be read, so overlaps cannot be checked',
+    '{0} と重複しているため削除できません': 'Cannot be deleted because it overlaps with {0}',
+    'インスタンス {0!r} の共有パス': 'the shared paths of instance {0!r}',
+    'インスタンス {0!r} の {1}': '{1} of instance {0!r}',
+    '自動取り込みを有効にするときは時刻を1つ以上指定してください。': 'Specify at least one time when enabling automatic ingestion.',
+    '（不明）': '(unknown)',
+    'スレッドDBがありません: {0}（[thread_store] enabled=false、または未使用）': 'There is no thread DB: {0} ([thread_store] enabled=false, or not used yet)',
+    'インスタンス {0!r} の設定を読み込めません: {1}': 'Cannot load the settings of instance {0!r}: {1}',
+    'GET /slots が HTTP {0} のためスロット使用状況は不明': 'Slot usage is unknown because GET /slots returned HTTP {0}',
+    'スキル調整ワーカー': 'a skill tuning worker',
+    '本体のインスタンス': 'a main instance',
+    'インスタンス {0!r} は既に稼働中です。': 'Instance {0!r} is already running.',
+    'インスタンス {0!r} は管理ツール以外のプロセスで起動中のため、ここからは操作できません。先にそちらを終了してください。': 'Instance {0!r} was started by a process other than the admin tool, so it cannot be operated from here. Stop that process first.',
+    'インスタンス {0!r} の設定を解決できないため起動できません。config_overrides.json を確認してください。': 'Cannot start instance {0!r} because its settings cannot be resolved. Check config_overrides.json.',
+    '① 研究対象（スキルかサブエージェントを1つ以上）': '① Research targets (one or more skills or sub-agents)',
+    '② やってほしいことの「目的」': '② The "purpose" of what you want it to do',
+    '③ 試験問題（1問以上）': '③ Test questions (one or more)',
+    '③ 試験問題の直し（読めない・条件や使うファイルが足りない: {0}）': '③ Fix the test questions (unreadable, or missing conditions or files: {0})',
+    '[paths] common_data_dir（データディレクトリ全体）': '[paths] common_data_dir (the whole data directory)',
+    '[paths] checkpoint_db（会話状態）': '[paths] checkpoint_db (conversation state)',
+    '[thread_store] db（スレッド一覧）': '[thread_store] db (thread list)',
+    '[paths] memory_dir（永続メモリー）': '[paths] memory_dir (persistent memory)',
+    '[paths] plans_dir（実行計画）': '[paths] plans_dir (execution plans)',
+    '[log] dir（アプリログ）': '[log] dir (app logs)',
+    '[chat_log] dir（会話ログ）': '[chat_log] dir (conversation logs)',
+    '[elements] dir（添付・埋め込み画像）': '[elements] dir (attachments and embedded images)',
+    '[path_memory] dir（パスメモリー）': '[path_memory] dir (path memory)',
+    '[vector_db] dir（ベクターDB。Qdrant 上のベクターは別途 Qdrant 側で削除）': '[vector_db] dir (vector DB; delete vectors on Qdrant separately on the Qdrant side)',
+    '[default_workdir] dir（既定の作業ディレクトリ）': '[default_workdir] dir (default working directory)',
+    'スキル調整ワーカーの設定は、LLM の接続先（[llm] main_url・sub_url・routing_strategy）、ループの上限（[skill_lab_worker]）、ワーカー自身のログ（[log]）だけです。評価・AI 修正・judge・下書きは、研究テーマの対象インスタンスの設定をそのまま使います。': "The settings of a skill tuning worker are only the LLM endpoints ([llm] main_url, sub_url, routing_strategy), the loop limits ([skill_lab_worker]) and the worker's own logs ([log]). Evaluations, AI fixes, judging and drafting use the settings of the research theme's target instance as they are.",
+    'スキル名': 'Skill name',
+    '例: excel-read': 'e.g. excel-read',
+    'スクリプトファイル名': 'Script file name',
+    '例: read_excel.py': 'e.g. read_excel.py',
+    'ツール名': 'Tool name',
+    '例: dispatch_agent': 'e.g. dispatch_agent',
+    'スキルのスクリプト': 'Skill script',
+    '例: http://localhost:8080/v1': 'e.g. http://localhost:8080/v1',
+    'llama-server の --alias と同じ名前': 'Same name as --alias of llama-server',
+    '使用開始時刻 0〜24（常時使用なら空欄）': 'Start hour 0-24 (empty if always used)',
+    '使用終了時刻 0〜24（常時使用なら空欄）': 'End hour 0-24 (empty if always used)',
+    '例: http://localhost:12440/v1': 'e.g. http://localhost:12440/v1',
+    '埋め込みモデル名（全接続先で同じにする）': 'Embedding model name (the same for all endpoints)',
+    '例: explore': 'e.g. explore',
+    'スキル全体': 'Whole skill',
+    'スクリプト指定': 'Specific script',
+    '対象': 'Target',
+    'max_calls（-1=無制限）': 'max_calls (-1 = unlimited)',
+    'ディレクトリのみ': 'Directory only',
+    '例: ./.locohane': 'e.g. ./.locohane',
+    '専用Python環境あり': 'With a dedicated Python environment',
+    '例: ./.locohane_team': 'e.g. ./.locohane_team',
+    '例: ./.locohane_team/.venv/Scripts/python.exe': 'e.g. ./.locohane_team/.venv/Scripts/python.exe',
+    '例: E:/shared_output': 'e.g. E:/shared_output',
 }

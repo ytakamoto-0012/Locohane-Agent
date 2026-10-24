@@ -15,36 +15,34 @@ from ..i18n import t
 
 logger = logging.getLogger(__name__)
 
-_ASK_QUESTION_CANCEL_MESSAGE = "エラー: ユーザーが質問への回答をキャンセルしました。"
+_ASK_QUESTION_CANCEL_MESSAGE = "Error: the user cancelled answering the question."
 
 
 @tool("AskUserQuestion")
 async def ask_user_question(question: str, labels: list[str] | None = None) -> str:
-    """会話を続けるために必要な追加情報を、ユーザーに自由記述で質問する。
+    """Ask the user, in free text, for additional information needed to continue the conversation.
 
-    要求が曖昧・情報が不足している等、自由記述の回答（固有名詞・ファイルパス・
-    詳細な要望など）が必要な場合に使う。選択肢から選んでほしい場合は
-    ask_user_choice を使うこと。
+    Use it when you need a free-text answer (proper nouns, file paths, detailed requests, etc.),
+    for example because the request is ambiguous or information is missing. If you want the user
+    to choose from options, use ask_user_choice.
 
-    単一の質問なら labels を省略する。複数項目（例:
-    ファイル名と出力形式）をまとめて一度に自由記述で答えてほしい場合のみ、
-    labels に入力欄ごとのラベルを列挙する。項目ごとに本ツールを繰り返す
-    必要はない。
+    For a single question, omit labels. Only when you want several items (e.g. a file name and an
+    output format) answered in free text at once, list a label for each input field in labels.
+    You do not need to repeat this tool for each item.
 
     Args:
-        question: ユーザーに表示する質問文（labels指定時はフォーム全体の
-            見出しとして表示）。
-        labels: 複数項目をまとめて聞きたい場合の、入力欄ごとのラベル文字列
-            リスト。省略時（None または空リスト）は単一の自由記述入力欄を
-            表示する。
+        question: The question shown to the user (when labels is given, it is shown as the
+            heading of the whole form).
+        labels: When asking several items at once, a list of label strings, one per input
+            field. If omitted (None or an empty list), a single free-text input is shown.
 
     Returns:
-        labels を省略した場合はユーザーが入力した回答テキストをそのまま返す。
-        labels を指定した場合は "ラベル: 入力値" を改行区切りで並べた文字列を
-        返す。入力欄には常に「❌ キャンセル」ボタンが表示され、ユーザーが
-        キャンセルした場合は "エラー: ユーザーが質問への回答をキャンセルしました。"
-        を返す。設定されたタイムアウト秒数以内に応答が無い場合は、例外を送出せず
-        「エラー: ユーザーからの応答がありませんでした（タイムアウト）。」を返す。
+        If labels is omitted, the answer text the user entered as is.
+        If labels is given, a string with "label: value" lines separated by newlines.
+        A "Cancel" button is always shown, and if the user cancels it returns
+        "Error: the user cancelled answering the question."
+        If there is no response within the configured timeout, it returns
+        "Error: there was no response from the user (timeout)." instead of raising.
     """
     timeout = _resolve_ask_timeout(_state._ASK_USER_QUESTION_TIMEOUT_SECONDS)
     thread_id = cl.user_session.get("thread_id") or "_no_session"
@@ -56,7 +54,7 @@ async def ask_user_question(question: str, labels: list[str] | None = None) -> s
 
         res = await _ask_with_cross_session_relay(thread_id, _factory, timeout)
         if res is None:
-            return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+            return "Error: there was no response from the user (timeout)."
         if _is_text_ask_cancelled(res):
             return _ASK_QUESTION_CANCEL_MESSAGE
         return res.get("output", "")
@@ -81,7 +79,7 @@ async def ask_user_question(question: str, labels: list[str] | None = None) -> s
 
     res = await _ask_with_cross_session_relay(thread_id, _factory_element, timeout)
     if res is None:
-        return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+        return "Error: there was no response from the user (timeout)."
     if not res.get("submitted", True):
         return _ASK_QUESTION_CANCEL_MESSAGE
     values = res.get("values") or []

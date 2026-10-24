@@ -76,13 +76,13 @@ class TestSimilarity:
 
 class TestDifferenceLabel:
     def test_folder_differs(self) -> None:
-        assert path_memory.difference_label(r"C:\data\a.txt", r"C:\old\a.txt") == "フォルダ違い"
+        assert path_memory.difference_label(r"C:\data\a.txt", r"C:\old\a.txt") == "different folder"
 
     def test_name_differs(self) -> None:
-        assert path_memory.difference_label(r"C:\data\a.txt", r"C:\data\b.txt") == "ファイル名違い"
+        assert path_memory.difference_label(r"C:\data\a.txt", r"C:\data\b.txt") == "different file name"
 
     def test_both_differ(self) -> None:
-        assert path_memory.difference_label(r"C:\data\a.txt", r"C:\old\b.txt") == "フォルダ・ファイル名違い"
+        assert path_memory.difference_label(r"C:\data\a.txt", r"C:\old\b.txt") == "different folder and file name"
 
 
 class TestSearchEntries:

@@ -116,19 +116,19 @@ def _validate(name: object, description: object, file_stem: str) -> str | None:
         検証に失敗した場合はその理由。すべて通過した場合は None。
     """
     if not isinstance(name, str) or not name:
-        return "name が無い、または文字列でない"
+        return "name is missing or not a string"
     if len(name) > _NAME_MAX:
-        return f"name が {_NAME_MAX} 文字を超えている"
+        return f"name exceeds {_NAME_MAX} characters"
     if "--" in name or "__" in name or "-_" in name or "_-" in name:
-        return "name に区切り文字 (- や _) の連続が含まれる"
+        return "name contains consecutive separators (- or _)"
     if not _NAME_RE.match(name):
-        return "name は小文字英数字・ハイフン・アンダースコアのみ・先頭末尾は区切り文字不可"
+        return "name must contain only lowercase letters, digits, hyphens and underscores, and must not start or end with a separator"
     if name != file_stem:
-        return f"name '{name}' がファイル名 '{file_stem}' と一致しない"
+        return f"name '{name}' does not match the file name '{file_stem}'"
     if not isinstance(description, str) or not description.strip():
-        return "description が無い、または空"
+        return "description is missing or empty"
     if len(description) > _DESC_MAX:
-        return f"description が {_DESC_MAX} 文字を超えている"
+        return f"description exceeds {_DESC_MAX} characters"
     return None
 
 
@@ -233,7 +233,7 @@ def render_agent_types_block(agent_types: list[AgentType]) -> str:
     if agent_types:
         lines = []
         for a in agent_types:
-            tools = ", ".join(a.tool_names) if a.tool_names is not None else "（サブエージェント用の既定ツール一式）"
-            lines.append(f"- {a.name}: {a.description}\n  使用可能ツール: {tools}")
+            tools = ", ".join(a.tool_names) if a.tool_names is not None else "(the default tool set for sub-agents)"
+            lines.append(f"- {a.name}: {a.description}\n  Available tools: {tools}")
         return "\n".join(lines)
-    return "（利用可能なエージェント種別はありません）"
+    return "(no agent types available)"

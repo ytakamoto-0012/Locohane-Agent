@@ -62,7 +62,7 @@ def test_write_outside_allowed_root_is_blocked(tmp_path, guard_dirs):
     result = _run_guarded(tmp_path, [allowed_root], body)
 
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert not target.exists()
 
 
@@ -86,7 +86,7 @@ def test_os_remove_outside_allowed_root_is_blocked(tmp_path, guard_dirs):
     result = _run_guarded(tmp_path, [allowed_root], body)
 
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert protected.read_text(encoding="utf-8") == "original"
 
 
@@ -100,7 +100,7 @@ def test_shutil_move_into_outside_root_is_blocked(tmp_path, guard_dirs):
     result = _run_guarded(tmp_path, [allowed_root], body)
 
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert not dst.exists()
     assert src.exists()
 
@@ -138,7 +138,7 @@ def test_shutil_copy2_to_outside_allowed_root_is_still_blocked(tmp_path, guard_d
     result = _run_guarded(tmp_path, [allowed_root], body)
 
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert not dst.exists()
 
 
@@ -159,7 +159,7 @@ def test_os_system_copy_outside_allowed_root_is_blocked(tmp_path, guard_dirs):
     result = _run_guarded(tmp_path, [allowed_root], body)
 
     assert result.returncode != 0
-    assert "execute_python_codeガード" in result.stderr
+    assert "[execute_python_code guard]" in result.stderr
     assert not dst.exists()
 
 
@@ -170,7 +170,7 @@ def test_os_system_git_is_still_blocked(tmp_path, guard_dirs):
     result = _run_guarded(tmp_path, [allowed_root], body)
 
     assert result.returncode != 0
-    assert "execute_python_codeガード" in result.stderr
+    assert "[execute_python_code guard]" in result.stderr
 
 
 def test_pip_install_blocked_message_hints_library_may_already_be_installed(tmp_path, guard_dirs):
@@ -191,8 +191,8 @@ def test_pip_install_blocked_message_hints_library_may_already_be_installed(tmp_
     result = _run_guarded(tmp_path, [allowed_root], body)
 
     assert result.returncode != 0
-    assert "execute_python_codeガード" in result.stderr
-    assert "インストール済み" in result.stderr
+    assert "[execute_python_code guard]" in result.stderr
+    assert "installed already" in result.stderr
 
 
 def test_library_cache_root_is_writable_outside_allowed_root(tmp_path, guard_dirs, monkeypatch):
@@ -216,7 +216,7 @@ def test_library_cache_root_is_writable_outside_allowed_root(tmp_path, guard_dir
     assert (cache_root / "3.11" / "dicts.dat").exists()
     # キャッシュ以外の allowed_roots 外は従来どおりブロックされる
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert not (outside_root / "other.txt").exists()
 
 
@@ -245,7 +245,7 @@ def test_read_foreign_tmp_dir_is_blocked(tmp_path, guard_dirs):
     )
 
     assert result.returncode != 0
-    assert "一時ディレクトリガード" in result.stderr
+    assert "[temporary directory guard]" in result.stderr
 
 
 def test_read_own_tmp_dir_is_permitted(tmp_path, guard_dirs):
@@ -277,7 +277,7 @@ def test_remove_foreign_tmp_dir_is_blocked(tmp_path, guard_dirs):
     )
 
     assert result.returncode != 0
-    assert "一時ディレクトリガード" in result.stderr
+    assert "[temporary directory guard]" in result.stderr
     assert target.exists()
 
 
@@ -293,5 +293,5 @@ def test_rmtree_foreign_tmp_dir_is_blocked(tmp_path, guard_dirs):
     )
 
     assert result.returncode != 0
-    assert "一時ディレクトリガード" in result.stderr
+    assert "[temporary directory guard]" in result.stderr
     assert foreign.exists()

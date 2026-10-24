@@ -313,6 +313,7 @@ async def _run(
     #  意図を明確にするためここでインポートする）。
     from dataclasses import replace
 
+    from src import i18n
     from src.agent_types import render_agent_types_block, scan_agent_types
     from src.config import expand_config_vars, load_config, render_agent_type_run_script_allowlist_block
     from src.graph import ainvoke_ensuring_final_text, build_graph
@@ -450,6 +451,9 @@ async def _run(
         # config.ini の値を ${変数名} として埋め込めるよう展開する（app.py の
         # _setup() と同じ手順、{{...}}置換完了後に行う）。
         system_prompt = expand_config_vars(system_prompt, config)
+        # 本番（app.py の _rebuild_graph）と同じく応答言語の指示を末尾に足す。セッションが
+        # 無いため [ui].default_language（auto なら日本語）の言語になる。
+        system_prompt += i18n.response_language_directive()
 
         # サブエージェント共通の注意事項を各 agent_type の system_prompt 末尾に
         # 連結する（app.py の _setup() と同じ手順）。

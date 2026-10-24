@@ -150,20 +150,20 @@ def test_format_key_block_masks_sensitive_values_and_shows_override():
     views[("llm", "main_url")]["override"] = '[{"base_url": "http://x", "api_key": "sk-secret"}]'
     block = assistant.format_key_block([views[("llm", "main_url")], views[("llm", "max_concurrent_requests")]])
     assert "sk-secret" not in block and "127.0.0.1:8080" not in block
-    assert "機密のため非表示" in block
-    assert "現在値（画面で変更済み）: 3" in block
+    assert "hidden because it is confidential" in block
+    assert "Current value (changed on the screen): 3" in block
 
 
 def test_format_key_block_lists_choices():
     view = dict(_views()["keys"][0], choices=["", "round_robin", "priority_failover"])
-    assert "選べる値: （空欄）、round_robin、priority_failover" in assistant.format_key_block([view])
+    assert "Allowed values: (empty), round_robin, priority_failover" in assistant.format_key_block([view])
 
 
 def test_format_key_block_notes_env_override_and_admin_section():
     view = dict(_views()["keys"][0], env_override_active=True, env_name="LLM_MAIN_URL", is_admin_section=True)
     block = assistant.format_key_block([view])
-    assert "環境変数 LLM_MAIN_URL" in block
-    assert "画面からは変えられない" in block
+    assert "environment variable LLM_MAIN_URL" in block
+    assert "cannot be changed on the screen" in block
 
 
 def test_build_system_prompt_contains_rules_and_context():
@@ -176,12 +176,12 @@ def test_build_system_prompt_contains_rules_and_context():
         key_block="### [llm] main_url",
         doc_block="### README_DETAIL.md > ベクターDB",
     )
-    assert "設定を変更できません" in prompt
-    assert "言い切らないでください" in prompt
+    assert "You cannot change settings" in prompt
+    assert "Do not assert that" in prompt
     assert "### README_DETAIL.md > ベクターDB" in prompt
     assert "# ガイド本文" in prompt and "### [llm] main_url" in prompt
     assert "営業部" in prompt and "running" in prompt
-    assert "サブタブ「config.ini」" in prompt
+    assert 'sub tab "config.ini"' in prompt
 
 
 @pytest.mark.parametrize(
@@ -310,9 +310,9 @@ def test_chat_streams_answer_and_referenced_keys(tmp_path):
     assert [e["type"] for e in events[:2]] == ["status", "status"]
 
     system = model.calls[0][0].content
-    assert "# 画面ガイド" in system
+    assert "# Screen guide" in system
     assert "### [llm] max_concurrent_requests" in system
-    assert "サブタブ「モニター」" in system
+    assert 'sub tab "モニター"' in system
 
 
 def test_chat_uses_embedding_and_reports_sources(tmp_path):

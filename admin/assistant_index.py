@@ -117,7 +117,7 @@ def provider_from_config(cfg: Config, instance: str) -> EmbeddingProvider | None
     return EmbeddingProvider(
         embed=lambda texts, kind: embed_texts(cfg, texts, kind=kind),
         cache_id=cache_id,
-        label=f"インスタンス {instance} の [vector_db] embedding_url",
+        label=f"[vector_db] embedding_url of instance {instance}",
     )
 
 

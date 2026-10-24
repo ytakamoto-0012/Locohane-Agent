@@ -41,7 +41,7 @@ CREATE INDEX IF NOT EXISTS chunks_source ON chunks (collection_id, source_path);
 class SqliteVecStore(SqliteBatchMixin):
     def __init__(self, directory: Path, *, distance: str = "Cosine"):
         if distance not in _METRICS:
-            raise StoreError(f"sqlite-vec は距離関数 {distance} に対応していません（{'/'.join(_METRICS)} のいずれか）。")
+            raise StoreError(f"sqlite-vec does not support distance {distance} (one of {'/'.join(_METRICS)}).")
         self._distance = distance
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / VECTORS_FILENAME
@@ -52,7 +52,7 @@ class SqliteVecStore(SqliteBatchMixin):
             self._conn.enable_load_extension(False)
         except (AttributeError, sqlite3.OperationalError) as e:
             self._conn.close()
-            raise StoreError(f"sqlite-vec を読み込めません（この Python の sqlite3 は拡張の読み込みに対応していない可能性があります）: {e}") from e
+            raise StoreError(f"Cannot load sqlite-vec (this Python's sqlite3 may not support loading extensions): {e}") from e
         configure_connection(self._conn)
         self._conn.executescript(_SCHEMA)
         # 距離関数を選べるようになる前の DB（すべてコサイン距離で作っている）に列を足す。
@@ -73,10 +73,10 @@ class SqliteVecStore(SqliteBatchMixin):
         existing = self._collection(name)
         if existing is not None:
             if existing[1] != dim:
-                raise StoreError(f"コレクション {name} のベクターの次元（{existing[1]}）と埋め込みの次元（{dim}）が違います。再構築してください。")
+                raise StoreError(f"The vector dimension ({existing[1]}) of collection {name} differs from the embedding dimension ({dim}). Rebuild it.")
             if existing[2] != self._distance:
                 raise StoreError(
-                    f"コレクション {name} の距離関数（{existing[2]}）と [vector_db].distance（{self._distance}）が違います。再構築してください。"
+                    f"The distance ({existing[2]}) of collection {name} differs from [vector_db].distance ({self._distance}). Rebuild it."
                 )
             return
         with self._transaction():
@@ -116,12 +116,12 @@ class SqliteVecStore(SqliteBatchMixin):
     def replace_source(self, name: str, source_path: str, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
         existing = self._collection(name)
         if existing is None:
-            raise StoreError(f"コレクション {name} がありません。")
+            raise StoreError(f"Collection {name} does not exist.")
         cid, dim, _ = existing
         pairs = list(zip(chunks, vectors, strict=True))
         for _chunk, vector in pairs:
             if len(vector) != dim:
-                raise StoreError(f"埋め込みの次元（{len(vector)}）がコレクション {name} の次元（{dim}）と違います。")
+                raise StoreError(f"The embedding dimension ({len(vector)}) differs from the dimension ({dim}) of collection {name}.")
         with self._transaction():
             self._delete_source(cid, source_path)
             if not pairs:
@@ -150,7 +150,7 @@ class SqliteVecStore(SqliteBatchMixin):
             return []
         cid, dim, distance = existing
         if len(vector) != dim:
-            raise StoreError(f"検索語の埋め込みの次元（{len(vector)}）がコレクション {name} の次元（{dim}）と違います。")
+            raise StoreError(f"The dimension of the query embedding ({len(vector)}) differs from the dimension ({dim}) of collection {name}.")
         rows = self._conn.execute(
             f"""
             SELECT c.source_path, c.locator, c.text, v.distance

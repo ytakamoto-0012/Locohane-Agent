@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 # script_args の分割ミス（例: "--file C:\\aaa.png" を1要素にまとめてしまい、
 # スクリプト側のargparseが値を認識できない）は非ゼロ終了として現れる。
 # ヒントは終了コードが0以外の場合のみ結果へ付与する（正常終了時は不要）。
-_SCRIPT_ARGS_HINT = 'script_argsはオプションと値を別要素にする（例: ["--file", "C:\\\\aaa.png"]。["--file C:\\\\aaa.png"]のように1要素にまとめない）。'
+_SCRIPT_ARGS_HINT = 'Put each option and its value in separate elements of script_args (e.g. ["--file", "C:\\\\aaa.png"]; do not combine them into one element like ["--file C:\\\\aaa.png"]).'
 
 
 def _resolve_run_script_command(skill_name: str, script_filename: str, script_args: list[str] | None = None) -> list[str] | str:
@@ -46,12 +46,11 @@ def _resolve_run_script_command(skill_name: str, script_filename: str, script_ar
     allowed = _state._AGENT_TYPE_RUN_SCRIPT_ALLOWLIST.get(current_agent_type) if current_agent_type else None
     if allowed is not None and skill_name not in allowed and (skill_name, script_filename) not in allowed:
         return (
-            f"エラー: agent_type=\"{current_agent_type}\" から呼び出せる run_script のスキル/スクリプトは "
-            f"{sorted(str(a) for a in allowed)} に限定されています"
-            f"（skill={skill_name}, script={script_filename} は対象外）。"
-            "対応するサブエージェント（office文書/PDFの読み取りなら explore、"
-            "書き込みやWeb検索等その他のスキル実行が要るなら worker）へ"
-            "改めて委譲するよう、委譲元に伝えてください。"
+            f"Error: the run_script skills/scripts callable from agent_type=\"{current_agent_type}\" are limited to "
+            f"{sorted(str(a) for a in allowed)} "
+            f"(skill={skill_name}, script={script_filename} is not allowed). "
+            "Tell the delegator to delegate again to the matching sub-agent (explore for reading office documents/PDFs, "
+            "worker if writing, web search or other skill execution is needed)."
         )
 
     args = script_args or []
@@ -61,13 +60,13 @@ def _resolve_run_script_command(skill_name: str, script_filename: str, script_ar
     for a in args:
         resolved, error = _resolve_path_memory_token(a)
         if error:
-            return f"エラー: {error}"
+            return f"Error: {error}"
         resolved_args.append(resolved)
     args = resolved_args
     try:
         script_path = _resolve_script_filename(skill_name, script_filename)
     except ValueError as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
 
     # .py は設定の Python で、それ以外はそのまま実行を試みる。
     if script_path.suffix == ".py":
@@ -125,12 +124,12 @@ def _prepare_script_execution(skill_name: str, script_filename: str, script_args
     if not is_plan_exempt and not cl.user_session.get("plan_approved"):
         logger.info("run_script: blocked because the plan is not approved skill=%s script=%s", skill_name, script_filename)
         return (
-            "エラー: 計画が未承認のため実行できません"
-            f"（skill={skill_name}, script={script_filename}）。"
-            "create_plan で計画を作成し、approve_plan でユーザーの承認を得てから"
-            "実行してください。自分のtoolsにcreate_plan/approve_planが無い"
-            "（サブエージェントである）場合は、それ以上試行せずこのエラーを"
-            "そのまま最終回答として委譲元へ報告してください。"
+            "Error: cannot run because the plan is not approved "
+            f"(skill={skill_name}, script={script_filename}). "
+            "Create a plan with create_plan, get the user's approval with approve_plan, "
+            "and then run it. If your tools do not include create_plan/approve_plan "
+            "(you are a sub-agent), do not try again; report this error "
+            "as is to the delegator as your final answer."
         )
 
     return cmd, workdir
@@ -166,19 +165,19 @@ async def _run_script_impl(skill_name: str, script_filename: str, script_args: l
             env=env,
         )
     except subprocess.TimeoutExpired:
-        return f"エラー: スクリプトが {_state._SCRIPT_TIMEOUT} 秒でタイムアウトしました。"
+        return f"Error: the script timed out after {_state._SCRIPT_TIMEOUT} seconds."
     except OSError as e:
-        return f"エラー: スクリプトを実行できませんでした: {e}"
+        return f"Error: could not run the script: {e}"
     finally:
         if guard_dir is not None:
             shutil.rmtree(guard_dir, ignore_errors=True)
 
     # stdout / stderr / 終了コードをまとめて返す（LLM が結果を解釈できるように）。
-    parts = [f"[終了コード] {proc.returncode}"]
+    parts = [f"[exit code] {proc.returncode}"]
     if proc.stdout:
-        parts.append(f"[標準出力]\n{proc.stdout.rstrip()}")
+        parts.append(f"[stdout]\n{proc.stdout.rstrip()}")
     if proc.stderr:
-        parts.append(f"[標準エラー]\n{proc.stderr.rstrip()}")
+        parts.append(f"[stderr]\n{proc.stderr.rstrip()}")
     if proc.returncode != 0:
         parts.append(_SCRIPT_ARGS_HINT)
     warning = _track_failure_streak("run_script_failure_streak", proc.returncode != 0, "run_script")
@@ -261,7 +260,7 @@ def _format_background_job_progress(job: "_BackgroundJob", job_id: str) -> str:
     _format_job_result 参照。2026-08-27 ユーザー要望により実行中表示からのみ除去）。
     """
     elapsed = int(time.monotonic() - job.started_at)
-    return f"実行中です（経過 {elapsed} 秒・job_id={job_id}）。"
+    return f"Running (elapsed {elapsed} s, job_id={job_id})."
 
 
 async def _push_background_job_progress(job: "_BackgroundJob", job_id: str) -> None:
@@ -388,14 +387,14 @@ def _purge_stale_background_jobs() -> None:
 
 def _format_job_result(job: "_BackgroundJob") -> str:
     """終了済みジョブの結果を run_script と同じ表示形式に整形する。"""
-    returncode_label = job.returncode if job.returncode is not None else "不明"
-    parts = [f"[終了コード] {returncode_label}"]
+    returncode_label = job.returncode if job.returncode is not None else "unknown"
+    parts = [f"[exit code] {returncode_label}"]
     stdout = "".join(job.stdout_chunks).rstrip()
     stderr = "".join(job.stderr_chunks).rstrip()
     if stdout:
-        parts.append(f"[標準出力]\n{stdout}")
+        parts.append(f"[stdout]\n{stdout}")
     if stderr:
-        parts.append(f"[標準エラー]\n{stderr}")
+        parts.append(f"[stderr]\n{stderr}")
     # execute_python_code_background 由来のジョブのみ workdir/before_snapshot が
     # 設定されている（run_script_background 由来では None のためスキップされる）。
     if job.workdir is not None and job.before_snapshot is not None:
@@ -427,12 +426,11 @@ def _background_job_started_message(job_id: str) -> str:
     処理時間の長さ自体は打ち切る理由にならないことを明記する。
     """
     return (
-        f"バックグラウンドで実行中です（job_id={job_id}）。長時間かかっているため、"
-        "いったんこのターンを終えて制御を返します（ジョブ自体は裏側で動き続けます）。\n"
-        "完了確認・結果取得には check_script_job（job_id指定）を使うこと。"
-        "処理に時間がかかっていること自体は打ち切る理由にはならない。"
-        "ユーザーから明示的に中断・キャンセルを指示された場合にのみ"
-        "stop_script_job（job_id指定）を使うこと。"
+        f"Running in the background (job_id={job_id}). It is taking a long time, "
+        "so this turn ends and control is returned for now (the job itself keeps running in the background).\n"
+        "Use check_script_job (with job_id) to check completion and get the result. "
+        "Taking a long time is not in itself a reason to stop it. "
+        "Use stop_script_job (with job_id) only when the user explicitly asks to interrupt or cancel."
     )
 
 
@@ -440,10 +438,10 @@ def _resolve_job(job_id: str) -> "_BackgroundJob | str":
     """job_id を現在のセッション所有のジョブへ解決する（他セッションは拒否）。"""
     job = _BACKGROUND_JOBS.get(job_id)
     if job is None:
-        return f"エラー: job_id '{job_id}' は見つかりません（既に取得済みか、無効なIDです）。"
+        return f"Error: job_id '{job_id}' not found (already retrieved, or an invalid ID)."
     thread_id = cl.user_session.get("thread_id") or ""
     if job.thread_id != thread_id:
-        return f"エラー: job_id '{job_id}' は現在のセッションのものではありません。"
+        return f"Error: job_id '{job_id}' does not belong to the current session."
     return job
 
 
@@ -513,11 +511,11 @@ def _finalize_script_job_result(job: "_BackgroundJob", job_id: str) -> str:
     result = _format_job_result(job)
     if job.status == "timeout":
         result = (
-            f"エラー: バックグラウンド実行が {_state._SCRIPT_BACKGROUND_MAX_RUNTIME_SECONDS} " f"秒の上限に達したため強制終了しました。\n{result}"
+            f"Error: the background run reached the limit of {_state._SCRIPT_BACKGROUND_MAX_RUNTIME_SECONDS} " f"seconds and was forcibly stopped.\n{result}"
         )
     elif job.status == "killed":
-        result = f"stop_script_job により強制終了されました。\n{result}"
+        result = f"Forcibly stopped by stop_script_job.\n{result}"
     elif job.status == "error":
-        result = f"エラー: バックグラウンド実行中に問題が発生しました: {job.error_message}"
+        result = f"Error: a problem occurred during the background run: {job.error_message}"
     _BACKGROUND_JOBS.pop(job_id, None)
     return result

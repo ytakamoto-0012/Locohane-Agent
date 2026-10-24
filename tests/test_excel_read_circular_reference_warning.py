@@ -57,7 +57,7 @@ class TestReadXlsxCircularReferenceWarning:
         result = _read_xlsx(path, sheet_arg="Sheet1", offset=0, limit=200, data_only=False)
 
         assert "warnings" in result
-        assert any("循環参照" in w and "N8" in w for w in result["warnings"])
+        assert any("circular reference" in w and "N8" in w for w in result["warnings"])
 
     def test_correct_sum_range_produces_no_circular_warning(self, tmp_path):
         wb = openpyxl.Workbook()
@@ -71,7 +71,7 @@ class TestReadXlsxCircularReferenceWarning:
 
         result = _read_xlsx(path, sheet_arg="Sheet1", offset=0, limit=200, data_only=False)
 
-        assert "warnings" not in result or not any("循環参照" in w for w in result.get("warnings", []))
+        assert "warnings" not in result or not any("circular reference" in w for w in result.get("warnings", []))
 
     def test_data_only_mode_does_not_false_positive(self, tmp_path):
         """--data-only指定時は数式でなくキャッシュ値が入るため、循環参照検知は動かない
@@ -86,4 +86,4 @@ class TestReadXlsxCircularReferenceWarning:
 
         result = _read_xlsx(path, sheet_arg="Sheet1", offset=0, limit=200, data_only=True)
 
-        assert "warnings" not in result or not any("循環参照" in w for w in result.get("warnings", []))
+        assert "warnings" not in result or not any("circular reference" in w for w in result.get("warnings", []))

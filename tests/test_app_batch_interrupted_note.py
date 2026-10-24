@@ -25,7 +25,7 @@ def test_batch_hint_mentions_interrupted_note_when_saved(monkeypatch, tmp_path) 
     hint = app._dispatch_agent_rescue_note_hint(tc)
 
     assert f'thread note "{topic}"' in hint
-    assert "完了済みのグループはやり直さず" in hint
+    assert "do not redo completed groups" in hint
 
 
 def test_batch_hint_omits_note_when_not_saved(monkeypatch, tmp_path) -> None:

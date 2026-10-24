@@ -319,7 +319,7 @@ def write_text(directory: Path, rel: str, content: str, *, actor: str) -> None:
     validate_content(rel, content)
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(path, content)
-    mark_changed(directory, actor, f"編集: {rel}")
+    mark_changed(directory, actor, f"edit: {rel}")
 
 
 def write_bytes(directory: Path, rel: str, content: bytes, *, actor: str) -> None:
@@ -328,7 +328,7 @@ def write_bytes(directory: Path, rel: str, content: bytes, *, actor: str) -> Non
         raise ThemeError(_t("ファイルのアップロードは cases/fixtures/ 配下にだけできます。"))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
-    mark_changed(directory, actor, f"入力ファイル: {rel}")
+    mark_changed(directory, actor, f"input file: {rel}")
 
 
 def delete_path(directory: Path, rel: str, *, actor: str) -> None:
@@ -345,7 +345,7 @@ def delete_path(directory: Path, rel: str, *, actor: str) -> None:
         shutil.rmtree(path)
     else:
         path.unlink()
-    mark_changed(directory, actor, f"削除: {rel}")
+    mark_changed(directory, actor, f"delete: {rel}")
 
 
 def mark_changed(directory: Path, actor: str, detail: str) -> None:
@@ -396,7 +396,7 @@ def validate_skill_md(content: str, dir_name: str) -> str | None:
 
     fm = _parse_frontmatter(content)
     if fm is None:
-        return "SKILL.md の先頭に frontmatter（--- で囲んだ name・description）がありません。"
+        return "SKILL.md has no frontmatter (name and description enclosed in ---) at the top."
     error = _validate(fm.get("name"), fm.get("description"), dir_name)
     return f"SKILL.md: {error}" if error else None
 
@@ -406,16 +406,16 @@ def validate_agent_md(content: str, file_stem: str, known_tools: list[str] | Non
 
     parsed = _parse_frontmatter(content)  # (frontmatter, 本文) か None
     if parsed is None:
-        return "エージェント定義の先頭に frontmatter（--- で囲んだ name・description・tools）がありません。"
+        return "The agent definition has no frontmatter (name, description and tools enclosed in ---) at the top."
     fm = parsed[0]
     error = _validate(fm.get("name"), fm.get("description"), file_stem)
     if error:
-        return f"エージェント定義: {error}"
+        return f"Agent definition: {error}"
     if known_tools is not None:
         tools = _parse_tools_field(fm.get("tools")) or []
         unknown = [t for t in tools if t not in known_tools]
         if unknown:
-            return f"エージェント定義: tools に存在しないツール名があります: {unknown}"
+            return f"Agent definition: tools has tool names that do not exist: {unknown}"
     return None
 
 
@@ -425,21 +425,21 @@ def validate_case_yaml(content: str, case_id: str) -> str | None:
     try:
         data = yaml.safe_load(content)
     except yaml.YAMLError as e:
-        return f"ケース {case_id}: YAML として読めません: {e}"
+        return f"Case {case_id}: cannot read it as YAML: {e}"
     if isinstance(data, dict) and data.get("id") is not None and not isinstance(data.get("id"), str):
-        return f"ケース {case_id}: id は文字列にしてください（数字だけの id は '{case_id}' のように引用符で囲む）。"
+        return f"Case {case_id}: make id a string (quote an id made only of digits, like '{case_id}')."
     if isinstance(data, dict) and data.get("id") not in (None, case_id):
-        return f"ケース {case_id}: id（{data.get('id')}）をファイル名と同じにしてください。"
+        return f"Case {case_id}: make id ({data.get('id')}) the same as the file name."
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"{case_id}.yaml"
         path.write_text(content, encoding="utf-8")
         try:
             case = load_case(path)
         except (ValueError, TypeError) as e:
-            return f"ケース {case_id}: {str(e).replace(str(path), path.name)}"
+            return f"Case {case_id}: {str(e).replace(str(path), path.name)}"
     if not case_has_condition(case):
         # expect の項目がすべて空で judge も無いケースは何をしても合格になり、AI 修正の抜け道にもなる。
-        return f"ケース {case_id}: 合格の決め方（expect のいずれかの条件、または judge）を1つ以上入れてください。"
+        return f"Case {case_id}: add at least one way to decide passing (a condition in expect, or judge)."
     return None
 
 
@@ -459,7 +459,7 @@ def validate_python(content: str, rel: str) -> str | None:
     try:
         ast.parse(content)
     except SyntaxError as e:
-        return f"{rel}: Python の構文エラー（{e.lineno}行目）: {e.msg}"
+        return f"{rel}: Python syntax error (line {e.lineno}): {e.msg}"
     return None
 
 
@@ -535,7 +535,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
     def _apply(data: dict) -> None:
         data["sources"][asset_type][name] = {"kind": "new", "description": description}
         data["tryout"] = None
-        add_history(data, actor, "add_asset", f"{asset_type}/{name}（新規）")
+        add_history(data, actor, "add_asset", f"{asset_type}/{name} (new)")
 
     update(directory, _apply)
 
@@ -583,9 +583,9 @@ def list_cases(directory: Path) -> list[dict]:
                 }
             )
             if not case_has_condition(case):
-                item["error"] = "合格の決め方（expect の条件か judge）がありません"
+                item["error"] = "There is no way to decide passing (an expect condition or judge)"
             elif case.work_dir and not _work_dir_exists(directory, case.work_dir):
-                item["error"] = f"使うファイルのフォルダ {case.work_dir} がありません"
+                item["error"] = f"The folder of files to use, {case.work_dir}, does not exist"
         except Exception as e:  # noqa: BLE001 - 一覧では壊れたケースも理由付きで出す
             item["error"] = str(e)
         result.append(item)
@@ -635,16 +635,16 @@ def start_missing(directory: Path) -> list[str]:
     missing = []
     assets = list_assets(directory)
     if not assets["skills"] and not assets["agents"]:
-        missing.append("① 研究対象（スキルかサブエージェントを1つ以上）")
+        missing.append(_t("① 研究対象（スキルかサブエージェントを1つ以上）"))
     if not spec_filled(directory):
-        missing.append("② やってほしいことの「目的」")
+        missing.append(_t("② やってほしいことの「目的」"))
     cases = list_cases(directory)
     if not cases:
-        missing.append("③ 試験問題（1問以上）")
+        missing.append(_t("③ 試験問題（1問以上）"))
     broken = [c["id"] for c in cases if c.get("error")]
     if broken:
         # 読めないケースがあると評価がエラーになり、AI 修正の手がかりにもならない。
-        missing.append(f"③ 試験問題の直し（読めない・条件や使うファイルが足りない: {', '.join(broken)}）")
+        missing.append(_t("③ 試験問題の直し（読めない・条件や使うファイルが足りない: {0}）", ', '.join(broken)))
     return missing
 
 
@@ -690,21 +690,21 @@ def content_hashes(directory: Path) -> dict:
 def tryout_matches(directory: Path, tryout: dict | None) -> list[str]:
     """tryout（evals/run_all.py の tryout.json）が今の内容を評価したものか。食い違いの説明を返す。"""
     if not tryout:
-        return ["トライアウトの結果がありません"]
+        return ["There are no tryout results"]
     now = content_hashes(directory)
     problems = []
     if tryout.get("cases_sha256") != now["cases"]:
-        problems.append("トライアウト後にケース（入力ファイルを含む）が変わっています")
+        problems.append("The cases (including input files) changed after the tryout")
     if sorted(tryout.get("case_files") or []) != sorted(p.stem for p in (directory / CASES_DIRNAME).glob("*.yaml")):
-        problems.append("トライアウトしたケースが今の全ケースと一致しません")
+        problems.append("The cases in the tryout do not match all the current cases")
     evaluated_skills = {o.get("name"): o.get("sha256") for o in tryout.get("skill_overlays") or []}
     evaluated_agents = {o.get("name"): o.get("sha256") for o in tryout.get("agent_overlays") or []}
     if evaluated_skills != now["skills"]:
-        problems.append("トライアウト後にスキルが変わっています")
+        problems.append("The skills changed after the tryout")
     if evaluated_agents != now["agents"]:
-        problems.append("トライアウト後にサブエージェントが変わっています")
+        problems.append("The sub-agents changed after the tryout")
     if ((tryout.get("config_patch") or {}).get("sha256")) != now["config_patch"]:
-        problems.append("トライアウト後に設定パッチ（config_patch.json）が変わっています")
+        problems.append("The settings patch (config_patch.json) changed after the tryout")
     return problems
 
 

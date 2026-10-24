@@ -115,7 +115,7 @@ class TestAddChartGrouping:
 
     def test_invalid_grouping_value_raises(self):
         wb, ws = _make_wb_with_data()
-        with pytest.raises(ValueError, match="未対応のgroupingです"):
+        with pytest.raises(ValueError, match="Unsupported grouping"):
             apply_op(
                 wb,
                 {

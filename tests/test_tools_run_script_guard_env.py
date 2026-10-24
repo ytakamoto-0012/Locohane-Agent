@@ -80,7 +80,7 @@ def test_subprocess_write_outside_workdir_is_blocked(tmp_path):
             shutil.rmtree(guard_dir, ignore_errors=True)
 
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert not target.exists()
 
 
@@ -117,7 +117,7 @@ def test_subprocess_write_directly_inside_default_workdir_is_blocked(tmp_path):
             shutil.rmtree(guard_dir, ignore_errors=True)
 
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert not target.exists()
 
 
@@ -193,7 +193,7 @@ def test_subprocess_read_foreign_tmp_dir_is_blocked(tmp_path):
             shutil.rmtree(guard_dir, ignore_errors=True)
 
     assert result.returncode != 0
-    assert "一時ディレクトリガード" in result.stderr
+    assert "[temporary directory guard]" in result.stderr
 
 
 def test_subprocess_write_inside_allowed_sandbox_dir_succeeds(tmp_path, monkeypatch):
@@ -249,7 +249,7 @@ def test_subprocess_write_inside_sandbox_dir_blocked_for_unlisted_script(tmp_pat
             shutil.rmtree(guard_dir, ignore_errors=True)
 
     assert result.returncode != 0
-    assert "書き込みサンドボックスガード" in result.stderr
+    assert "[write sandbox guard]" in result.stderr
     assert not target.exists()
 
 

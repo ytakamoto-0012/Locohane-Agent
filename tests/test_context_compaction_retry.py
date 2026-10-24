@@ -122,7 +122,7 @@ async def test_connection_error_retries_with_endpoint_switch_then_succeeds(monke
     result = await maybe_compact(_messages(), models[0], _config(tmp_path), role="main")
 
     assert result is not None
-    assert result[0].content.startswith("[自動要約:")
+    assert result[0].content.startswith("[Automatic summary:")
     assert "要約結果" in result[0].content
     # 2回とも通信エラー → 2回とも接続先クールダウン + モデル再構築が発動した。
     assert mark_failed_calls == ["main", "main"]

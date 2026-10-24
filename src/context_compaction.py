@@ -92,24 +92,24 @@ async def _record_compaction_usage(kind: str, role: str, response) -> None:
         logger.warning("Failed to tally compaction token usage", exc_info=True)
 
 
-_SUMMARY_HEADER = "[自動要約: コンテキスト圧縮のため、以前の会話の一部を要約しました。" "この内容を踏まえて続きの作業を行ってください]\n"
-_PLAN_STATUS_HEADER = "[承認済みの実行計画（最優先タスク）。要約とは無関係にコード側が機械的に付与しています]\n"
+_SUMMARY_HEADER = "[Automatic summary: part of the earlier conversation was summarized for context compaction. Continue the work based on it]\n"
+_PLAN_STATUS_HEADER = "[Approved plan (highest priority task). Added mechanically by the code, independent of the summary]\n"
 _THREAD_NOTE_STATUS_HEADER = (
-    "[thread note の現在の状態。要約とは無関係にコード側が機械的に付与しています。"
-    "要約に含まれていない具体的な事実（値・件数・該当箇所等）が必要になったら、"
-    "ここに挙がっているtopic名を read_thread_note でそのまま読んでください]\n"
+    "[Current state of the thread notes. Added mechanically by the code, independent of the summary. "
+    "If you need concrete facts (values, counts, locations, etc.) not in the summary, "
+    "read the topic names listed here with read_thread_note as they are]\n"
 )
 _SKILL_REATTACH_HEADER = (
-    "[圧縮前に read_skill で読み込んだスキル本文。要約とは無関係にコード側が機械的に付与しています。"
-    "ここにある本文は再読込不要です]\n"
+    "[Skill bodies loaded with read_skill before compaction. Added mechanically by the code, independent of the summary. "
+    "The bodies here do not need to be reloaded]\n"
 )
 # 要約メッセージ内の再添付セクションの区切り（再添付は要約メッセージの末尾に置く）。
 _SKILL_REATTACH_SEPARATOR = "\n\n" + _SKILL_REATTACH_HEADER
-_OMITTED_SKILLS_PREFIX = "以下のスキルも読み込み済みでしたが本文は省略しました（必要なら read_skill で再読込）: "
+_OMITTED_SKILLS_PREFIX = "The following skills were also loaded, but their bodies are omitted (reload with read_skill if needed): "
 _REATTACHED_BLOCK_SPLIT_RE = re.compile(r'\n\n(?=<skill_content name=")')
-_PINNED_INSTRUCTION_HEADER = "[委譲元から指示されたタスク（原文）。要約とは無関係にコード側が機械的に付与しています]\n"
-_PRE_NOTE_MARKER = "[コンテキスト圧縮が近づいています]"
-_LOOP_NUDGE_TEXT = "直前の要約生成は同じ内容を繰り返すループに陥ったため打ち切りました。" "落ち着いて、要約対象の会話履歴を踏まえてもう一度簡潔に要約し直してください。"
+_PINNED_INSTRUCTION_HEADER = "[The task given by the delegator (verbatim). Added mechanically by the code, independent of the summary]\n"
+_PRE_NOTE_MARKER = "[Context compaction is approaching]"
+_LOOP_NUDGE_TEXT = "The previous summary got stuck repeating the same content and was stopped. Calm down and summarize the conversation history concisely once more."
 
 
 def maybe_append_precompact_note_nudge(messages: list[BaseMessage], config: Config) -> list[BaseMessage]:
@@ -298,7 +298,7 @@ async def force_write_thread_note(
     text = _messages_to_text(trimmed_old)
     prompt = (
         f"{config.context_compaction_pre_note_warning_text}\n\n"
-        "---\n\n# 会話履歴（要約により失われる可能性がある古い部分）\n\n" + text
+        "---\n\n# Conversation history (old parts that may be lost by the summary)\n\n" + text
     )
 
     # bind_tools も try の内側に置く: ここは「見送る代わりの追加の試み」で
@@ -344,13 +344,13 @@ async def force_write_thread_note(
         content = args.get("content")
         if not topic or not content:
             logger.warning("Forced write_thread_note was missing topic/content arguments: %r", args)
-            result_text = "エラー: topic/content が不足していたため書き込みませんでした。"
+            result_text = "Error: nothing was written because topic/content was missing."
         else:
             try:
                 result_text = await write_thread_note.ainvoke({"topic": topic, "content": content})
             except Exception:
                 logger.exception("Forced write_thread_note failed to run the tool itself")
-                result_text = "エラー: thread note への書き込みに失敗しました。"
+                result_text = "Error: failed to write to the thread note."
             else:
                 written_topics.append(topic)
         tool_messages.append(ToolMessage(content=result_text, tool_call_id=call.get("id", "")))
@@ -459,7 +459,7 @@ def _render_reattached_skills(
         if len(content) > max_chars_per_skill:
             content = (
                 content[:max_chars_per_skill]
-                + f"\n...[スキル '{name}' の本文は先頭 {max_chars_per_skill} 文字のみ。続きが必要なら read_skill で再読込]"
+                + f"\n...[only the first {max_chars_per_skill} characters of the body of skill '{name}'. Reload with read_skill if you need the rest]"
             )
         if len(content) > remaining:
             # 合計の残り枠に合わせて本文の切れ端だけを残しても手順として役に立たないため、名前だけにする。
@@ -468,7 +468,7 @@ def _render_reattached_skills(
         parts.append(content)
         remaining -= len(content)
     if omitted:
-        parts.append(_OMITTED_SKILLS_PREFIX + "、".join(omitted))
+        parts.append(_OMITTED_SKILLS_PREFIX + ", ".join(omitted))
     return "\n\n".join(parts)
 
 
@@ -487,10 +487,10 @@ def _parse_reattached_skills(content: object) -> tuple[list[tuple[str, str]], li
     omitted: list[str] = []
     if section.startswith(_OMITTED_SKILLS_PREFIX):
         section, omitted_text = "", section[len(_OMITTED_SKILLS_PREFIX) :]
-        omitted = omitted_text.split("、")
+        omitted = omitted_text.split(", ")
     else:
         section, _, omitted_text = section.partition("\n\n" + _OMITTED_SKILLS_PREFIX)
-        omitted = omitted_text.split("、") if omitted_text else []
+        omitted = omitted_text.split(", ") if omitted_text else []
     blocks: list[tuple[str, str]] = []
     for block in _REATTACHED_BLOCK_SPLIT_RE.split(section):
         name = skill_content_name(block)
@@ -536,7 +536,7 @@ def content_to_text(content: object, image_refs: list[str] | None = None) -> str
             parts.append(str(block.get("text", "")))
         else:
             ref = next(refs, None)
-            parts.append(f"[画像: {ref}]" if ref else "[画像]")
+            parts.append(f"[image: {ref}]" if ref else "[image]")
     return "\n".join(parts)
 
 
@@ -662,7 +662,7 @@ async def maybe_compact(
         logger.exception("Failed to load the summary prompt: %s", config.context_compaction_prompt_path)
         return None
 
-    summary_prompt = prompt + "\n\n---\n\n# 要約対象の会話履歴\n\n" + text
+    summary_prompt = prompt + "\n\n---\n\n# Conversation history to summarize\n\n" + text
     local_input: list[BaseMessage] = [HumanMessage(content=summary_prompt)]
     current_model = model
     connection_attempt = 0

@@ -92,8 +92,8 @@ def test_set_range_fewer_columns_than_existing_sheet_warns(capsys: pytest.Captur
     )
 
     captured = capsys.readouterr()
-    assert "警告" in captured.err
-    assert "7列目" in captured.err
+    assert "Warning" in captured.err
+    assert "column 7" in captured.err
 
 
 def test_set_range_matching_columns_does_not_warn(capsys: pytest.CaptureFixture[str]):

@@ -31,11 +31,11 @@ def _resolve_path_memory_token(value: str) -> tuple[str, str | None]:
     if not _PATH_MEMORY_TOKEN_RE.match(value):
         return value, None
     if _state._PATH_MEMORY_DIR is None:
-        return value, f"パスメモリー機能が利用できません: {value}"
+        return value, f"Path memory is not available: {value}"
     thread_id = cl.user_session.get("thread_id") or "_no_session"
     resolved = path_memory.resolve(thread_id, value, _state._PATH_MEMORY_DIR)
     if resolved is None:
-        return value, (f"パスメモリー {value} は登録されていません。" "search_path_memory にファイル名を渡すと登録済みの @N を探せます。")
+        return value, (f"Path memory {value} is not registered. " "Pass a file name to search_path_memory to find a registered @N.")
     return resolved, None
 
 
@@ -73,10 +73,10 @@ def suggest_from_path_memory(query: str, top_k: int = 3) -> str:
     )
     if not hits:
         return ""
-    candidates = ", ".join(f"@{e['index']}（{path_memory.difference_label(query, e['path'])}: {e['path']}）" for e in hits)
+    candidates = ", ".join(f"@{e['index']} ({path_memory.difference_label(query, e['path'])}: {e['path']})" for e in hits)
     return (
-        f" パスメモリーに似た登録があります: {candidates}。"
-        "記憶から書いたパスの誤りならその @N を使う。task・ユーザーが指定したパスなら置き換えず、見つからないと報告する。"
+        f" There are similar entries in path memory: {candidates}. "
+        "If the path you wrote from memory was wrong, use that @N. If it is a path given by the task or the user, do not replace it; report that it was not found."
     )
 
 
@@ -145,7 +145,7 @@ def register_raw_unc_paths_in_text(text: str) -> str:
             path,
             _state._PATH_MEMORY_DIR,
             _state._PATH_MEMORY_MAX_ENTRIES,
-            description="ユーザー入力",
+            description="user input",
         )
         return f"@{index}" if index is not None else path
 

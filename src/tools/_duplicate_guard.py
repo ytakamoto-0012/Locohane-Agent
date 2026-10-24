@@ -38,10 +38,10 @@ def _check_file_tools_duplicate(tool_label: str, signature: str) -> str | None:
     session_key = _duplicate_guard_session_key("file_tools_call_signatures")
     if _record_and_check_duplicate(session_key, signature, guard_max_calls):
         return (
-            f"エラー: {tool_label} を同じ引数で既に上限（{guard_max_calls}回）まで"
-            f"呼び出し済みです。{tool_label} は読み取り専用のため再実行しても"
-            "結果は変わりません。会話履歴にある前回の実行結果を参照するか、"
-            "別の引数・別の手段に切り替えてください。"
+            f"Error: {tool_label} has already been called with the same arguments up to the limit ({guard_max_calls} times). "
+            f"{tool_label} is read-only, so running it again does not change the result. "
+            "Refer to the previous result in the conversation history, or "
+            "switch to different arguments or a different approach."
         )
     return None
 
@@ -132,7 +132,7 @@ def _track_failure_streak(session_key: str, failed: bool, tool_label: str) -> st
     if streak < _FAILURE_STREAK_THRESHOLD:
         return ""
     return (
-        f"\n\n【システム警告】{tool_label} が直近{streak}回連続で失敗しています。"
-        "同じコード・引数を少しずつ書き直す対症療法をやめ、根本的に別の書き方・"
-        "別の手段に切り替えるか、この手段にこだわらず代替アプローチを検討してください。"
+        f"\n\n[System warning] {tool_label} has failed {streak} times in a row. "
+        "Stop patching the same code/arguments little by little; switch to a fundamentally different way of writing it or "
+        "a different approach, or consider an alternative without sticking to this one."
     )

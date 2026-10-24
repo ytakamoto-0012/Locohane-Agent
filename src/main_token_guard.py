@@ -30,7 +30,7 @@ from .context_trim import last_ai_total_tokens as _last_ai_total_tokens
 logger = logging.getLogger(__name__)
 
 # 差し込むメッセージの先頭に付ける目印。ログ・テストからの識別用。
-GUARD_MARKER = "[コンテキスト上限が近づいています]"
+GUARD_MARKER = "[Context limit is approaching]"
 
 
 def maybe_append_token_guard(

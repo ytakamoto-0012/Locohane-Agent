@@ -68,19 +68,24 @@ def t(key: str, lang: str | None = None, **kwargs: object) -> str:
     return text.format(**kwargs) if kwargs else text
 
 
-def response_language_directive(lang: str | None = None) -> str:
-    """system_prompt の末尾に足す応答言語の指示（日本語なら空文字）。
+# system_prompt の末尾に足す応答言語の指示（プロンプト本体は英語。system_prompt.md の
+# "Language" 行がこの節を参照する）。
+_RESPONSE_LANGUAGE_NAMES = {"ja": "Japanese", "en": "English"}
 
-    system_prompt.md の「応答は日本語（ユーザー指定があれば従う）」を、画面で選んだ
-    言語をユーザー指定として上書きする。
+
+def response_language_directive(lang: str | None = None) -> str:
+    """system_prompt の末尾に足す、このセッションの応答言語の指示。
+
+    プロンプト・ツールの説明・SKILL.md は英語で書いているため、画面で選んだ言語
+    （セッション外・evals では既定言語）で回答するよう明示する。
     """
-    if (normalize(lang) or current_lang()) != "en":
-        return ""
+    name = _RESPONSE_LANGUAGE_NAMES[normalize(lang) or current_lang()]
     return (
         "\n\n## Response language\n"
-        "The user has chosen English as the display language. Always write your replies to the user in English, "
-        "even though the instructions above are written in Japanese. Keep code identifiers, tool names, tool "
-        "argument names and file paths unchanged. If the user explicitly asks for another language, follow that."
+        f"The user's display language is {name}. Always write your replies to the user in {name}, "
+        "even though these instructions, tool descriptions and skills are written in English. Keep code "
+        "identifiers, tool names, tool argument names and file paths unchanged. If the user explicitly asks for "
+        "another language, follow that."
     )
 
 
@@ -225,6 +230,29 @@ MESSAGES: dict[str, dict[str, str]] = {
     "ask.cancel": {"ja": "❌ キャンセル", "en": "❌ Cancel"},
     "ask.other": {"ja": "✏️ その他（自由入力）", "en": "✏️ Other (free text)"},
     "ask.none_selected": {"ja": "(選択なし)", "en": "(nothing selected)"},
+    # --- サブエージェントの進捗（src/tools/_dispatch_agent_job.py・dispatch_agent_batch.py） ---
+    "activity.thinking": {"ja": "思考中", "en": "Thinking"},
+    "activity.tools": {"ja": "ツール: {names}", "en": "Tool: {names}"},
+    "activity.compacting": {"ja": "会話履歴の圧縮中", "en": "Compacting conversation history"},
+    "activity.llm_wait": {"ja": "LLMの空き待ち", "en": "Waiting for a free LLM"},
+    "activity.wrap": {"ja": "【{activity}】", "en": " [{activity}]"},
+    "progress.waiting": {
+        "ja": "順番待ちです（他のサブエージェントの完了待ち・待機 {waited} 秒・job_id={job_id}）。",
+        "en": "Waiting in line (for other sub-agents to finish; waited {waited} s, job_id={job_id}).",
+    },
+    "progress.running": {
+        "ja": "実行中です（経過 {elapsed} 秒・反復 {iteration}/{max_iterations} 回・job_id={job_id}）。",
+        "en": "Running (elapsed {elapsed} s, iteration {iteration}/{max_iterations}, job_id={job_id}).",
+    },
+    "progress.note_tail": {"ja": "[進捗メモ（末尾）]\n{tail}", "en": "[Progress notes (tail)]\n{tail}"},
+    "progress.batch": {
+        "ja": "一括実行中です（経過 {elapsed} 秒・全{total}グループ: 完了 {done}・実行中 {running}・順番待ち {waiting}）。",
+        "en": "Batch running (elapsed {elapsed} s, {total} groups: done {done}, running {running}, waiting {waiting}).",
+    },
+    "progress.batch_group": {
+        "ja": "- グループ{index}: 反復 {iteration}/{max_iterations} 回（job_id={job_id}）",
+        "en": "- Group {index}: iteration {iteration}/{max_iterations} (job_id={job_id})",
+    },
     # --- ツールの表示名（src/tool_labels.py） ---
     "tool.read_skill": {"ja": "スキル読み込み", "en": "Read skill"},
     "tool.read_skill_file": {"ja": "ファイル読み込み", "en": "Read file"},

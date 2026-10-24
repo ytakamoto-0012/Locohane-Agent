@@ -19,25 +19,25 @@ logger = logging.getLogger(__name__)
 
 @tool
 async def approve_plan() -> str:
-    """作成済みの実行計画についてユーザーの承認を得る。
+    """Get the user's approval for the plan you created.
 
-    計画内容を提示し、承認/拒否を選ばせる。承認されると、以後
+    Shows the plan and lets the user approve or reject it. Once approved, the hard block on
     run_script/run_script_background/execute_python_code/
-    execute_python_code_background のハードブロックが解除され実行できるように
-    なる。タイムアウト（未応答）は安全側に倒して未承認扱いにするが、ユーザーが
-    明示的に却下した場合とは返り値のテキストで区別する（無応答は単に手が
-    離せないだけの可能性が高く、計画自体を作り直す必要はないため）。
+    execute_python_code_background is lifted and they can run. A timeout (no response) is treated
+    as not approved for safety, but the returned text distinguishes it from an explicit rejection
+    (no response most likely just means the user is busy, so the plan itself does not need to be
+    recreated).
 
-    config.ini の [plan].auto_approve が true の場合、承認/却下ボタンの表示・
-    応答待ちを一切行わず、その場で自動的に承認済み扱いにする（無人自動化用途向け）。
+    If [plan].auto_approve is true in config.ini, no approve/reject buttons are shown and nothing is
+    awaited; the plan is treated as approved immediately (for unattended automation).
 
     Returns:
-        承認・明示的却下・タイムアウトのいずれかを伝えるテキスト。計画が未作成の
-        場合は例外を送出せず「エラー: ...」形式の文字列を返す。
+        A text telling whether it was approved, explicitly rejected, or timed out. If there is no
+        plan, it returns an "Error: ..." string instead of raising.
     """
     plan = cl.user_session.get("plan")
     if not plan:
-        return "エラー: 計画がありません。先に create_plan を呼んでください。"
+        return "Error: there is no plan. Call create_plan first."
     if _state._PLAN_AUTO_APPROVE:
         cl.user_session.set("plan_approved", True)
         cl.user_session.set("plan_denied_just_now", False)
@@ -48,7 +48,7 @@ async def approve_plan() -> str:
             await message.update()
         await cl.Message(content=t("plan.auto_approved")).send()
         logger.info("approve_plan: approved automatically because auto_approve=true")
-        return "config.ini の [plan].auto_approve が有効なため、ユーザーへの確認をスキップして自動承認しました。書き込み系ツール（run_script/execute_python_code）を実行できます。"
+        return "[plan].auto_approve is enabled in config.ini, so the plan was approved automatically without asking the user. You can now run the write tools (run_script/execute_python_code)."
     content = _render_plan(plan, heading=t("plan.heading")) + "\n\n" + t("plan.approve_question")
     actions = [
         cl.Action(name="approve", payload={"value": "approve"}, label=t("plan.approve_button")),
@@ -73,18 +73,18 @@ async def approve_plan() -> str:
         await message.update()
     if approved:
         logger.info("approve_plan: approved")
-        return "ユーザーが計画を承認しました。書き込み系ツール（run_script/execute_python_code）を実行できます。"
+        return "The user approved the plan. You can now run the write tools (run_script/execute_python_code)."
     if res is None:
         logger.info("approve_plan: no response (timeout)")
         return (
-            f"ユーザーからの応答が{_state._APPROVAL_TIMEOUT_SECONDS}秒間ありませんでした"
-            "（離席中の可能性があります）。計画自体はそのまま保持されているので、"
-            "作り直す必要はありません。少し時間を置いてから改めて approve_plan を"
-            "呼び直してください。"
+            f"There was no response from the user for {_state._APPROVAL_TIMEOUT_SECONDS} seconds "
+            "(they may be away). The plan itself is kept as is, so "
+            "there is no need to recreate it. Wait a while and then call approve_plan "
+            "again."
         )
     logger.info("approve_plan: explicitly rejected")
     # app.py の on_tool_end がこのフラグを見て、ツール呼び出しを続けさせず
     # このターンの処理を強制的に打ち切る（LLMが「計画を微修正して続行しよう」
     # と自己判断してしまうのを、プロンプト指示だけに頼らずコード側で確実に防ぐため）。
     cl.user_session.set("plan_denied_just_now", True)
-    return "ユーザーが計画を却下しました。これ以上ツールを呼ばず、" "却下された旨を最終回答として述べて処理を終了してください。"
+    return "The user rejected the plan. Do not call any more tools; " "state that it was rejected as your final answer and finish."

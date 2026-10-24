@@ -102,7 +102,7 @@ def test_t_translates_for_english_requests() -> None:
         assert "English" in admin_i18n.response_language_instruction()
     finally:
         admin_i18n.reset_request_lang(token)
-    assert admin_i18n.response_language_instruction() == ""
+    assert "answer in Japanese" in admin_i18n.response_language_instruction()
 
 
 def test_middleware_sets_language_from_header() -> None:

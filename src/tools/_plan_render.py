@@ -35,7 +35,7 @@ _STATUS_MARKERS = {
 }
 
 
-def _render_plan(plan: list[dict], *, finished: bool = False, heading: str = "### 実行計画") -> str:
+def _render_plan(plan: list[dict], *, finished: bool = False, heading: str = "### Plan") -> str:
     """計画（ステップ一覧）をチェックリスト形式の Markdown へ整形する。
 
     create_plan / update_task_progress の両方から呼ばれる表示専用の純関数。
@@ -57,7 +57,7 @@ def _render_plan(plan: list[dict], *, finished: bool = False, heading: str = "##
         text = step["activeForm"] if step["status"] == "in_progress" else step["content"]
         lines.append(f"- {marker} {text}")
     if finished:
-        lines.append("\n✅ 計画完了")
+        lines.append("\n✅ Plan completed")
     return "\n".join(lines)
 
 
@@ -102,17 +102,17 @@ def _write_plan_detail(plan: list[dict], detail_markdown: str) -> Path | None:
     if path is None:
         return None
     lines = [
-        "# 実行計画",
+        "# Plan",
         "",
-        f"- スレッドID: {cl.user_session.get('thread_id') or '_no_session'}",
-        f"- 作成日時: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
-        f"- ステップ数: {len(plan)}",
+        f"- Thread ID: {cl.user_session.get('thread_id') or '_no_session'}",
+        f"- Created: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"- Steps: {len(plan)}",
         "",
-        "## ステップ一覧",
+        "## Steps",
         "",
         *[f"{i + 1}. {s['content']}" for i, s in enumerate(plan)],
         "",
-        "## 詳細",
+        "## Details",
         "",
         detail_markdown.rstrip(),
         "",

@@ -96,7 +96,7 @@ def run(
         RuntimeError: 評価が結果を出さずに終わった。
     """
     if not list((directory / themes.CASES_DIRNAME).glob("*.yaml")):
-        raise RuntimeError("ケースが1件もありません。ケースを作ってから実行してください。")
+        raise RuntimeError("There are no cases. Create cases before running.")
     results_root.mkdir(parents=True, exist_ok=True)
     before = {p.name for p in results_root.iterdir()}
     cmd = build_command(directory, instance=instance, lab=lab, repeat=repeat, results_root=results_root, case_ids=case_ids)
@@ -111,7 +111,7 @@ def run(
     new_dirs = sorted(p for p in results_root.iterdir() if p.is_dir() and p.name not in before)
     if not new_dirs or not (new_dirs[-1] / "results.json").is_file():
         tail = log_path.read_text(encoding="utf-8", errors="replace")[-2000:] if log_path.is_file() else ""
-        raise RuntimeError(f"評価の結果が出力されませんでした（終了コード {proc.returncode}）。{tail}")
+        raise RuntimeError(f"The evaluation produced no results (exit code {proc.returncode}). {tail}")
     out_dir = new_dirs[-1]
     return {
         "out_dir": str(out_dir),
@@ -146,7 +146,7 @@ def infra_error(results: list[dict]) -> str | None:
     if not unreachable:
         return None
     detail = unreachable[0].get("detail") or ""
-    return f"評価で使う LLM（スキル調整ワーカーの [llm] main_url）に接続できませんでした。推論サーバーを確かめてください。{detail}"[:2000]
+    return f"Could not connect to the LLM used for evaluation ([llm] main_url of the skill tuning worker). Check the inference server. {detail}"[:2000]
 
 
 def classify(result: dict) -> str:
@@ -169,22 +169,22 @@ def transcript_excerpt(result: dict, max_chars: int) -> str:
     for entry in result.get("transcript") or []:
         kind = entry.get("type")
         if kind == "HumanMessage":
-            lines.append(f"[ユーザー] {entry.get('content', '')[:800]}")
+            lines.append(f"[user] {entry.get('content', '')[:800]}")
         elif kind == "AIMessage":
             for tc in entry.get("tool_calls") or []:
                 args = json.dumps(tc.get("args"), ensure_ascii=False)
-                lines.append(f"[ツール呼び出し] {tc.get('name')} {args[:600]}")
+                lines.append(f"[tool call] {tc.get('name')} {args[:600]}")
             if entry.get("content") and not entry.get("tool_calls"):
                 lines.append(f"[AI] {entry['content'][:1500]}")
         elif kind == "ToolMessage":
-            lines.append(f"[ツール結果 {entry.get('tool_name', '')}] {entry.get('content', '')[:700]}")
+            lines.append(f"[tool result {entry.get('tool_name', '')}] {entry.get('content', '')[:700]}")
     if result.get("error"):
-        lines.append(f"[評価エラー] {result.get('error')}: {result.get('detail', '')}")
+        lines.append(f"[evaluation error] {result.get('error')}: {result.get('detail', '')}")
     text = "\n".join(lines)
     if len(text) <= max_chars:
         return text
     head = max_chars // 3
-    return f"{text[:head]}\n…（中略）…\n{text[-(max_chars - head):]}"
+    return f"{text[:head]}\n… (snip) …\n{text[-(max_chars - head):]}"
 
 
 def summarize(results: list[dict]) -> dict[str, dict[str, int]]:

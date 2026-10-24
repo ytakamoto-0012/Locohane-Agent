@@ -49,7 +49,7 @@ def embedding_model(cfg: Config) -> str:
         EmbeddingError: [vector_db].embedding_url が未設定の場合。
     """
     if not cfg.vector_db_embedding_endpoints:
-        raise EmbeddingError("[vector_db].embedding_url が設定されていません。")
+        raise EmbeddingError("[vector_db].embedding_url is not set.")
     return cfg.vector_db_embedding_endpoints[0].model
 
 
@@ -122,7 +122,7 @@ def embed_texts(
     """
     endpoints = cfg.vector_db_embedding_endpoints
     if not endpoints:
-        raise EmbeddingError("[vector_db].embedding_url が設定されていません。")
+        raise EmbeddingError("[vector_db].embedding_url is not set.")
     prefix = cfg.vector_db_query_prefix if kind == "query" else cfg.vector_db_document_prefix
     inputs = [prefix + t for t in texts]
     vectors: list[list[float]] = []
@@ -157,7 +157,7 @@ def embed_images(
     """
     endpoints = cfg.vector_db_embedding_endpoints
     if not endpoints:
-        raise EmbeddingError("[vector_db].embedding_url が設定されていません。")
+        raise EmbeddingError("[vector_db].embedding_url is not set.")
     vectors: list[list[float]] = []
     with _client_scope(cfg, client, transport) as http:
         for png in pngs:
@@ -210,7 +210,7 @@ def _wait_retry(seconds: float, should_stop: Callable[[], bool] | None) -> None:
     remaining = seconds
     while True:
         if should_stop is not None and should_stop():
-            raise EmbeddingStopped("停止を求められたため、埋め込みの再試行をやめました。")
+            raise EmbeddingStopped("Stopped retrying the embeddings because a stop was requested.")
         if remaining <= 0:
             return
         step = min(remaining, _STOP_POLL_SECONDS)
@@ -244,13 +244,13 @@ def _embed_batch(
                 response = _post(cfg, client, endpoint, url, batch)
             except httpx.TransportError as e:
                 logger.warning("embeddings: cannot connect to %s: %s", url, e)
-                errors.append(f"{url} に接続できません（{e}）")
+                errors.append(f"Cannot connect to {url} ({e})")
                 retryable = True
                 _mark_failed(endpoint)
                 continue
             if response.status_code != 200:
                 logger.warning("embeddings: %s returned an error (HTTP %d): %s", url, response.status_code, response.text[:300])
-                errors.append(f"{url} がエラーを返しました（HTTP {response.status_code}）: {response.text[:300]}")
+                errors.append(f"{url} returned an error (HTTP {response.status_code}): {response.text[:300]}")
                 if _retryable_status(response.status_code):
                     retryable = True
                     _mark_failed(endpoint)
@@ -258,8 +258,8 @@ def _embed_batch(
             return _parse_response(url, response.json(), len(batch))
         detail = " / ".join(errors)
         if not retryable or (max_retries is not None and retries >= max_retries):
-            suffix = f"（{retries}回再試行しました）" if retries else ""
-            raise EmbeddingError(f"埋め込みを計算できませんでした{suffix}: {detail}")
+            suffix = f" (retried {retries} times)" if retries else ""
+            raise EmbeddingError(f"Could not compute the embeddings{suffix}: {detail}")
         retries += 1
         interval = cfg.vector_db_embedding_retry_interval_seconds
         logger.warning(
@@ -300,7 +300,7 @@ def _decode_base64_vector(text: str) -> list[float]:
     """encoding_format = base64 の埋め込み（リトルエンディアンの float32 の並び）をベクターにする。"""
     raw = base64.b64decode(text)
     if not raw or len(raw) % 4:
-        raise ValueError("base64 の長さが float32 の並びではありません")
+        raise ValueError("The base64 length is not a sequence of float32")
     values = array("f")
     values.frombytes(raw)
     if sys.byteorder != "little":
@@ -311,7 +311,7 @@ def _decode_base64_vector(text: str) -> list[float]:
 def _parse_response(url: str, body: dict, expected: int) -> list[list[float]]:
     data = body.get("data") if isinstance(body, dict) else None
     if not isinstance(data, list) or len(data) != expected:
-        raise EmbeddingError(f"{url} の応答の data が入力件数（{expected}）と一致しません。")
+        raise EmbeddingError(f"data in the response from {url} does not match the number of inputs ({expected}).")
     ordered = sorted(data, key=lambda item: item.get("index", 0))
     vectors = []
     for item in ordered:
@@ -321,10 +321,10 @@ def _parse_response(url: str, body: dict, expected: int) -> list[list[float]]:
             try:
                 vectors.append(_decode_base64_vector(embedding))
             except ValueError as e:
-                raise EmbeddingError(f"{url} の応答の base64 の埋め込みを読めません: {e}") from e
+                raise EmbeddingError(f"Cannot read the base64 embeddings in the response from {url}: {e}") from e
             continue
         # llama-server は --pooling none のとき トークンごとのベクター（2次元）を返す。検索には使えない。
         if not isinstance(embedding, list) or not embedding or isinstance(embedding[0], (list, str)):
-            raise EmbeddingError(f"{url} の応答が1次元のベクターではありません（llama-server は --pooling を none 以外にして起動してください）。")
+            raise EmbeddingError(f"The response from {url} is not a one-dimensional vector (start llama-server with --pooling other than none).")
         vectors.append(list(map(float, embedding)))
     return vectors

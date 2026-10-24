@@ -40,9 +40,9 @@ def test_build_human_message_inlines_pasted_text_instead_of_path(tmp_path) -> No
     msg = _build_human_message("要約して", [str(pasted), str(other)])
 
     assert "# 深夜三時の洗濯機\n本文" in msg.content
-    assert "[貼り付けテキスト1" in msg.content
+    assert "[Pasted text 1" in msg.content
     # 通常のファイルは従来通りパスのみを列挙し、貼り付けテキストはそこに含めない。
-    upload_section = msg.content.split("[アップロードされたファイルの保存先")[1]
+    upload_section = msg.content.split("[Saved locations of uploaded files")[1]
     assert str(other) in upload_section
     assert str(pasted) not in upload_section
 
@@ -84,7 +84,7 @@ def test_build_human_message_passes_image_as_path_not_data_url(tmp_path) -> None
 
     assert isinstance(msg.content, str)
     assert "data:image" not in msg.content
-    upload_section = msg.content.split("[アップロードされたファイルの保存先")[1]
+    upload_section = msg.content.split("[Saved locations of uploaded files")[1]
     assert str(image) in upload_section
 
 
@@ -107,7 +107,7 @@ def test_build_human_message_adds_path_memory_tokens_and_folder(tmp_path, monkey
 
     assert f"- @1: {a}" in msg.content
     assert f"- @2: {b}" in msg.content
-    assert f"（フォルダ: @3: {tmp_path}）" in msg.content
+    assert f"(folder: @3: {tmp_path})" in msg.content
 
 
 def test_save_uploads_uses_per_message_folder_in_thread_workdir(tmp_path, monkeypatch) -> None:

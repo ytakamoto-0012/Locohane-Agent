@@ -9,7 +9,7 @@ from app import _is_dispatch_agent_error
 
 
 def test_detects_dispatch_agent_error_string() -> None:
-    assert _is_dispatch_agent_error("dispatch_agent", "エラー: 不明な agent_type 'foo' です。") is True
+    assert _is_dispatch_agent_error("dispatch_agent", "Error: unknown agent_type 'foo'.") is True
 
 
 def test_ignores_dispatch_agent_success() -> None:
@@ -17,9 +17,9 @@ def test_ignores_dispatch_agent_success() -> None:
 
 
 def test_ignores_other_tools_even_with_error_prefix() -> None:
-    assert _is_dispatch_agent_error("run_script", "エラー: something") is False
+    assert _is_dispatch_agent_error("run_script", "Error: something") is False
 
 
 def test_ignores_non_string_content() -> None:
-    assert _is_dispatch_agent_error("dispatch_agent", {"content": "エラー:"}) is False
+    assert _is_dispatch_agent_error("dispatch_agent", {"content": "Error:"}) is False
     assert _is_dispatch_agent_error("dispatch_agent", None) is False

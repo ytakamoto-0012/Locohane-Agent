@@ -17,39 +17,37 @@ _VALID_TASK_STATUSES = ("pending", "in_progress", "completed")
 
 @tool
 async def update_task_progress(step_index: int, status: str) -> str:
-    """実行計画中のステップの進捗状態を更新し、表示中のチェックリストへ反映する。
+    """Update the progress status of a plan step and reflect it in the checklist shown.
 
-    ステップの実行前に "in_progress"、完了後に "completed" を設定してユーザーに
-    進捗を見せること。"in_progress" の間はチェックリスト上に content の代わりに
-    create_plan で渡した activeForm が表示される。並列に dispatch_agent を出す
-    ステップは、全部を "in_progress" にしてから同じ応答で一括発行してよい
-    （同時に複数の "in_progress" 可）。全ステップが completed になると計画は完了した
-    ものとみなし、承認状態を解除する（完了後の無関係な run_script/
-    execute_python_code は再びブロックされる）。
+    Set "in_progress" before running a step and "completed" after it finishes, to show the user the
+    progress. While "in_progress", the checklist shows the activeForm passed to create_plan instead
+    of content. For steps that issue dispatch_agent in parallel, you may set all of them to
+    "in_progress" and issue them together in the same response (several "in_progress" at once are
+    allowed). When every step is completed, the plan is considered finished and the approval is
+    lifted (unrelated run_script/execute_python_code calls after that are blocked again).
 
-    run_script_background/execute_python_code_background に対応するステップは、
-    ジョブを起動しただけの時点では completed にしないこと。check_script_job
-    自体は読み取り専用でいつでも呼べるが、起動直後に completed にすると
-    承認状態が解除され Plan Mode 表示になるため、まだジョブが実行中なのに
-    「計画をやり直す必要がある」と誤解し、不要な create_plan/approve_plan を
-    繰り返す原因になる。check_script_job で最終結果（running 以外の状態）を
-    確認できてから completed にすること。
+    Do not mark steps for run_script_background/execute_python_code_background completed just
+    because the job was started. check_script_job itself is read-only and can be called any time,
+    but marking the step completed right after starting lifts the approval and shows Plan Mode, so
+    you may wrongly think "the plan must be redone" while the job is still running, causing
+    unnecessary repeated create_plan/approve_plan. Mark it completed only after you confirmed the
+    final result (a state other than running) with check_script_job.
 
     Args:
-        step_index: create_plan で渡した steps のインデックス（0始まり）。
-        status: "pending" | "in_progress" | "completed" のいずれか。
+        step_index: The index of steps passed to create_plan (0-based).
+        status: One of "pending" | "in_progress" | "completed".
 
     Returns:
-        更新内容を説明する短いテキスト。計画が未作成、step_index が範囲外、
-        status が不正な値の場合は、例外を送出せず「エラー: ...」形式の文字列を返す。
+        A short text describing the update. If there is no plan, step_index is out of range, or
+        status is invalid, it returns an "Error: ..." string instead of raising.
     """
     plan = cl.user_session.get("plan")
     if not plan:
-        return "エラー: 計画がありません。先に create_plan を呼んでください。"
+        return "Error: there is no plan. Call create_plan first."
     if status not in _VALID_TASK_STATUSES:
-        return f"エラー: status は {_VALID_TASK_STATUSES} のいずれかを指定してください: {status}"
+        return f"Error: status must be one of {_VALID_TASK_STATUSES}: {status}"
     if not (0 <= step_index < len(plan)):
-        return f"エラー: step_index が範囲外です（0〜{len(plan) - 1}）: {step_index}"
+        return f"Error: step_index is out of range (0 to {len(plan) - 1}): {step_index}"
 
     plan[step_index]["status"] = status
     cl.user_session.set("plan", plan)
@@ -69,5 +67,5 @@ async def update_task_progress(step_index: int, status: str) -> str:
 
     logger.info("update_task_progress: step=%d status=%s finished=%s", step_index, status, finished)
     label = plan[step_index]["content"]
-    suffix = "\n計画は全ステップ完了しました。" if finished else ""
-    return f"ステップ{step_index}「{label}」を {status} に更新しました。{suffix}"
+    suffix = "\nAll steps of the plan are completed." if finished else ""
+    return f"Updated step {step_index} \"{label}\" to {status}.{suffix}"

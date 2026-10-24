@@ -369,7 +369,7 @@ def build_router(
             times = vcat.normalize_schedule_times(body.schedule_times)
             weekdays = vcat.normalize_schedule_weekdays(body.schedule_weekdays)
             if body.schedule_enabled and not times:
-                raise vcat.CatalogError("自動取り込みを有効にするときは時刻を1つ以上指定してください。")
+                raise vcat.CatalogError(_t("自動取り込みを有効にするときは時刻を1つ以上指定してください。"))
             with vcat.open_catalog(cfg.vector_db_dir) as catalog:
                 catalog.create(body.name, str(folder), body.description, body.recursive)
                 created = catalog.update(body.name, schedule_enabled=body.schedule_enabled, schedule_times=times, schedule_weekdays=weekdays)

@@ -16,19 +16,19 @@ logger = logging.getLogger(__name__)
 
 @tool
 async def stop_dispatch_agent_job(job_id: str) -> str:
-    """dispatch_agent で起動したジョブを強制終了する。
+    """Forcibly stop a job started by dispatch_agent.
 
-    ユーザーから明示的に中断・キャンセル・停止を指示された場合にのみ使う
-    こと。処理に時間がかかっていること自体（check_dispatch_agent_job が
-    実行中を返し続けること）は、自分の判断で打ち切ってよい理由にはならない。
-    他セッションが起動した job_id は操作できない。
+    Use it only when the user explicitly tells you to interrupt, cancel or stop. Taking a long time
+    (check_dispatch_agent_job keeps returning "running") is not in itself a reason to stop it on
+    your own judgment.
+    job_ids started by other sessions cannot be operated.
 
     Args:
-        job_id: dispatch_agent の戻り値に含まれるID。
+        job_id: The ID included in the return value of dispatch_agent.
 
     Returns:
-        強制終了結果を表す文字列。job_id が不明・他セッションのものである、
-        または既に終了済みの場合は「エラー: ...」形式の文字列。
+        A string with the result of the forced stop. If the job_id is unknown, belongs to another
+        session, or has already finished, an "Error: ..." string.
     """
     resolved = _resolve_dispatch_agent_job(job_id)
     if isinstance(resolved, str):
@@ -36,7 +36,7 @@ async def stop_dispatch_agent_job(job_id: str) -> str:
     job = resolved
 
     if job.status != "running":
-        return f"エラー: job_id '{job_id}' は既に終了しています（status={job.status}）。" "check_dispatch_agent_job で結果を取得してください。"
+        return f"Error: job_id '{job_id}' has already finished (status={job.status}). " "Get the result with check_dispatch_agent_job."
 
     job.status = "killed"
     logger.warning(
@@ -59,5 +59,5 @@ async def stop_dispatch_agent_job(job_id: str) -> str:
         tail = note_path.read_text(encoding="utf-8", errors="replace")[-_JOB_OUTPUT_TAIL_CHARS:].rstrip()
     _dispatch_agent_job._DISPATCH_AGENT_JOBS.pop(job_id, None)
     if tail:
-        return f"強制終了しました。サブエージェントの実行を中断しました。\n[強制終了時点の進捗メモ（末尾）]\n{tail}"
-    return "強制終了しました。サブエージェントの実行を中断しました。"
+        return f"Forcibly stopped. The sub-agent run was interrupted.\n[Progress notes at the forced stop (tail)]\n{tail}"
+    return "Forcibly stopped. The sub-agent run was interrupted."

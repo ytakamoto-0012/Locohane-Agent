@@ -333,7 +333,7 @@ async def test_compaction_skipped_when_note_never_called(monkeypatch) -> None:
     )
 
     assert compact_calls["count"] == 0
-    assert "最大反復回数" in result
+    assert "maximum number of iterations" in result
 
 
 @pytest.mark.asyncio
@@ -527,7 +527,7 @@ async def test_hard_threshold_triggers_without_prior_soft_warning(monkeypatch) -
         on_cancelled=_on_cancelled,
     )
 
-    assert "トークン使用量が上限" in result
+    assert "token usage reached the limit" in result
     # 2回目のainvoke（ツール実行後の続き）は発生せず、その場で打ち切られる。
     assert fake_model.captured_second_input is None
     assert len(captured) == 1
@@ -561,4 +561,4 @@ async def test_hard_threshold_without_on_cancelled_still_truncates(monkeypatch) 
         max_iterations=5,
     )
 
-    assert "トークン使用量が上限" in result
+    assert "token usage reached the limit" in result

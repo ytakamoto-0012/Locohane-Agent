@@ -55,4 +55,4 @@ def test_collect_tool_results_summary_short_input_unchanged() -> None:
         ToolMessage(content="short result", name="Read", tool_call_id="c0"),
     ]
     summary = _collect_tool_results_summary(messages)
-    assert summary == "- ツール=Read: short result"
+    assert summary == "- tool=Read: short result"

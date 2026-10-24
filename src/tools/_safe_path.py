@@ -74,18 +74,18 @@ def _safe_path(relative: str, op: skill_drafts.DraftOp = "read") -> Path:
             ドラフトへの op が許されていない場合。
     """
     if not _state._SKILLS_ROOTS:
-        raise RuntimeError("init_tools() が未実行です")
+        raise RuntimeError("init_tools() has not been run")
     candidates: list[Path] = []
     for root in _state._SKILLS_ROOTS:
         # resolve() でシンボリックリンクや .. を正規化した上で境界を検証する。
         candidate = (root / relative).resolve()
         if not candidate.is_relative_to(root):
-            raise ValueError(f"skills ディレクトリ外へのアクセスは許可されません: {relative}")
+            raise ValueError(f"Access outside the skills directory is not allowed: {relative}")
         candidates.append(candidate)
         if candidate.exists():
             draft_error = skill_drafts.access_error(candidate, op, _state._LLM_CONFIG, skill_drafts.current_draft_user())
             if draft_error:
-                raise ValueError(draft_error.removeprefix("エラー: "))
+                raise ValueError(draft_error.removeprefix("Error: "))
             return candidate
     return candidates[0]
 
@@ -114,10 +114,10 @@ def _missing_skill_prefix_hint(relative_path: str) -> str:
         if (root / first_segment).is_dir():
             return ""
     return (
-        f"（先頭 '{first_segment}' がスキルフォルダ名になっていない可能性があります。"
-        "read_skill_file の relative_path は常にスキルルートからの相対パスで、"
-        "スキルフォルダ名自体を先頭に含める必要があります。"
-        "例: excel-knowledge/references/notes.md）"
+        f"(The first segment '{first_segment}' may not be a skill folder name. "
+        "relative_path of read_skill_file is always relative to the skills root "
+        "and must start with the skill folder name itself. "
+        "e.g. excel-knowledge/references/notes.md)"
     )
 
 def _resolve_script_filename(skill_name: str, script_filename: str) -> Path:
@@ -145,13 +145,13 @@ def _resolve_script_filename(skill_name: str, script_filename: str) -> Path:
     """
     basename = os.path.basename(script_filename)
     if not basename:
-        raise ValueError(f"スクリプトのファイル名を指定してください: {script_filename!r}")
+        raise ValueError(f"Specify the script file name: {script_filename!r}")
     scripts_root = _safe_path(f"{skill_name}/scripts", op="exec")
     if not scripts_root.is_dir():
-        raise ValueError(f"スキル '{skill_name}' に scripts/ ディレクトリがありません")
+        raise ValueError(f"Skill '{skill_name}' has no scripts/ directory")
     matches = [p for p in scripts_root.rglob(basename) if p.is_file()]
     if not matches:
-        raise ValueError(f"スクリプトが見つかりません: {basename}（skill={skill_name}）")
+        raise ValueError(f"Script not found: {basename} (skill={skill_name})")
     matches.sort(key=lambda p: (len(p.relative_to(scripts_root).parts), str(p)))
     return matches[0]
 

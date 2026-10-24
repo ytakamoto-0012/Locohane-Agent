@@ -67,7 +67,7 @@ class ToolCallLoopDetected(ThinkingLoopDetected):
     """
 
     def __init__(self, detail: str, remove_ids: tuple[str, ...] = ()) -> None:
-        super().__init__("全く同じツール呼び出しが繰り返されたため打ち切りました", snippet=detail)
+        super().__init__("Stopped because the exact same tool call was repeated", snippet=detail)
         self.detail = detail
         self.remove_ids = remove_ids
 
@@ -92,10 +92,10 @@ def tool_loop_nudge_text(messages: list[str], attempt_index: int, exc: ToolCallL
     return f"{text}\n\n{exc.detail}"
 
 
-_DEFAULT_LOOP_NUDGE = "直前の応答は同じ内容を繰り返すループに陥ったため打ち切りました。" "落ち着いて、今のタスクの続きを行ってください。"
+_DEFAULT_LOOP_NUDGE = "The previous response fell into a loop repeating the same content and was stopped. Calm down and continue the current task."
 _DEFAULT_TOOL_LOOP_NUDGE = (
-    "全く同じツール呼び出しを繰り返しています。同じ呼び出しを繰り返さず、"
-    "直前の結果に書かれた指示に従うか、別の手段に切り替えてください。"
+    "You are repeating the exact same tool call. Do not repeat the same call; "
+    "follow the instructions in the previous result or switch to a different approach."
 )
 
 

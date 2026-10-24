@@ -172,12 +172,12 @@ class Worker:
                 # （ループの途中で仕様やケースが変わると、評価と修正の前提が崩れる）。
                 status = themes.read(directory).get("status")
                 if status in themes.CLOSED_STATUSES:
-                    self._set_task(directory, task["id"], status="error", finished_at=themes.now_iso(), error="テーマが終了したため実行しませんでした。")
+                    self._set_task(directory, task["id"], status="error", finished_at=themes.now_iso(), error="Not run because the theme has ended.")
                     continue
                 if task.get("type") != "trial" and status in themes.ACTIVE_STATUSES:
                     self._set_task(
                         directory, task["id"], status="error", finished_at=themes.now_iso(),
-                        error="スキル調整ループ・トライアウトの開始後のため実行しませんでした（止めてから頼み直してください）。",
+                        error="Not run because a skill tuning loop or tryout has started (stop it and request again).",
                     )
                     continue
                 self._run_task(instance, directory, task)
@@ -203,7 +203,7 @@ class Worker:
                 result = self._trial(instance, directory, params["case_id"], task["id"])
             elif task["type"] == "draft_spec":
                 drafting.draft_spec(llm_cfg, directory, max_file_chars=cfg.skill_lab_fixer_max_file_chars, request=params.get("request", ""))
-                result = {"message": "spec.md を下書きしました。"}
+                result = {"message": "Drafted spec.md."}
             elif task["type"] == "draft_cases":
                 created = drafting.draft_cases(
                     llm_cfg,
@@ -212,7 +212,7 @@ class Worker:
                     count=min(max(int(params.get("count") or 3), 1), 10),
                     request=params.get("request", ""),
                 )
-                result = {"message": f"ケースを {len(created)} 件下書きしました。", "created": created}
+                result = {"message": f"Drafted {len(created)} case(s).", "created": created}
             elif task["type"] == "draft_asset":
                 drafting.draft_asset(
                     llm_cfg,
@@ -222,12 +222,12 @@ class Worker:
                     request=params.get("request", ""),
                     known_tools=list(sources.subagent_tool_names()),
                     skills=sources.list_official_skills(target_cfg)
-                    + [{"name": n, "description": "（このテーマで開発中）"} for n in themes.list_assets(directory)["skills"]],
+                    + [{"name": n, "description": "(in development in this theme)"} for n in themes.list_assets(directory)["skills"]],
                     max_file_chars=cfg.skill_lab_fixer_max_file_chars,
                 )
-                result = {"message": f"{params['name']} を下書きしました。"}
+                result = {"message": f"Drafted {params['name']}."}
             else:
-                raise themes.ThemeError(f"不明なタスクです: {task['type']}")
+                raise themes.ThemeError(f"Unknown task: {task['type']}")
             self._set_task(directory, task["id"], status="done", finished_at=themes.now_iso(), result=result)
         except evaluation.EvaluationStopped:
             self._set_task(directory, task["id"], status="queued")
@@ -313,11 +313,11 @@ class Worker:
             picked["ok"] = True
             d["status"] = themes.STATUS_RUNNING
             d["loop"] = {**loop, "stop_requested": False, "lab": self.lab}
-            themes.add_history(d, f"スキル調整ワーカー {self.lab}", "loop_start" if mode == "loop" else "tryout_start")
+            themes.add_history(d, f"skill tuning worker {self.lab}", "loop_start" if mode == "loop" else "tryout_start")
 
         themes.update(directory, _start)
         if picked["stopped"]:
-            self._finish(directory, themes.STATUS_STOPPED, "停止の要求により中断")
+            self._finish(directory, themes.STATUS_STOPPED, "interrupted by a stop request")
             return
         if not picked["ok"]:
             return
@@ -329,9 +329,9 @@ class Worker:
                 self._loop(instance, directory, target_cfg.skill_tryout_repeats)
         except (evaluation.EvaluationStopped, _Stop):
             if self.shutdown:
-                self._finish(directory, themes.STATUS_QUEUED, "研究室の停止により中断（再起動すると続きから再開）")
+                self._finish(directory, themes.STATUS_QUEUED, "interrupted because the lab stopped (resumes where it left off when restarted)")
             else:
-                self._finish(directory, themes.STATUS_STOPPED, "停止の要求により中断")
+                self._finish(directory, themes.STATUS_STOPPED, "interrupted by a stop request")
         except Exception as e:  # noqa: BLE001 - テーマ単位で失敗させ、ワーカーは続ける
             logger.error("Processing of theme %s failed: %s\n%s", directory.name, e, traceback.format_exc())
             self._finish(directory, themes.STATUS_ERROR, f"{type(e).__name__}: {e}"[:2000])
@@ -344,7 +344,7 @@ class Worker:
                 if status != themes.STATUS_QUEUED:
                     d["loop"]["deadline"] = None
                 d["loop"]["message"] = detail
-            themes.add_history(d, f"スキル調整ワーカー {self.lab}", f"loop_{status}", detail)
+            themes.add_history(d, f"skill tuning worker {self.lab}", f"loop_{status}", detail)
 
         themes.update(directory, _apply)
 
@@ -352,10 +352,10 @@ class Worker:
         data = themes.read(directory)
         loop = data.get("loop") or {}
         if loop.get("iterations_used", 0) >= self.config.skill_lab_max_iterations:
-            return f"反復回数の上限（{self.config.skill_lab_max_iterations}回）に達しました"
+            return f"Reached the iteration limit ({self.config.skill_lab_max_iterations})"
         deadline = loop.get("deadline")
         if deadline and datetime.now().astimezone() > datetime.fromisoformat(deadline):
-            return f"時間の上限（{self.config.skill_lab_max_hours}時間）に達しました"
+            return f"Reached the time limit ({self.config.skill_lab_max_hours} hours)"
         return None
 
     def _evaluate(self, instance: str, directory: Path, repeat: int, phase: str) -> dict:
@@ -431,7 +431,7 @@ class Worker:
                 if it["n"] == n:
                     it["fix"] = fix
             themes.add_history(
-                d, "AI", "fix", ("直したファイル: " + ", ".join(fix["applied"])) if fix["applied"] else ("修正できず: " + " / ".join(fix["errors"]))[:500]
+                d, "AI", "fix", ("fixed files: " + ", ".join(fix["applied"])) if fix["applied"] else ("could not fix: " + " / ".join(fix["errors"]))[:500]
             )
 
         themes.update(directory, _apply)
@@ -458,7 +458,7 @@ class Worker:
             if self._stop_for_infra(directory, outcome):
                 return
             if outcome["passed"]:
-                self._finish(directory, themes.STATUS_REVIEW, f"トライアウト（各ケース{tryout_repeats}回）に全回合格しました")
+                self._finish(directory, themes.STATUS_REVIEW, f"Passed every run of the tryout ({tryout_repeats} runs per case)")
                 return
             self._fix(instance, directory, outcome)
 
@@ -475,9 +475,9 @@ class Worker:
         if self._stop_for_infra(directory, outcome):
             return
         if outcome["passed"]:
-            self._finish(directory, themes.STATUS_REVIEW, f"トライアウト（各ケース{tryout_repeats}回）に全回合格しました")
+            self._finish(directory, themes.STATUS_REVIEW, f"Passed every run of the tryout ({tryout_repeats} runs per case)")
         else:
-            self._finish(directory, themes.STATUS_DRAFT, "トライアウトで不合格がありました（スキル調整ループで直すか、手で直してください）")
+            self._finish(directory, themes.STATUS_DRAFT, "The tryout had failures (fix them with the skill tuning loop or by hand)")
 
 
 def main() -> int:
@@ -485,7 +485,7 @@ def main() -> int:
         sys.stdout.reconfigure(encoding="utf-8")
         sys.stderr.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python -m admin.skill_lab.worker")
-    parser.add_argument("--lab", required=True, help="スキル調整ワーカー名（instances/<名前>/、kind=skill_lab）")
+    parser.add_argument("--lab", required=True, help="Skill tuning worker name (instances/<name>/, kind=skill_lab)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     os.chdir(PROJECT_ROOT)
@@ -499,7 +499,7 @@ def main() -> int:
 
     meta = inst.read_instance(resolve_instances_root(), lab)
     if not meta.is_skill_lab:
-        raise SystemExit(f"インスタンス {lab} は スキル調整ワーカー（kind=skill_lab）ではありません。")
+        raise SystemExit(f"Instance {lab} is not a skill tuning worker (kind=skill_lab).")
     apply_instance(lab)
 
     from src import instance_lock

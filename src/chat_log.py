@@ -90,7 +90,7 @@ def append_resume_marker(log_path: Path) -> None:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     with log_path.open("a", encoding="utf-8") as f:
-        f.write(f"----- 再開 {timestamp} -----\n\n")
+        f.write(f"----- resumed {timestamp} -----\n\n")
 
 
 def append_turn(
@@ -116,9 +116,9 @@ def append_turn(
         f.write(f"[{timestamp}] AI: {ai_text}\n")
         if token_usage_cumulative is not None:
             f.write(
-                f"[{timestamp}] トークン使用量の会話累計（サブエージェント含む） "
-                f"入力: {token_usage_cumulative['input']:,} / "
-                f"出力: {token_usage_cumulative['output']:,} / "
-                f"合計: {token_usage_cumulative['total']:,}\n"
+                f"[{timestamp}] Cumulative conversation token usage (including sub-agents) "
+                f"input: {token_usage_cumulative['input']:,} / "
+                f"output: {token_usage_cumulative['output']:,} / "
+                f"total: {token_usage_cumulative['total']:,}\n"
             )
         f.write("\n")

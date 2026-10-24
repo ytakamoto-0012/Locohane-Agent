@@ -15,7 +15,7 @@ from src.i18n import MESSAGES, t
 TOOL_LABEL_PREFIX = "tool."
 
 
-def tool_label(name: str) -> str:
-    """ツール名から表示名を返す（対応表に無ければツール名そのもの）。"""
+def tool_label(name: str, lang: str | None = None) -> str:
+    """ツール名から表示名を返す（対応表に無ければツール名そのもの）。lang 省略時はセッションの言語。"""
     key = TOOL_LABEL_PREFIX + name
-    return t(key) if key in MESSAGES else name
+    return t(key, lang) if key in MESSAGES else name

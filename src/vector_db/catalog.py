@@ -94,7 +94,7 @@ class FileRecord:
 
 def validate_name(name: str) -> str:
     if not _NAME_RE.match(name or ""):
-        raise CatalogError(f"コレクション名は半角英数字・ハイフン・アンダースコアの1〜48文字にしてください: {name!r}")
+        raise CatalogError(f"Collection names must be 1 to 48 characters of letters, digits, hyphens and underscores: {name!r}")
     return name
 
 
@@ -107,10 +107,10 @@ def normalize_schedule_times(times: list[str] | tuple[str, ...]) -> tuple[str, .
             continue
         m = _TIME_RE.match(value)
         if not m or int(m.group(1)) > 23 or int(m.group(2)) > 59:
-            raise CatalogError(f"自動取り込みの時刻は 00:00〜23:59 の形式で指定してください: {value!r}")
+            raise CatalogError(f"Scheduled ingestion times must be in the 00:00 to 23:59 format: {value!r}")
         result.add(f"{int(m.group(1)):02d}:{m.group(2)}")
     if len(result) > MAX_SCHEDULE_TIMES:
-        raise CatalogError(f"自動取り込みの時刻は {MAX_SCHEDULE_TIMES} 個までです。")
+        raise CatalogError(f"Up to {MAX_SCHEDULE_TIMES} scheduled ingestion times are allowed.")
     return tuple(sorted(result))
 
 
@@ -118,7 +118,7 @@ def normalize_schedule_weekdays(weekdays: list[int] | tuple[int, ...]) -> tuple[
     """自動取り込みの曜日（0=月〜6=日）を検証し、重複を除き昇順にする。空は毎日。"""
     for d in weekdays:
         if not isinstance(d, int) or isinstance(d, bool) or not 0 <= d <= 6:
-            raise CatalogError(f"自動取り込みの曜日は 0（月）〜6（日）で指定してください: {d!r}")
+            raise CatalogError(f"Scheduled ingestion days must be 0 (Mon) to 6 (Sun): {d!r}")
     return tuple(sorted(set(weekdays)))
 
 
@@ -185,12 +185,12 @@ class Catalog(SqliteBatchMixin):
         for c in self.list_collections():
             if c.name == name:
                 return c
-        raise CatalogError(f"コレクション {name} はありません。")
+        raise CatalogError(f"Collection {name} does not exist.")
 
     def create(self, name: str, source_folder: str, description: str = "", recursive: bool = True) -> Collection:
         validate_name(name)
         if not source_folder.strip():
-            raise CatalogError("取り込み元フォルダを指定してください。")
+            raise CatalogError("Specify the source folder.")
         try:
             with self._conn:
                 self._conn.execute(
@@ -198,7 +198,7 @@ class Catalog(SqliteBatchMixin):
                     (name, description.strip(), source_folder.strip(), int(recursive), _now()),
                 )
         except sqlite3.IntegrityError as e:
-            raise CatalogError(f"コレクション {name} は既にあります。") from e
+            raise CatalogError(f"Collection {name} already exists.") from e
         return self.get(name)
 
     def update(
@@ -217,7 +217,7 @@ class Catalog(SqliteBatchMixin):
         weekdays = normalize_schedule_weekdays(schedule_weekdays) if schedule_weekdays is not None else current.schedule_weekdays
         enabled = schedule_enabled if schedule_enabled is not None else current.schedule_enabled
         if enabled and not times:
-            raise CatalogError("自動取り込みを有効にするときは時刻を1つ以上指定してください。")
+            raise CatalogError("Specify at least one time to enable scheduled ingestion.")
         with self._conn:
             if schedule_enabled is not None or schedule_times is not None or schedule_weekdays is not None:
                 self._conn.execute(
@@ -226,7 +226,7 @@ class Catalog(SqliteBatchMixin):
                 )
             if source_folder is not None:
                 if not source_folder.strip():
-                    raise CatalogError("取り込み元フォルダを指定してください。")
+                    raise CatalogError("Specify the source folder.")
                 self._conn.execute("UPDATE collections SET source_folder = ? WHERE name = ?", (source_folder.strip(), name))
             if description is not None:
                 self._conn.execute("UPDATE collections SET description = ? WHERE name = ?", (description.strip(), name))

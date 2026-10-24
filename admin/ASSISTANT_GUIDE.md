@@ -1,49 +1,52 @@
-# 設定ダッシュボードの画面ガイド（管理アシスタント用）
+# Screen guide of the settings dashboard (for the admin assistant)
 
-このファイルは管理アシスタント（ダッシュボード右上の「AIに相談」）が回答のたびに読み直す、
-画面と設定の地図です。編集すれば管理ツールを再起動しなくても次の回答から反映されます。
+This file is the map of screens and settings that the admin assistant ("Ask AI" at the top right of the
+dashboard) rereads for every answer. Edits take effect from the next answer without restarting the admin tool.
 
-## 前提
+Screen names are written as "English name (Japanese name)". Use the name in the administrator's display
+language when you answer.
 
-- 設定ダッシュボードは Locohane 本体（チャット画面）とは別プロセスの管理ツール。
-- config.ini は既定値。画面で変えた値はインスタンスごとの `instances/<名前>/config_overrides.json` に保存される。
-- 優先度: 環境変数 > 画面で保存した値（config_overrides.json）> config.ini。環境変数で上書きされているキーは画面にバッジが付き、画面で保存しても効かない。
-- config.ini の設定の多くは、保存後に**そのインスタンスの再起動**で反映される（保存時に「再起動する」を選べる）。表示設定（header.md 等）は再起動不要。
-- `[admin]` セクション（管理ツール自身の設定）は画面からは変えられない。config.ini か環境変数を直接編集し、管理ツール（admin.bat）を再起動する。
-- プロジェクト直下の `.env`（ADMIN_USERS・共通の AUTH_USERS）は画面から変えられない。テキストエディタで編集する。
+## Basics
 
-## 上部タブ
+- The settings dashboard is an admin tool that runs as a separate process from Locohane itself (the chat screen).
+- config.ini holds the defaults. Values changed on the screen are saved per instance in `instances/<name>/config_overrides.json`.
+- Priority: environment variables > values saved on the screen (config_overrides.json) > config.ini. Keys overridden by environment variables get a badge on the screen, and saving them on the screen has no effect.
+- Most config.ini settings take effect after **restarting that instance** once saved (you can choose "restart" when saving). Display settings (header.md, etc.) need no restart.
+- The `[admin]` section (the settings of the admin tool itself) cannot be changed on the screen. Edit config.ini or the environment variables directly and restart the admin tool (admin.bat).
+- `.env` at the project root (ADMIN_USERS and the shared AUTH_USERS) cannot be changed on the screen. Edit it with a text editor.
 
-- **インスタンス**: インスタンスのカード一覧。カードのボタン: 開く・起動・停止・再起動・編集（表示名・ホスト・ポート・自動起動・ヘッドレス・自動リロード）・モニター・研究テーマ・ナレッジ・設定・削除。「＋ インスタンス追加」で本体（チャット）またはスキル調整ワーカーを作る（既存インスタンスの複製も可）。
-- **スキル研究室**: スキル・サブエージェントを AI に自己修正させて仕上げ、承認してインスタンスへ昇格させる作業画面。実際の処理はスキル調整ワーカー（種類 skill_lab のインスタンス）が起動していないと進まない。
-- **表示設定**: 全インスタンス共通の header.md・tab_title.md・welcome.md・icon・favicon。
-- **変更履歴**: 設定変更・起動停止・ユーザー操作などの監査ログ。
-- **APIリファレンス**: 画面操作と同じことを curl で行う方法。
+## Top tabs
 
-## インスタンス詳細のサブタブ（カードの「設定」等から開く）
+- **Instances (インスタンス)**: the list of instance cards. Card buttons: Open, Start, Stop, Restart, Edit (display name, host, port, autostart, headless, auto reload), Monitor, Research themes, Knowledge, Settings, Delete. "+ Add instance" creates a main instance (chat) or a skill tuning worker (copying an existing instance is also possible).
+- **Skill Lab (スキル研究室)**: the workspace where the AI fixes skills and sub-agents by itself until they are finished, and you approve and promote them to an instance. Nothing progresses unless a skill tuning worker (an instance of kind skill_lab) is running.
+- **Display settings (表示設定)**: header.md, tab_title.md, welcome.md, icon and favicon shared by all instances.
+- **Change history (変更履歴)**: the audit log of setting changes, starts/stops, user operations, etc.
+- **API reference (APIリファレンス)**: how to do the same things as the screen operations with curl.
 
-- **モニター**: 接続中ユーザー・生成中スレッド・直近24時間の WARNING/ERROR 件数・LLM 接続先の到達確認とスロット使用状況。「LLM に繋がらない」「遅い」ときに最初に見る。
-- **会話**: ユーザー別・スレッド別の会話内容とトークン推移（`[thread_store] enabled=false` だと見られない。トークン推移は `[llm] track_token_usage=true` のときだけ）。
-- **ログ**: `app_*.log` をレベル・文字列・thread_id で絞り込んで表示。エラーの原因調査に使う。
-- **config.ini**: 設定キーの編集画面。左サイドバーの検索欄でキー名・説明を検索できる。プリセットボタン（並列数・トークン制御・スキル関係・ベクターDB）でよく変えるキーだけに絞れる。「変更を確認」で差分を確認してから「保存」する。
-- **ユーザー**: そのインスタンスのチャット画面にログインするユーザー（AUTH_USERS）の追加・パスワード変更・削除、JWT 署名鍵の再生成。1人も設定していない間はプロジェクト直下 .env のユーザーを継承する。
-- **環境変数**: インスタンス専用の環境変数（`instances/<名前>/.env`）。
-- **表示設定**: そのインスタンス専用の header.md 等（無い項目は共通設定を使う）。
-- **バックアップ**: 保存のたびに取られる設定のスナップショットから復元する。設定を壊したときはここ。
-- **スキル研究室**: そのインスタンスの研究テーマ。
-- **ナレッジ**: ベクターDB のコレクション作成・文書の取り込み・時間指定の自動取り込み。`[vector_db] enabled=true` と埋め込みサーバー（`embedding_url`）が必要。取り込みは管理ツールが行い、取り込みのたびにそのインスタンスの設定を読み直すため、取り込みに関する `[vector_db]` の設定（`max_file_mb`・`chunk_size`・`include_extensions`・`ingest_workers` 等）は保存すれば次の取り込みから効く（管理ツールの再起動は不要。チャットでの検索に関する設定はインスタンスの再起動後に効く）。
+## Sub tabs of the instance details (opened from "Settings" etc. on a card)
 
-## よくある困りごとと見る場所
+- **Monitor (モニター)**: connected users, threads being generated, WARNING/ERROR counts in the last 24 hours, reachability of the LLM endpoints and slot usage. Look here first when "the LLM cannot be reached" or "it is slow".
+- **Conversations (会話)**: conversation contents and token usage per user and thread (not available with `[thread_store] enabled=false`; token usage only with `[llm] track_token_usage=true`).
+- **Logs (ログ)**: shows `app_*.log` filtered by level, text and thread_id. Use it to investigate the cause of errors.
+- **config.ini**: the screen for editing config keys. The search box in the left sidebar searches key names and descriptions. Preset buttons (parallelism, token control, skills, vector DB) narrow the list to frequently changed keys. Check the diff with "Review changes" before "Save".
+- **Users (ユーザー)**: add users who log in to the instance's chat screen (AUTH_USERS), change passwords, delete users, and regenerate the JWT signing key. While none are set, the users in `.env` at the project root are inherited.
+- **Environment variables (環境変数)**: environment variables only for the instance (`instances/<name>/.env`).
+- **Display settings (表示設定)**: header.md etc. only for the instance (items not set use the shared settings).
+- **Backups (バックアップ)**: restore from the settings snapshots taken on every save. Use this when the settings got broken.
+- **Skill Lab (スキル研究室)**: the research themes of the instance.
+- **Knowledge (ナレッジ)**: create vector DB collections, ingest documents, and schedule automatic ingestion. Needs `[vector_db] enabled=true` and an embedding server (`embedding_url`). Ingestion is done by the admin tool, which rereads the instance's settings on every ingestion, so the `[vector_db]` settings about ingestion (`max_file_mb`, `chunk_size`, `include_extensions`, `ingest_workers`, etc.) take effect from the next ingestion once saved (no admin tool restart needed; settings about searching from the chat take effect after restarting the instance).
 
-- **チャット画面が開かない・起動しない**: カードの状態（停止中・異常終了・設定エラー）→ 詳細の「ログ」。ポートの重複は作成・起動時にエラーになる。「外部で起動中」は app.bat で直接起動されたもので、管理ツールからは停止・再起動できない。
-- **LLM に繋がらない・応答が無い**: 「モニター」の LLM 接続先の到達確認 → config.ini の `[llm] main_url`・`sub_url`。推論サーバー（llama.cpp / vLLM）自体が起動しているかも確認。
-- **応答が遅い・同時に使うと待たされる**: 「並列数」プリセット（`[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`）、推論サーバー側の並列スロット数、`[llm] main_routing_strategy`。
-- **長い会話で失敗する・コンテキストがあふれる**: 「トークン制御」プリセット（`[context_compaction]`・`[context_trim]`・`token_guard_*`）。推論サーバーのコンテキスト長との兼ね合いで決める。
-- **タイムアウトする**: `[llm] request_timeout_seconds`、`[user_response_timeouts]`、`[scripts] timeout`、`[llm] stream_chunk_timeout_seconds`。
-- **スキルが使えない・スクリプトの実行が拒否される**: 「スキル関係」プリセット（`[paths]`・`[main_agent_tool_guard]`・`[plan] plan_approval_exempt_scripts`・`[subagent] agent_type_run_script_allowlist`）。
-- **ログインできない（チャット画面）**: 詳細の「ユーザー」。`[auth]` の設定。
-- **ログインできない（管理ツール）**: プロジェクト直下 .env の ADMIN_USERS（画面からは変えられない）。失敗が続くと一時的にロックアウトされる。
-- **画面の見た目・ウェルカムメッセージを変えたい**: 「表示設定」（共通は上部タブ、インスタンス専用は詳細のサブタブ）。
-- **社内文書を検索させたい**: 詳細の「ナレッジ」と「ベクターDB」プリセット。
-- **設定を変えたのに効かない**: 再起動したか、環境変数で上書きされていないか（バッジ）、正しいインスタンスを編集したか。
-- **設定を元に戻したい**: キーごとに「既定値に戻す」、まとめてなら「バックアップ」から復元。
+## Common problems and where to look
+
+- **The chat screen does not open / does not start**: the state on the card (stopped, crashed, configuration error) -> "Logs" in the details. A port conflict is reported as an error when creating or starting. "Running externally" means it was started directly with app.bat and cannot be stopped or restarted from the admin tool.
+- **The LLM cannot be reached / no response**: the LLM endpoint reachability in "Monitor" -> `[llm] main_url` and `sub_url` in config.ini. Also check that the inference server (llama.cpp / vLLM) itself is running.
+- **Responses are slow / users wait when using it at the same time**: the "parallelism" preset (`[llm] max_concurrent_requests`, `[graph] max_parallel`, `[subagent] max_parallel`), the number of parallel slots on the inference server, `[llm] main_routing_strategy`.
+- **Long conversations fail / the context overflows**: the "token control" preset (`[context_compaction]`, `[context_trim]`, `token_guard_*`). Decide together with the context length of the inference server.
+- **Timeouts**: `[llm] request_timeout_seconds`, `[user_response_timeouts]`, `[scripts] timeout`, `[llm] stream_chunk_timeout_seconds`.
+- **Skills cannot be used / script runs are refused**: the "skills" preset (`[paths]`, `[main_agent_tool_guard]`, `[plan] plan_approval_exempt_scripts`, `[subagent] agent_type_run_script_allowlist`).
+- **Cannot log in (chat screen)**: "Users" in the details. The `[auth]` settings.
+- **Cannot log in (admin tool)**: ADMIN_USERS in `.env` at the project root (cannot be changed on the screen). Repeated failures cause a temporary lockout.
+- **Want to change the look of the screen / the welcome message**: "Display settings" (shared ones in the top tab, instance-only ones in the details sub tab).
+- **Want it to search internal documents**: "Knowledge" in the details and the "vector DB" preset.
+- **Changed a setting but it has no effect**: was the instance restarted, is it overridden by an environment variable (badge), was the right instance edited.
+- **Want to undo settings**: "Reset to default" per key, or restore from "Backups" for many at once.

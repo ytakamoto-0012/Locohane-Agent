@@ -18,8 +18,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-_STDOUT_MARKER = "[標準出力]\n"
-_STDERR_MARKER = "\n[標準エラー]"
+_STDOUT_MARKER = "[stdout]\n"
+_STDERR_MARKER = "\n[stderr]"
 
 
 def extract_generated_files(tool_output: str) -> list[Path]:

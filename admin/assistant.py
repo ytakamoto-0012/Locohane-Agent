@@ -51,7 +51,7 @@ _MAX_DESCRIPTION_CHARS = 1000
 _MAX_VALUE_CHARS = 300
 # 相談者・AI の1メッセージとして受け付ける最大文字数。
 MAX_MESSAGE_CHARS = 4000
-_MASKED_NOTE = "（機密のため非表示）"
+_MASKED_NOTE = "(hidden because it is confidential)"
 
 # html=False: 回答中の生HTMLはエスケープする（innerHTML へ流し込むため）。
 _md = MarkdownIt("commonmark", {"html": False}).enable("table")
@@ -118,41 +118,41 @@ def choose_context(
 
 def _clip(text: str, limit: int) -> str:
     text = text.strip()
-    return text if len(text) <= limit else text[:limit] + "…（省略）"
+    return text if len(text) <= limit else text[:limit] + "… (omitted)"
 
 
 def _shown_value(section: str, key: str, value: str | None) -> str:
     if value is None:
-        return "（なし）"
+        return "(none)"
     if audit.is_sensitive_key(key) or audit.is_sensitive_key(f"{section}_{key}"):
         return _MASKED_NOTE
-    return _clip(value, _MAX_VALUE_CHARS) if value.strip() else "（空欄）"
+    return _clip(value, _MAX_VALUE_CHARS) if value.strip() else "(empty)"
 
 
 def format_key_block(key_views: list[dict[str, Any]]) -> str:
     """キーの一覧を AI 向けの文字列にする（key_views は管理ツールの config 画面と同じ形の dict）。"""
     if not key_views:
-        return "（質問に関係しそうなキーは見つかりませんでした）"
+        return "(no keys that seem related to the question were found)"
     lines: list[str] = []
     for view in key_views:
         section, key = view["section"], view["key"]
         lines.append(f"### [{section}] {key}")
         if view.get("group_heading"):
-            lines.append(f"- グループ: {view['group_heading']}")
-        lines.append(f"- 既定値（config.ini）: {_shown_value(section, key, view.get('default'))}")
+            lines.append(f"- Group: {view['group_heading']}")
+        lines.append(f"- Default (config.ini): {_shown_value(section, key, view.get('default'))}")
         if view.get("override") is not None:
-            lines.append(f"- 現在値（画面で変更済み）: {_shown_value(section, key, view['override'])}")
+            lines.append(f"- Current value (changed on the screen): {_shown_value(section, key, view['override'])}")
         else:
-            lines.append("- 現在値: 既定値のまま")
+            lines.append("- Current value: same as the default")
         if view.get("choices"):
-            shown = "、".join(c if c else "（空欄）" for c in view["choices"])
-            lines.append(f"- 選べる値: {shown}（これ以外は保存できない）")
+            shown = ", ".join(c if c else "(empty)" for c in view["choices"])
+            lines.append(f"- Allowed values: {shown} (nothing else can be saved)")
         if view.get("env_override_active"):
-            lines.append(f"- 注意: 環境変数 {view.get('env_name')} で上書きされているため、画面で保存しても効かない")
+            lines.append(f"- Note: overridden by the environment variable {view.get('env_name')}, so saving on the screen has no effect")
         if view.get("is_admin_section"):
-            lines.append("- 注意: [admin] は管理ツール自身の設定で、画面からは変えられない（config.ini か環境変数を編集して admin.bat を再起動）")
+            lines.append("- Note: [admin] is the settings of the admin tool itself and cannot be changed on the screen (edit config.ini or the environment variables and restart admin.bat)")
         if view.get("description"):
-            lines.append("- 説明: " + _clip(view["description"], _MAX_DESCRIPTION_CHARS).replace("\n", " "))
+            lines.append("- Description: " + _clip(view["description"], _MAX_DESCRIPTION_CHARS).replace("\n", " "))
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -160,21 +160,21 @@ def format_key_block(key_views: list[dict[str, Any]]) -> str:
 def format_doc_block(docs: list[Passage]) -> str:
     """文書の段落を AI 向けの文字列にする。"""
     if not docs:
-        return "（なし）"
+        return "(none)"
     return "\n\n".join(f"### {d.source} > {d.title}\n{d.text.strip()}" for d in docs)
 
 
 def _format_view(view: dict[str, Any] | None) -> str:
     if not view:
-        return "（不明）"
+        return "(unknown)"
     parts = []
     if view.get("tab"):
-        parts.append(f"上部タブ「{view['tab']}」")
+        parts.append(f"top tab \"{view['tab']}\"")
     if view.get("instance"):
-        parts.append(f"インスタンス {view['instance']!r} の詳細")
+        parts.append(f"details of instance {view['instance']!r}")
     if view.get("subview"):
-        parts.append(f"サブタブ「{view['subview']}」")
-    return " > ".join(parts) or "（不明）"
+        parts.append(f"sub tab \"{view['subview']}\"")
+    return " > ".join(parts) or "(unknown)"
 
 
 def build_system_prompt(
@@ -185,41 +185,41 @@ def build_system_prompt(
     instances: list[dict[str, str]],
     view: dict[str, Any] | None,
     key_block: str,
-    doc_block: str = "（なし）",
+    doc_block: str = "(none)",
 ) -> str:
     instance_lines = "\n".join(
-        f"- {i['name']}（{i.get('display_name') or i['name']}、種類: {i.get('kind')}、状態: {i.get('state')}）"
+        f"- {i['name']} ({i.get('display_name') or i['name']}, kind: {i.get('kind')}, state: {i.get('state')})"
         for i in instances
     )
-    return f"""あなたは Locohane の設定ダッシュボード（管理ツール）の操作を手伝うアシスタントです。
-管理者の困りごとを聞き、どの画面のどこを開き、どの設定をどう変えればよいかを日本語で助言してください。
+    return f"""You are an assistant that helps with operating the Locohane settings dashboard (admin tool).
+Listen to the administrator's problem and advise which screen to open, where on it, and which setting to change and how.
 
-# 守ること
-- あなたは設定を変更できません。操作は管理者が自分で行います。「変更しました」「再起動します」など、自分で操作したような書き方はしないでください。
-- 設定キーは必ず `[セクション] キー名` の形（例: `[llm] main_url`）で書いてください。下の「関係しそうな設定キー」「関係しそうな説明」と画面ガイドに無いキー名を作り出してはいけません。
-- 「関係しそうな設定キー」は相談内容で検索して選んだ一部だけで、config.ini の全キーではありません。一覧に無いことを理由に「そのような設定は存在しない」と言い切らないでください。合うキーが見当たらないときは、そう伝えたうえで config.ini 画面の検索欄で探す語を提案してください。
-- 相談内容と一覧のキーの意味が合っているか（例: ファイルの「容量」と「件数」）を説明で確かめ、近いだけの別のキーを答えにしないでください。
-- 手順は「どの画面 → どのタブ → どのキー → どんな値の目安」の順に、短い番号付きリストで示してください。値は現在値と説明を踏まえて具体的に提案し、反映に再起動が要る場合はそう書いてください。反映のしかた（どのプロセスの再起動が要るか等）は画面ガイド・説明に書かれていることだけを書き、書かれていなければ推測で断定しないでください。
-- 原因が1つに絞れないときは、確かめる順番（モニター・ログ等）を先に示し、必要なら管理者に追加の情報を1つだけ質問してください。
-- 機密のため非表示と書かれた値は推測しないでください。
-- 回答は簡潔に。前置きや同じ内容の繰り返しは不要です。
+# Rules
+- You cannot change settings. The administrator performs the operations. Do not write as if you operated something yourself, such as "I changed it" or "I will restart it".
+- Always write config keys in the form `[section] key` (e.g. `[llm] main_url`). Do not invent key names that are not in "Possibly related config keys", "Possibly related documentation" or the screen guide below.
+- "Possibly related config keys" is only a part selected by searching with the question, not all keys of config.ini. Do not assert that "no such setting exists" just because it is not in the list. When no matching key is found, say so and suggest words to search for in the search box of the config.ini screen.
+- Check with the descriptions that the meaning of a listed key matches the question (e.g. file "size" vs "count"), and do not answer with a different key that is merely similar.
+- Show the steps in the order "which screen -> which tab -> which key -> what kind of value" as a short numbered list. Propose concrete values based on the current value and the description, and say so if a restart is needed for the change to take effect. For how a change takes effect (which process needs a restart, etc.), write only what the screen guide and the descriptions say; if they do not say it, do not assert it by guesswork.
+- When the cause cannot be narrowed down to one, first show the order in which to check (monitor, logs, etc.), and if needed ask the administrator one question for additional information.
+- Do not guess values marked as hidden because they are confidential.
+- Keep answers concise. No preamble and no repeating the same content.
 
-# 相談対象のインスタンス
-{instance}（種類: {instance_kind}）
+# Instance being discussed
+{instance} (kind: {instance_kind})
 
-# 管理者が今開いている画面
+# Screen the administrator has open now
 {_format_view(view)}
 
-# インスタンス一覧
-{instance_lines or "（なし）"}
+# Instances
+{instance_lines or "(none)"}
 
-# 画面ガイド
+# Screen guide
 {guide.strip()}
 
-# 関係しそうな設定キー（相談内容で検索した一部。値は相談対象インスタンスの実効値）
+# Possibly related config keys (a part found by searching with the question; values are the effective values of the instance being discussed)
 {key_block}
 
-# 関係しそうな説明（README_DETAIL.md・API リファレンスから相談内容で検索した抜粋）
+# Possibly related documentation (excerpts of README_DETAIL.md and the API reference found by searching with the question)
 {doc_block}
 """
 
@@ -364,7 +364,7 @@ def build_router(
         try:
             guide = guide_path.read_text(encoding="utf-8")
         except OSError:
-            guide = "（画面ガイドを読み込めませんでした）"
+            guide = "(could not load the screen guide)"
         instances = list_instances()
 
         def build_context() -> tuple[str, list[Passage], str, int]:

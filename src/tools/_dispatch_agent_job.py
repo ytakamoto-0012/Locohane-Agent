@@ -11,6 +11,8 @@ import time
 import traceback
 
 from .. import subagent
+from ..i18n import current_lang, t
+from ..tool_labels import tool_label
 from ..llm import reset_preferred_sub_model, set_preferred_sub_model
 from ..subagent import dump_messages_for_cancelled_rescue, is_truncated_result
 
@@ -38,9 +40,8 @@ def _append_scratch_note_hint(result: str) -> str:
     if not path.is_file():
         return result
     return (
-        f"{result}\n\n[このサブエージェントは write_scratch_note で途中経過を"
-        f"書き残しています。Read で {path} を確認すると、打ち切り前に整理された"
-        "内容が得られます。]"
+        f"{result}\n\n[This sub-agent wrote progress notes with write_scratch_note. "
+        f"Read {path} to get what it organized before it was stopped.]"
     )
 
 
@@ -115,7 +116,7 @@ class _DispatchAgentJob:
     # run_subagent の on_activity コールバックが更新する、今している動作の表示名
     # （"思考中"・"ツール: Read" 等。UIのStepバッジと同じ表記）。進捗表示で
     # 「何をしているか」をひと目で分かるようにするために使う。未開始は空文字列。
-    current_activity: str = ""
+    current_activity: tuple[str, ...] = ()
     # current_activity が変わるたびに set する。進捗push（_push_dispatch_agent_progress・
     # dispatch_agent_batch の _push_batch_progress）が、push 間隔を待たずに表示を
     # 書き換えるために待つ（_wait_next_progress_push 参照）。
@@ -197,31 +198,49 @@ async def _wait_next_progress_push(jobs: "list[_DispatchAgentJob]", interval: fl
             waiter.cancel()
 
 
-def _format_activity(job: "_DispatchAgentJob") -> str:
-    """進捗表示の末尾に付ける、今している動作（UIのStepバッジ名）。未開始なら空文字列。"""
-    return f"【{job.current_activity}】" if job.current_activity else ""
+def _format_activity(job: "_DispatchAgentJob", lang: str = "en") -> str:
+    """進捗表示の末尾に付ける、今している動作（UIのStepバッジ名）。未開始なら空文字列。
+
+    job.current_activity は src/subagent.py の (種別, *引数) のタプル。lang は表示言語
+    （画面への進捗push はセッションの言語、LLM への応答は英語）。
+    """
+    if not job.current_activity:
+        return ""
+    kind, *args = job.current_activity
+    if kind == "tools":
+        label = t("activity.tools", lang, names=t("list.separator", lang).join(tool_label(n, lang) for n in args))
+    else:
+        label = t(f"activity.{kind}", lang)
+    return t("activity.wrap", lang, activity=label)
 
 
-def _format_dispatch_agent_progress(job: "_DispatchAgentJob", job_id: str) -> str:
+def _format_dispatch_agent_progress(job: "_DispatchAgentJob", job_id: str, lang: str = "en") -> str:
     """dispatch_agent ジョブの実行中の状況を表す文字列を組み立てる。
 
-    _push_dispatch_agent_progress（人間向けのUI直接push）と
+    _push_dispatch_agent_progress（人間向けのUI直接push。lang はセッションの言語）と
     check_dispatch_agent_job の running 分岐（フォールバック経路でのLLM向け
-    応答）の両方から呼ぶ、表示フォーマット共通化のためのヘルパー。
+    応答。英語）の両方から呼ぶ、表示フォーマット共通化のためのヘルパー。
     """
     if job.run_started_at is None:
         waited = int(time.monotonic() - job.started_at)
-        return f"順番待ちです（他のサブエージェントの完了待ち・待機 {waited} 秒・job_id={job_id}）。"
+        return t("progress.waiting", lang, waited=waited, job_id=job_id)
     elapsed = int(time.monotonic() - job.run_started_at)
     parts = [
-        f"実行中です（経過 {elapsed} 秒・反復 {job.current_iteration}/{job.max_iterations} 回・job_id={job_id}）。"
-        f"{_format_activity(job)}"
+        t(
+            "progress.running",
+            lang,
+            elapsed=elapsed,
+            iteration=job.current_iteration,
+            max_iterations=job.max_iterations,
+            job_id=job_id,
+        )
+        + _format_activity(job, lang)
     ]
     note_path = _scratch_notes_path_for_run(job.run_id)
     if note_path.is_file():
         note_tail = note_path.read_text(encoding="utf-8", errors="replace")[-_JOB_OUTPUT_TAIL_CHARS:].rstrip()
         if note_tail:
-            parts.append(f"[進捗メモ（末尾）]\n{note_tail}")
+            parts.append(t("progress.note_tail", lang, tail=note_tail))
     return "\n".join(parts)
 
 
@@ -271,7 +290,7 @@ async def _push_dispatch_agent_progress(job: "_DispatchAgentJob", job_id: str) -
         if job.status != "running":
             break
         job.activity_changed.clear()
-        content = _format_dispatch_agent_progress(job, job_id)
+        content = _format_dispatch_agent_progress(job, job_id, current_lang())
         if message is None:
             message = cl.Message(
                 content=content,
@@ -334,7 +353,7 @@ async def _run_dispatch_agent_job(
     def _on_iteration(iteration: int, max_iterations: int) -> None:
         job.current_iteration = iteration
 
-    def _on_activity(activity: str) -> None:
+    def _on_activity(activity: tuple[str, ...]) -> None:
         if activity != job.current_activity:
             job.current_activity = activity
             job.activity_changed.set()
@@ -422,9 +441,9 @@ def _finalize_dispatch_agent_job_result(job: "_DispatchAgentJob", job_id: str) -
     if job.status == "completed":
         result = job.result or ""
     elif job.status == "killed":
-        result = f"stop_dispatch_agent_job により強制終了されました。\n{job.result or '（強制終了時点で最終回答は未生成でした）'}"
+        result = f"Forcibly stopped by stop_dispatch_agent_job.\n{job.result or '(no final answer had been generated at the forced stop)'}"
     else:  # "error"
-        result = f"エラー: サブエージェントの実行に失敗しました: {job.error_message}"
+        result = f"Error: the sub-agent run failed: {job.error_message}"
     _DISPATCH_AGENT_JOBS.pop(job_id, None)
     return result
 
@@ -456,12 +475,11 @@ def _dispatch_agent_job_started_message(job_id: str) -> str:
     打ち切る理由にならないことを明記し、モデルの自発的な早期キャンセルを防ぐ）。
     """
     return (
-        f"バックグラウンドで実行中です（job_id={job_id}）。長時間かかっているため、"
-        "いったんこのターンを終えて制御を返します（ジョブ自体は裏側で動き続けます）。\n"
-        "完了確認・結果取得には check_dispatch_agent_job（job_id指定）を使うこと。"
-        "処理に時間がかかっていること自体は打ち切る理由にはならない。"
-        "ユーザーから明示的に中断・キャンセルを指示された場合にのみ"
-        "stop_dispatch_agent_job（job_id指定）を使うこと。"
+        f"Running in the background (job_id={job_id}). It is taking a long time, "
+        "so this turn ends and control is returned for now (the job itself keeps running in the background).\n"
+        "Use check_dispatch_agent_job (with job_id) to check completion and get the result. "
+        "Taking a long time is not in itself a reason to stop it. "
+        "Use stop_dispatch_agent_job (with job_id) only when the user explicitly asks to interrupt or cancel."
     )
 
 
@@ -541,8 +559,8 @@ def _resolve_dispatch_agent_job(job_id: str) -> "_DispatchAgentJob | str":
     """
     job = _DISPATCH_AGENT_JOBS.get(job_id)
     if job is None:
-        return f"エラー: job_id '{job_id}' は見つかりません（既に取得済みか、無効なIDです）。"
+        return f"Error: job_id '{job_id}' not found (already retrieved, or an invalid ID)."
     thread_id = cl.user_session.get("thread_id") or ""
     if job.thread_id != thread_id:
-        return f"エラー: job_id '{job_id}' は現在のセッションのものではありません。"
+        return f"Error: job_id '{job_id}' does not belong to the current session."
     return job

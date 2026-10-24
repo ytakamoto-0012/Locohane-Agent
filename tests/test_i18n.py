@@ -46,9 +46,9 @@ def test_t_unknown_key_raises() -> None:
         i18n.t("no.such.key")
 
 
-def test_response_language_directive_only_for_english() -> None:
-    # 日本語のときは system_prompt を一切変えない（evals のチューニング結果を守るため）。
-    assert i18n.response_language_directive("ja") == ""
+def test_response_language_directive_names_the_display_language() -> None:
+    # プロンプト本体は英語のため、日本語のときも応答言語の指示を返す。
+    assert "display language is Japanese" in i18n.response_language_directive("ja")
     directive = i18n.response_language_directive("en")
     assert "## Response language" in directive
     assert "English" in directive

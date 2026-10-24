@@ -164,7 +164,7 @@ async def test_background_dispatch_injects_work_dir_hint_into_task(monkeypatch, 
     # 別スレッドのデータを拾わないための分離）。
     expected_work_dir = tools._workdir._resolve_exec_workdir()
     expected_info = json.dumps({"absolute_path": str(expected_work_dir)}, ensure_ascii=False)
-    assert captured["task"] == f"[作業ディレクトリ]\n{expected_info}\n\ninvestigate"
+    assert captured["task"] == f"[Working directory]\n{expected_info}\n\ninvestigate"
 
 
 @pytest.mark.asyncio
@@ -281,9 +281,9 @@ async def test_cross_session_access_is_rejected(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(tools.cl, "user_session", _FakeUserSession("session-b"))
     check_result = await tools.check_dispatch_agent_job.ainvoke({"job_id": job_id})
-    assert "現在のセッションのものではありません" in check_result
+    assert "does not belong to the current session" in check_result
     stop_result = await tools.stop_dispatch_agent_job.ainvoke({"job_id": job_id})
-    assert "現在のセッションのものではありません" in stop_result
+    assert "does not belong to the current session" in stop_result
 
     gate.set()
     await tools._dispatch_agent_job._DISPATCH_AGENT_JOBS[job_id].runner_task
@@ -305,10 +305,10 @@ async def test_poll_rate_limiting_rejects_too_soon(monkeypatch, tmp_path) -> Non
     job_id = _extract_job_id(started)
 
     first = await tools.check_dispatch_agent_job.ainvoke({"job_id": job_id})
-    assert "実行中です" in first
+    assert "Running" in first
 
     second = await tools.check_dispatch_agent_job.ainvoke({"job_id": job_id})
-    assert "確認間隔" in second
+    assert "Checked too soon" in second
     assert job_id in second
 
     gate.set()
@@ -333,7 +333,7 @@ async def test_stop_cancels_running_job_cleanly(monkeypatch, tmp_path) -> None:
     job = tools._dispatch_agent_job._DISPATCH_AGENT_JOBS[job_id]
     result = await tools.stop_dispatch_agent_job.ainvoke({"job_id": job_id})
 
-    assert "強制終了しました" in result
+    assert "Forcibly stopped" in result
     assert job.status == "killed"
     assert job.runner_task.cancelled() or job.runner_task.done()
     assert job_id not in tools._dispatch_agent_job._DISPATCH_AGENT_JOBS
@@ -464,7 +464,7 @@ async def test_exception_inside_job_is_returned_as_error_not_lost(monkeypatch, t
     monkeypatch.setattr(tools._dispatch_agent_job.subagent, "run_subagent", fake_run_subagent)
     result = await _invoke_dispatch_agent(task="t", agent_type="explore")
 
-    assert result.startswith("エラー: サブエージェントの実行に失敗しました: boom\n")
+    assert result.startswith("Error: the sub-agent run failed: boom\n")
     assert "Traceback (most recent call last)" in result
     assert tools._dispatch_agent_job._DISPATCH_AGENT_JOBS == {}
 
@@ -483,7 +483,7 @@ async def test_exception_with_empty_str_falls_back_to_type_name(monkeypatch, tmp
     monkeypatch.setattr(tools._dispatch_agent_job.subagent, "run_subagent", fake_run_subagent)
     result = await _invoke_dispatch_agent(task="t", agent_type="explore")
 
-    assert result.startswith("エラー: サブエージェントの実行に失敗しました: TimeoutError\n")
+    assert result.startswith("Error: the sub-agent run failed: TimeoutError\n")
     assert "Traceback (most recent call last)" in result
 
 

@@ -74,7 +74,7 @@ def test_extract_office_and_pdf_formats(tmp_path):
     wb.create_sheet("空")
     wb.save(tmp_path / "a.xlsx")
     segments = extract_segments(tmp_path / "a.xlsx")
-    assert [(s.locator, s.text) for s in segments] == [("シート: 集計", "品番\t10")]
+    assert [(s.locator, s.text) for s in segments] == [("Sheet: 集計", "品番\t10")]
 
     prs = Presentation()
     slide = prs.slides.add_slide(prs.slide_layouts[1])
@@ -82,7 +82,7 @@ def test_extract_office_and_pdf_formats(tmp_path):
     slide.notes_slide.notes_text_frame.text = "speaker note"
     prs.save(tmp_path / "a.pptx")
     segments = extract_segments(tmp_path / "a.pptx")
-    assert segments[0].locator == "スライド1"
+    assert segments[0].locator == "Slide 1"
     assert "slide title" in segments[0].text and "speaker note" in segments[0].text
 
     c = canvas.Canvas(str(tmp_path / "a.pdf"))
@@ -154,7 +154,7 @@ def test_embed_texts_fails_over_to_next_endpoint_on_connection_error(tmp_path, _
     assert _no_embedding_retry_wait == []
 
     cfg = make_config(tmp_path, vector_db_embedding_endpoints=endpoints[:1], vector_db_embedding_max_retries=2)
-    with pytest.raises(EmbeddingError, match="2回再試行"):
+    with pytest.raises(EmbeddingError, match="retried 2 times"):
         embed_texts(cfg, ["a"], kind="document", transport=server.transport)
 
 
@@ -187,7 +187,7 @@ def test_embed_texts_retries_after_interval_until_success(tmp_path, _no_embeddin
 def test_embed_texts_gives_up_after_max_retries(tmp_path, _no_embedding_retry_wait):
     transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=10**6)
     cfg = make_config(tmp_path, vector_db_embedding_max_retries=3, vector_db_embedding_retry_interval_seconds=2.0)
-    with pytest.raises(EmbeddingError, match="3回再試行.*HTTP 503"):
+    with pytest.raises(EmbeddingError, match="retried 3 times.*HTTP 503"):
         embed_texts(cfg, ["x"], kind="document", transport=transport)
     assert len(calls) == 4
     assert sum(_no_embedding_retry_wait) == pytest.approx(6.0)
@@ -205,7 +205,7 @@ def test_search_embedding_uses_its_own_bounded_retries(tmp_path, _no_embedding_r
     """検索語の埋め込みは embedding_max_retries = 0（無制限）でも search_embedding_max_retries 回でやめる。"""
     cfg = make_config(tmp_path, vector_db_embedding_max_retries=0, vector_db_search_embedding_max_retries=2)
     transport, calls = _flaky_transport(FakeEmbeddingServer(), failures=10**6)
-    with pytest.raises(EmbeddingError, match="2回再試行"):
+    with pytest.raises(EmbeddingError, match="retried 2 times"):
         embed_texts(cfg, ["x"], kind="query", transport=transport)
     assert len(calls) == 3
     assert sum(_no_embedding_retry_wait) == pytest.approx(20.0)
@@ -332,7 +332,7 @@ def test_sqlite_vec_store_rejects_distance_mismatch(tmp_path):
         store.close()
     other = SqliteVecStore(tmp_path, distance="Cosine")
     try:
-        with pytest.raises(StoreError, match="距離関数.*再構築"):
+        with pytest.raises(StoreError, match="distance.*Rebuild"):
             other.ensure_collection("docs", DIM)
         # 検索は作ったときの距離関数（Euclid）で換算する
         hits = other.search("docs", fake_vector("溶接の基準"), 2)
@@ -402,7 +402,7 @@ def test_qdrant_store_creates_collection_with_distance_and_rejects_mismatch():
     # 距離関数を変えた設定では、既存のコレクションへの取り込みを拒否し再構築を求める
     other = QdrantStore("http://qdrant:6333", prefix="p_", distance="Cosine", transport=fake.transport)
     try:
-        with pytest.raises(StoreError, match="距離関数.*再構築"):
+        with pytest.raises(StoreError, match="distance.*Rebuild"):
             other.ensure_collection("docs", DIM)
         # 検索は作ったときの距離関数（Euclid）で換算する
         assert other.search("docs", fake_vector("溶接の基準"), 1)[0].score == pytest.approx(1.0)
@@ -503,7 +503,7 @@ def test_qdrant_store_sends_api_key_and_reports_connection_error():
         raise httpx.ConnectError("refused", request=request)
 
     store = QdrantStore("http://qdrant:6333", prefix="p_", api_key="secret", transport=httpx.MockTransport(handler))
-    with pytest.raises(StoreError, match="接続できません"):
+    with pytest.raises(StoreError, match="Cannot connect"):
         store.search("docs", [0.1], 1)
     assert seen["key"] == "secret"
 
@@ -631,7 +631,7 @@ def test_qdrant_shared_store_keeps_client_open(monkeypatch):
 def test_ingest_skips_files_over_size_limit_and_non_recursive(env):
     cfg = make_config(env["cfg"].vector_db_dir.parent, vector_db_backend=env["cfg"].vector_db_backend, vector_db_max_file_mb=0.00001)
     result = ingest.ingest_collection(cfg, "docs", **env["kwargs"])
-    assert len(result.failed) == 2 and "上限" in result.failed[0][1]
+    assert len(result.failed) == 2 and "limit" in result.failed[0][1]
     assert result.too_large == 2 and result.to_dict()["too_large"] == 2
     with vcat.open_catalog(cfg.vector_db_dir) as catalog:
         catalog.update("docs", recursive=False)
@@ -647,7 +647,7 @@ def test_ingest_requires_rebuild_when_embedding_model_changes(env):
         vector_db_backend=cfg.vector_db_backend,
         vector_db_embedding_endpoints=(LLMEndpoint(base_url="http://embed/v1", api_key="k", model="other-embed"),),
     )
-    with pytest.raises(ingest.IngestError, match="再構築"):
+    with pytest.raises(ingest.IngestError, match="rebuild"):
         ingest.ingest_collection(other, "docs", **kwargs)
     # 検索も対象外になり、理由が分かる
     with pytest.raises(search.SearchError, match="other-embed"):
@@ -782,7 +782,7 @@ def test_ingest_errors_for_missing_collection_or_folder(env):
         ingest.ingest_collection(env["cfg"], "missing", **env["kwargs"])
     with vcat.open_catalog(env["cfg"].vector_db_dir) as catalog:
         catalog.update("docs", source_folder=str(env["docs"] / "nothing"))
-    with pytest.raises(ingest.IngestError, match="フォルダ"):
+    with pytest.raises(ingest.IngestError, match="folder"):
         ingest.ingest_collection(env["cfg"], "docs", **env["kwargs"])
 
 
@@ -793,7 +793,7 @@ def test_search_filters_by_collection_score_and_top_k(env, tmp_path):
         catalog.create("empty", str(tmp_path))
     result = search.search(cfg, "会議室の予約", top_k=1, **kwargs)
     assert [h.source_path.endswith("room.txt") for h in result.hits] == [True]
-    assert result.skipped == [("empty", "まだ文書が取り込まれていません")]
+    assert result.skipped == [("empty", "no documents ingested yet")]
     strict = make_config(cfg.vector_db_dir.parent, vector_db_backend=cfg.vector_db_backend, vector_db_min_score=0.99)
     assert [h.text for h in search.search(strict, "会議室の予約はポータルから行う。", **kwargs).hits] == ["会議室の予約はポータルから行う。"]
     with pytest.raises(search.SearchError):

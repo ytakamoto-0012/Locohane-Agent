@@ -81,7 +81,7 @@ def suggest_similar_dir(path: Path) -> str:
 
     suggested = ancestor / close[0]
     return (
-        f" もしかして {suggested} ではありませんか？"
-        " パスは記憶や推測で再構築せず、直前のツール結果に含まれる文字列や"
-        " path_memory の @N をそのままコピーして使ってください。"
+        f" Did you mean {suggested}?"
+        " Do not rebuild paths from memory or guesswork; copy the string in the previous tool result "
+        " or the path_memory @N as is."
     )
