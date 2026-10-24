@@ -10,7 +10,7 @@ from ..config import Config
 from .catalog import Collection, catalog_exists, open_catalog
 from .embeddings import embed_texts, embedding_model, shared_client
 from .keyword_index import KEYWORDS_FILENAME, open_keyword_index
-from .store import Hit, image_collection_name, open_store
+from .store import Hit, image_collection_name, open_store, path_collection_name
 
 # Reciprocal Rank Fusion の定数（順位 r の項目に 重み / (_RRF_K + r) を足す。一般的な既定値の 60）。
 _RRF_K = 60
@@ -69,32 +69,8 @@ def search(
     if not query.strip():
         raise SearchError("検索語を指定してください。")
     limit = top_k if top_k and top_k > 0 else cfg.vector_db_top_k
-    model = embedding_model(cfg)
-    collections = list_collections(cfg)
-    if collection:
-        collections = [c for c in collections if c.name == collection]
-        if not collections:
-            raise SearchError(f"コレクション {collection} はありません。list_document_collections で一覧を確認してください。")
     result = SearchResult()
-    targets = []
-    for c in collections:
-        if not c.model or not c.chunk_count:
-            result.skipped.append((c.name, "まだ文書が取り込まれていません"))
-        elif c.model != model:
-            result.skipped.append((c.name, f"埋め込みモデル {c.model} で作られています（今の設定は {model}。管理者が再構築する必要があります）"))
-        elif c.document_prefix is not None and c.document_prefix != cfg.vector_db_document_prefix:
-            result.skipped.append(
-                (
-                    c.name,
-                    f"document_prefix {c.document_prefix!r} で取り込まれています"
-                    f"（今の設定は {cfg.vector_db_document_prefix!r}。管理者が再構築する必要があります）",
-                )
-            )
-        else:
-            targets.append(c)
-    if not targets:
-        reasons = "、".join(f"{n}: {r}" for n, r in result.skipped) or "コレクションがありません"
-        raise SearchError(f"検索できるコレクションがありません（{reasons}）。")
+    targets = _targets(cfg, collection, result)
 
     # 検索のたびに接続し直さないよう、テスト用の transport が無ければプロセス内で共有するクライアントを使う。
     client = shared_client(cfg) if embedding_transport is None else None
@@ -122,6 +98,81 @@ def search(
     return result
 
 
+def search_paths(
+    cfg: Config,
+    query: str,
+    *,
+    collection: str | None = None,
+    top_k: int | None = None,
+    embedding_transport: httpx.BaseTransport | None = None,
+    store_transport: httpx.BaseTransport | None = None,
+) -> SearchResult:
+    """query に近いファイルパス（取り込み元フォルダからの相対パス）のファイルを、関連の高い順に最大 top_k 件返す。
+
+    写真・図面のように中身から内容を読み取れないファイルを、ファイル名・フォルダ名で探すために使う。
+    パスの埋め込み（path_min_score 未満を除く）とパスのキーワード（BM25。型番・日付等の完全一致を拾う）を
+    コレクションごとに別々に検索し、search() と同じく順位で統合する（重みは埋め込みが 1.0、キーワードが
+    rrf_weight_path_keyword）。1ファイル1件で、Hit.text は相対パス、Hit.locator は空、Hit.matched は
+    "path"（埋め込み）・"path_keyword"（キーワード）。対象のコレクションの選び方・例外は search() と同じ。
+    パスの導入前に取り込んだコレクションは、次の取り込み（差分）まで結果が出ない。
+    """
+    if not query.strip():
+        raise SearchError("検索語を指定してください。")
+    limit = top_k if top_k and top_k > 0 else cfg.vector_db_top_k
+    result = SearchResult()
+    targets = _targets(cfg, collection, result)
+    client = shared_client(cfg) if embedding_transport is None else None
+    vector = embed_texts(cfg, [query], kind="query", transport=embedding_transport, client=client)[0]
+    candidates = limit * _CANDIDATE_FACTOR
+    lists: list[tuple[str, float, list[Hit]]] = []
+    store = open_store(cfg, transport=store_transport, shared=True)
+    try:
+        for c in targets:
+            hits = store.search(path_collection_name(c.name), vector, candidates)
+            # 保存先の名前（"<名前>.path"）ではなく利用者のコレクション名で返す。
+            hits = [replace(h, collection=c.name) for h in hits if h.score >= cfg.vector_db_path_min_score]
+            lists.append(("path", 1.0, hits))
+    finally:
+        store.close()
+    if cfg.vector_db_rrf_weight_path_keyword > 0 and keyword_index_exists(cfg.vector_db_dir):
+        with open_keyword_index(cfg.vector_db_dir) as keywords:
+            for c in targets:
+                hits = [replace(h, collection=c.name) for h in keywords.search(path_collection_name(c.name), query, candidates)]
+                lists.append(("path_keyword", cfg.vector_db_rrf_weight_path_keyword, hits))
+    result.hits = _fuse(lists)[:limit]
+    return result
+
+
+def _targets(cfg: Config, collection: str | None, result: SearchResult) -> list[Collection]:
+    """検索するコレクション（collection が空なら全部）。比べられないものは外して result.skipped に理由を載せる。"""
+    model = embedding_model(cfg)
+    collections = list_collections(cfg)
+    if collection:
+        collections = [c for c in collections if c.name == collection]
+        if not collections:
+            raise SearchError(f"コレクション {collection} はありません。list_document_collections で一覧を確認してください。")
+    targets = []
+    for c in collections:
+        if not c.model or not c.chunk_count:
+            result.skipped.append((c.name, "まだ文書が取り込まれていません"))
+        elif c.model != model:
+            result.skipped.append((c.name, f"埋め込みモデル {c.model} で作られています（今の設定は {model}。管理者が再構築する必要があります）"))
+        elif c.document_prefix is not None and c.document_prefix != cfg.vector_db_document_prefix:
+            result.skipped.append(
+                (
+                    c.name,
+                    f"document_prefix {c.document_prefix!r} で取り込まれています"
+                    f"（今の設定は {cfg.vector_db_document_prefix!r}。管理者が再構築する必要があります）",
+                )
+            )
+        else:
+            targets.append(c)
+    if not targets:
+        reasons = "、".join(f"{n}: {r}" for n, r in result.skipped) or "コレクションがありません"
+        raise SearchError(f"検索できるコレクションがありません（{reasons}）。")
+    return targets
+
+
 def _fuse(lists: list[tuple[str, float, list[Hit]]]) -> list[Hit]:
     """本文・キーワード・ページ画像の検索結果を、重み付きの Reciprocal Rank Fusion で1つの順位にまとめる。
 
@@ -132,7 +183,8 @@ def _fuse(lists: list[tuple[str, float, list[Hit]]]) -> list[Hit]:
     数だけ残す）。1ページに大量のチャンクがあっても、点数はチャンク数ではなく一覧ごとの最上位の順位で決まる。
     抜粋は最初に出会ったチャンク（本文 → キーワード → 画像の順に並べた lists の中で最上位のもの）を使う。
     """
-    order = {"text": 0, "keyword": 1, "image": 2}
+    # search_paths() のファイルパスの埋め込み（"path"）・キーワード（"path_keyword"）も同じ式で統合する。
+    order = {"text": 0, "keyword": 1, "image": 2, "path": 3, "path_keyword": 4}
     entries: dict[tuple[str, str, str], Hit] = {}
     scores: dict[tuple[str, str, str], float] = {}
     others: dict[tuple[str, str, str], set[str]] = {}

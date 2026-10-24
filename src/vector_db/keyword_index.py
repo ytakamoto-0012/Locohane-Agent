@@ -100,13 +100,20 @@ class KeywordIndex:
         ).fetchone()
         return row is not None
 
-    def replace_source(self, collection: str, source_path: str, chunks: list[ChunkRecord]) -> None:
-        """source_path のチャンクを丸ごと入れ替える（chunks が空でも索引済みとして記録する）。"""
+    def replace_source(
+        self, collection: str, source_path: str, chunks: list[ChunkRecord], *, index_texts: list[str] | None = None
+    ) -> None:
+        """source_path のチャンクを丸ごと入れ替える（chunks が空でも索引済みとして記録する）。
+
+        index_texts を渡すと、索引の語はチャンクの text ではなくこちら（chunks と同じ順）から作る
+        （検索結果の text はチャンクの text のまま）。
+        """
+        texts = index_texts if index_texts is not None else [c.text for c in chunks]
         with self._conn:
             self._delete_source(collection, source_path)
             self._conn.executemany(
                 "INSERT INTO keyword_chunks (tokens, collection, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
-                [(" ".join(_tokens(c.text)), collection, source_path, c.locator, c.text) for c in chunks],
+                [(" ".join(_tokens(t)), collection, source_path, c.locator, c.text) for c, t in zip(chunks, texts, strict=True)],
             )
             self._conn.execute("INSERT INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
 

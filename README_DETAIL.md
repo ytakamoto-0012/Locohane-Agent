@@ -142,7 +142,8 @@
                                       │  delete_memory / read_memory /     │
                                       │  search_memory / list_memories /   │
                                       │  list_document_collections /       │
-                                      │  search_documents / help           │
+                                      │  search_documents /                │
+                                      │  search_document_paths / help      │
                                       │  （skills/ ファイル操作は配下限定、 │
                                       │   Read/Glob/Grep は任意の絶対パス） │
                                       └───────┬───────────────┬──────────┘
@@ -278,7 +279,7 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 | `get_plan_status` / `lock_plan_mode` | 現在 Plan Mode（書き込み系ツールがブロックされたロック状態）か Edit Automatically（承認済み計画を実行できる状態）かを確認し、後者から前者へユーザー承認なしに手動で戻す |
 | `AskUserQuestion` / `ask_user_choice` | 会話継続に必要な追加情報をユーザーへ質問（`AskUserQuestion` は自由記述。`labels` 省略時は単一入力、指定時は複数項目をまとめて提示。`ask_user_choice` は選択肢形式で、表示される選択肢には常に「✏️ その他（自由入力）」「❌ キャンセル」が自動で追加される） |
 | `create_memory` / `update_memory` / `delete_memory` / `read_memory` / `search_memory` / `list_memories` | スレッドをまたぐ永続メモリー（`src/memory.py`）の保存・更新・削除・全文読込・検索・一覧。主エージェントは全6ツールを持つ。`dispatch_agent` のサブエージェントには種別ごとに絞って委譲し、`explore` は読み込み系（`read_memory`/`search_memory`/`list_memories`）のみ、`worker` は全6ツール（フルアクセス）を持つ（`agents/*.md` の `tools:` 参照） |
-| `list_document_collections` / `search_documents` | ベクターDB（`src/vector_db/`）に取り込んだ社内文書のコレクション一覧と意味検索（読み取り専用）。検索結果には出典のパス（`@N`）・ページ等を添え、全体を `[vector_db] max_result_chars` で切り詰める。`[vector_db] enabled = false` の間は「無効です」を返す（「ベクターDB（社内文書の意味検索）」参照） |
+| `list_document_collections` / `search_documents` / `search_document_paths` | ベクターDB（`src/vector_db/`）に取り込んだ社内文書のコレクション一覧と意味検索（読み取り専用。`search_document_paths` はファイル名・フォルダ名で探す）。検索結果には出典のパス（`@N`）・ページ等を添え、全体を `[vector_db] max_result_chars` で切り詰める。`[vector_db] enabled = false` の間は「無効です」を返す（「ベクターDB（社内文書の意味検索）」参照） |
 | `help` | ユーザー向けヘルプ本文（`system_prompt/help.md`）をそのまま返す |
 
 `run_script`（`run_script_background` 含む）と `execute_python_code`（`execute_python_code_background`
@@ -1073,7 +1074,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
 
 規程・手順書・仕様書等の社内文書をインスタンス単位で取り込み、LLM が意味の近い箇所を検索して回答に使えるようにする機能
 （RAG）。既定では無効（`[vector_db] enabled = false`）。ロジックは `src/vector_db/` に集約し、LLM 向けには
-`src/tools/vector_db_tools.py` の2ツール（`list_document_collections`/`search_documents`、読み取り専用）を公開する。
+`src/tools/vector_db_tools.py` の3ツール（`list_document_collections`/`search_documents`/`search_document_paths`、読み取り専用）を公開する。
 文書の取り込みは利用者ではなく管理者が設定ダッシュボードから行う。
 
 - **コレクション**: 取り込み元フォルダ1つに対応する文書群。インスタンス内の全ユーザーが検索できる。名前は半角英数字・`_`・`-`
@@ -1085,7 +1086,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   対応できるチャンク件数の目安（インスタンス内の合計、1024 次元の bge-m3 の場合）は、sqlite-vec が **〜10万件で快適・
   〜30万件が実用の上限**（索引を持たず検索のたびに全件と比べるため、30万件で検索1回が1秒前後）、Qdrant が
   `qdrant_preset = none` で **〜100万件**、`1m`〜`4m` で **100万〜400万件**（「Qdrant を使う」参照）。チャンクは
-  `chunk_size = 800` なら文字の詰まった A4 1ページあたり 1〜2件で、`image_input = true` のページ画像は1ページ1件が別に加わる。
+  `chunk_size = 800` なら文字の詰まった A4 1ページあたり 1〜2件で、`image_input = true` のページ画像は1ページ1件が、ファイルパス（`search_document_paths` 用）は1ファイル1件が別に加わる。
   どちらもコサイン類似度で比べる。本文のチャンクは保存先によらず、同じフォルダの `keywords.sqlite`（SQLite FTS5）にも
   キーワード検索用に入れる（`src/vector_db/keyword_index.py`）。
 - **取り込み**（`src/vector_db/ingest.py`）: 対応形式は `.pdf`（ページ単位）・`.docx`・`.xlsx`/`.xlsm`（シート単位）・`.pptx`
@@ -1117,6 +1118,20 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   `@N` を `Read`（メインエージェントは `explore` への委譲）に渡して確認できる。結果全体は `max_result_chars` 文字で切り詰める。
   結果が小さく抑えられるため、メインエージェント自身も直接呼べる（`[main_agent_tool_guard] allow_entries` に登録済み）。
   サブエージェントは `explore`・`worker`・`verifier` が持つ。
+- **ファイル名・フォルダ名での検索**（`search_document_paths`、`src/vector_db/search.py` の `search_paths()`）: 写真・図面・
+  スキャン画像のように中身から内容を読み取れないファイルでも、ファイル名やフォルダ名に内容が書かれていることが多いため、
+  取り込みでは各ファイルの**取り込み元フォルダからの相対パス**（例: `製品A/外観写真/溶接部_NG例.jpg`。取り込み元より上は
+  全ファイル共通で手がかりにならないため含めない）を1ファイル1件で埋め込み（`document_prefix` を付け、本文のチャンクと同じ
+  リクエストの末尾で送る）、別のコレクション `<コレクション名>.path` に入れる。同じ相対パスはキーワード索引
+  （`keywords.sqlite`。索引の中のコレクション名も `<コレクション名>.path` で、本文のキーワード検索には混ざらない）にも入れる
+  （拡張子は `pdf`・`jpg` 等が同じ形式の全ファイルに一致してしまうため索引の語に含めない。結果の相対パスは拡張子付き）。
+  検索ではパスの埋め込み（類似度 `path_min_score` 以上）とパスのキーワード（BM25。型番・品番・日付等の完全一致を拾う。
+  語の区切り方は本文のキーワード検索と同じ）を別々に探し、`search_documents` と同じ式で順位を統合して（重みは埋め込みが 1.0、
+  キーワードが `rrf_weight_path_keyword`。0 でキーワードを使わない）上位 `top_k` 件を、どちらで一致したか
+  （`一致: 意味・キーワード` 等）・出典のパス（`@N`）・相対パスを添えて返す（`search_documents` の結果には混ぜない）。パスが変わる（ファイル・フォルダの名前の変更・移動）と別のファイルとして
+  取り込み直されるため、パスのベクターも追従する。取り込みの対象はこれまでどおり対応形式のファイルだけで、読めずに失敗一覧に
+  載ったファイルは入らない。この機能の導入前に取り込んだコレクションは、次の「取り込み（差分）」で内容を埋め込み直さずに
+  パスだけを埋め込む（取り込み済みファイルの記録 `path_indexed` で判定。キーワード索引に無いパスも同じ取り込みで補う）。
 
 ### 埋め込みサーバーの準備と設定
 
@@ -1169,7 +1184,7 @@ HTTP 200 以外が返ったときは同じリクエストを次の接続先へ�
 ベクター同士の近さの測り方（距離関数）は `distance` で選ぶ（`Cosine` 既定 / `Euclid` / `Manhattan` / `Dot`）。
 sqlite-vec では `Euclid` が vec0 の `l2`、`Manhattan` が `l1` に当たり、`Dot` は対応していない（`Qdrant` のみ）。
 `Euclid`・`Manhattan` は値が小さいほど近いため、検索結果の類似度を `1 / (1 + 距離)` に換算してから
-`min_score`・`image_min_score` と比べる（`Cosine` とは値の出方が違うので下限を調整する）。
+`min_score`・`image_min_score`・`path_min_score` と比べる（`Cosine` とは値の出方が違うので下限を調整する）。
 **距離関数はコレクションを作るときに決まるため、変えた後は既存のコレクションをすべて「再構築」する**
 （再構築前の差分取り込みは「距離関数が違います」のエラーになり、検索は作ったときの距離関数のまま行う）。
 
@@ -1517,12 +1532,14 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `image_input` | 埋め込みに画像を入力するか（既定 false）。true なら `.pdf .docx .pptx .xlsx .xlsm` は本文に加えてページごとの画像も埋め込み、画像ファイル（`.png .jpg .heic` 等）も画像として埋め込む。画像入力に対応した埋め込みモデルと、Office ファイルには Windows・Microsoft Office が必要（「ページを画像として取り込む（image_input）」参照） | `VECTOR_DB_IMAGE_INPUT` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `ingest_workers` | 取り込みで並列に処理するファイル数（ワーカースレッド数、既定1）。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照） | `VECTOR_DB_INGEST_WORKERS` |
-| `[vector_db]` | `top_k` | `search_documents` が既定で返す件数（既定5） | `VECTOR_DB_TOP_K` |
-| `[vector_db]` | `max_result_chars` | `search_documents` の結果全体の最大文字数（既定6000） | `VECTOR_DB_MAX_RESULT_CHARS` |
+| `[vector_db]` | `top_k` | `search_documents`・`search_document_paths` が既定で返す件数（既定5） | `VECTOR_DB_TOP_K` |
+| `[vector_db]` | `max_result_chars` | `search_documents`・`search_document_paths` の結果全体の最大文字数（既定6000） | `VECTOR_DB_MAX_RESULT_CHARS` |
 | `[vector_db]` | `min_score` | 結果に出す本文のチャンクの類似度（0.0〜1.0、コサイン類似度）の下限（既定0.3） | `VECTOR_DB_MIN_SCORE` |
 | `[vector_db]` | `image_min_score` | `image_input` で埋め込んだページ画像の類似度の下限（既定0.1）。検索語と画像の類似度は本文より低めに出るため `min_score` と別に持つ | `VECTOR_DB_IMAGE_MIN_SCORE` |
+| `[vector_db]` | `path_min_score` | `search_document_paths` の結果に出すファイルパスの類似度の下限（既定0.3）。パスは短い文字列のため、本文と値の出方が違えば `min_score` と別に調整する | `VECTOR_DB_PATH_MIN_SCORE` |
 | `[vector_db]` | `rrf_weight_text` | 検索結果を順位で統合するときの、本文の埋め込みの結果の重み（既定1.0、0 で使わない） | `VECTOR_DB_RRF_WEIGHT_TEXT` |
 | `[vector_db]` | `rrf_weight_keyword` | 同じく本文のキーワード検索（BM25）の結果の重み（既定1.0、0 で使わない） | `VECTOR_DB_RRF_WEIGHT_KEYWORD` |
+| `[vector_db]` | `rrf_weight_path_keyword` | `search_document_paths` で、ファイルパスのキーワード検索（BM25）の結果を、ファイルパスの埋め込みの結果（重み 1.0）と順位で統合するときの重み（既定1.0、0 で使わない） | `VECTOR_DB_RRF_WEIGHT_PATH_KEYWORD` |
 | `[vector_db]` | `rrf_weight_image` | 同じくページ画像（`image_input`）の結果の重み（既定1.0、0 で使わない） | `VECTOR_DB_RRF_WEIGHT_IMAGE` |
 | `[path_memory]` | `search_filename_weight` | 検索語がフルパスの場合に、類似度計算でファイル名部分を重視する割合（既定0.7、残りはフォルダ部分同士の類似度） | `PATH_MEMORY_SEARCH_FILENAME_WEIGHT` |
 | `[auth]` | `enabled` | ログイン認証機能のON/OFF（`false`＝現状通りログイン不要） | `AUTH_ENABLED` |
@@ -1692,7 +1709,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`ingest_workers`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 

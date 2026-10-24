@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS files (
     sha256 TEXT NOT NULL,
     chunk_count INTEGER NOT NULL,
     mode TEXT NOT NULL DEFAULT 'text',
+    path_indexed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (collection, source_path)
 );
 """
@@ -74,7 +75,11 @@ class Collection:
 
 @dataclass(frozen=True)
 class FileRecord:
-    """取り込み済みファイルの記録。mode は埋め込み方（"text" または "text+image"、ingest.file_mode()）。"""
+    """取り込み済みファイルの記録。mode は埋め込み方（"text" または "text+image"、ingest.file_mode()）。
+
+    path_indexed はファイルパスのベクター（store.path_collection_name）を入れ済みか
+    （False は導入前に取り込んだファイルで、次の取り込みでパスだけを埋め込む）。
+    """
 
     source_path: str
     size: int
@@ -82,6 +87,7 @@ class FileRecord:
     sha256: str
     chunk_count: int
     mode: str = "text"
+    path_indexed: bool = False
 
 
 def validate_name(name: str) -> str:
@@ -133,6 +139,10 @@ class Catalog:
         if "mode" not in columns:
             with self._conn:
                 self._conn.execute("ALTER TABLE files ADD COLUMN mode TEXT NOT NULL DEFAULT 'text'")
+        # path_indexed 列の無い旧版の catalog.sqlite に列を足す（既存のファイルは次の取り込みでパスを埋め込む）。
+        if "path_indexed" not in columns:
+            with self._conn:
+                self._conn.execute("ALTER TABLE files ADD COLUMN path_indexed INTEGER NOT NULL DEFAULT 0")
         # document_prefix 列の無い旧版の catalog.sqlite に列を足す（既存のコレクションは NULL ＝ 不明）。
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(collections)")}
         if "document_prefix" not in columns:
@@ -241,21 +251,29 @@ class Catalog:
 
     def files(self, name: str) -> dict[str, FileRecord]:
         rows = self._conn.execute(
-            "SELECT source_path, size, mtime, sha256, chunk_count, mode FROM files WHERE collection = ?", (name,)
+            "SELECT source_path, size, mtime, sha256, chunk_count, mode, path_indexed FROM files WHERE collection = ?", (name,)
         ).fetchall()
-        return {r["source_path"]: FileRecord(**dict(r)) for r in rows}
+        return {r["source_path"]: FileRecord(**{**dict(r), "path_indexed": bool(r["path_indexed"])}) for r in rows}
 
     def upsert_file(self, name: str, record: FileRecord) -> None:
         with self._conn:
             self._conn.execute(
                 """
-                INSERT INTO files (collection, source_path, size, mtime, sha256, chunk_count, mode) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO files (collection, source_path, size, mtime, sha256, chunk_count, mode, path_indexed)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (collection, source_path) DO UPDATE SET
                     size = excluded.size, mtime = excluded.mtime, sha256 = excluded.sha256, chunk_count = excluded.chunk_count,
-                    mode = excluded.mode
+                    mode = excluded.mode, path_indexed = excluded.path_indexed
                 """,
-                (name, record.source_path, record.size, record.mtime, record.sha256, record.chunk_count, record.mode),
+                (
+                    name, record.source_path, record.size, record.mtime, record.sha256, record.chunk_count, record.mode,
+                    int(record.path_indexed),
+                ),
             )
+
+    def mark_path_indexed(self, name: str, source_path: str) -> None:
+        with self._conn:
+            self._conn.execute("UPDATE files SET path_indexed = 1 WHERE collection = ? AND source_path = ?", (name, source_path))
 
     def delete_file(self, name: str, source_path: str) -> None:
         with self._conn:

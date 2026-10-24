@@ -27,7 +27,7 @@ from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_m
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
 from .keyword_index import KeywordIndex, open_keyword_index
 from .render import IMAGE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, PageImage, render_pages
-from .store import ChunkRecord, image_collection_name, open_store
+from .store import ChunkRecord, image_collection_name, open_store, path_collection_name, storage_collection_names
 
 logger = logging.getLogger(__name__)
 
@@ -137,6 +137,17 @@ def _page_chunk_text(cfg: Config, path: Path, page: PageImage) -> str:
     return text if len(text) <= cfg.vector_db_chunk_size else text[: cfg.vector_db_chunk_size] + "…"
 
 
+def relative_path_text(folder: Path, path: Path) -> str:
+    """ファイルパスのベクターに埋め込む文字列（取り込み元フォルダからの相対パス。区切りは "/"）。
+
+    取り込み元フォルダより上の部分は全ファイルで同じで検索の手がかりにならないため含めない。
+    """
+    try:
+        return path.relative_to(folder).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
 def _chunk_file(cfg: Config, path: Path) -> list[ChunkRecord]:
     if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
         return []  # 画像ファイルには本文が無い
@@ -206,16 +217,17 @@ def ingest_collection(
         embedding_client = open_client(cfg, transport=embedding_transport)
         try:
             if rebuild:
-                store.drop_collection(name)
-                store.drop_collection(image_collection_name(name))
+                for storage in storage_collection_names(name):
+                    store.drop_collection(storage)
                 keywords.drop_collection(name)
+                keywords.drop_collection(path_collection_name(name))
                 catalog.clear_files(name)
                 catalog.set_model(name, None, None)
                 collection = catalog.get(name)
             else:
                 # qdrant_preset を変えた後は、変わったファイルが無くても既存のコレクションへ反映する。
-                store.apply_preset(name)
-                store.apply_preset(image_collection_name(name))
+                for storage in storage_collection_names(name):
+                    store.apply_preset(storage)
             _ingest(
                 cfg, catalog, store, keywords, name, collection.dim, model, folder, collection.recursive,
                 result, progress, should_stop, embedding_client,
@@ -238,6 +250,9 @@ class _Prepared:
         "touch"     - 内容（SHA-256）は同じで、サイズ・更新日時の記録だけ更新する。
         "failed"    - 取り込めなかった（reason に理由。too_large なら上限サイズ超え）。
         "embed"     - chunks・pages を埋め込んだ（vectors・image_vectors）。
+
+    path_vector はファイルパス（path_text）のベクター。"embed" では常に、"unchanged"・"touch" では
+    パスのベクターがまだ無いファイル（FileRecord.path_indexed = False）だけ埋め込む。
     """
 
     path: Path
@@ -253,6 +268,8 @@ class _Prepared:
     pages: list[PageImage] = field(default_factory=list)
     vectors: list[list[float]] = field(default_factory=list)
     image_vectors: list[list[float]] = field(default_factory=list)
+    path_text: str = ""
+    path_vector: list[float] | None = None
 
 
 def _keyword_chunks(cfg: Config, path: Path, needs_keywords: bool) -> list[ChunkRecord] | None:
@@ -267,6 +284,7 @@ def _keyword_chunks(cfg: Config, path: Path, needs_keywords: bool) -> list[Chunk
 
 def _prepare(
     cfg: Config,
+    folder: Path,
     path: Path,
     record: FileRecord | None,
     needs_keywords: bool,
@@ -281,17 +299,31 @@ def _prepare(
     """
     # image_input を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
     mode = file_mode(cfg, path)
+    path_text = relative_path_text(folder, path)
+
+    def path_only() -> list[float] | None:
+        # パスのベクターの導入前に取り込んだファイルは、内容を埋め込み直さずにパスだけを埋め込む。
+        if record is not None and record.path_indexed:
+            return None
+        return embed_texts(cfg, [path_text], kind="document", client=embedding_client, should_stop=should_stop)[0]
+
     try:
         st = path.stat()
         same_mode = record is not None and record.mode == mode
         if same_mode and record.size == st.st_size and record.mtime == st.st_mtime:
-            return _Prepared(path, record, mode, "unchanged", keyword_chunks=_keyword_chunks(cfg, path, needs_keywords))
+            return _Prepared(
+                path, record, mode, "unchanged", keyword_chunks=_keyword_chunks(cfg, path, needs_keywords),
+                path_text=path_text, path_vector=path_only(),
+            )
         if st.st_size > max_bytes:
             reason = f"ファイルサイズが上限（{cfg.vector_db_max_file_mb}MB）を超えています"
             return _Prepared(path, record, mode, "failed", reason=reason, too_large=True)
         sha = _sha256(path)
         if same_mode and record.sha256 == sha:
-            return _Prepared(path, record, mode, "touch", stat=st, sha=sha, keyword_chunks=_keyword_chunks(cfg, path, needs_keywords))
+            return _Prepared(
+                path, record, mode, "touch", stat=st, sha=sha, keyword_chunks=_keyword_chunks(cfg, path, needs_keywords),
+                path_text=path_text, path_vector=path_only(),
+            )
         chunks = _chunk_file(cfg, path)
         pages = render_pages(path, cfg.vector_db_image_dpi) if mode == "text+image" else []
     except (OSError, ExtractError) as e:
@@ -302,10 +334,15 @@ def _prepare(
         else:
             reason = "本文を取り出せませんでした（画像だけの PDF 等。[vector_db] image_input = true なら画像として取り込めます）"
         return _Prepared(path, record, mode, "failed", reason=reason)
-    vectors = embed_texts(cfg, [c.text for c in chunks], kind="document", client=embedding_client, should_stop=should_stop) if chunks else []
+    # パスは本文のチャンクと同じリクエストでまとめて埋め込む（末尾の1件）。
+    text_vectors = embed_texts(
+        cfg, [c.text for c in chunks] + [path_text], kind="document", client=embedding_client, should_stop=should_stop
+    )
+    vectors, path_vector = text_vectors[:-1], text_vectors[-1]
     image_vectors = embed_images(cfg, [p.png for p in pages], client=embedding_client, should_stop=should_stop) if pages else []
     return _Prepared(
-        path, record, mode, "embed", stat=st, sha=sha, chunks=chunks, pages=pages, vectors=vectors, image_vectors=image_vectors
+        path, record, mode, "embed", stat=st, sha=sha, chunks=chunks, pages=pages, vectors=vectors, image_vectors=image_vectors,
+        path_text=path_text, path_vector=path_vector,
     )
 
 
@@ -316,6 +353,31 @@ class _Writer:
         self.cfg, self.catalog, self.store, self.keywords = cfg, catalog, store, keywords
         self.name, self.dim, self.model, self.result = name, dim, model, result
         self.image_collection_ready = False
+        self.path_collection_ready = False
+
+    def _write_path(self, source: str, prepared: _Prepared) -> None:
+        """ファイルパスのベクターを1ファイル1件で入れ替える（store.path_collection_name 参照）。"""
+        if not self.path_collection_ready:
+            self.store.ensure_collection(path_collection_name(self.name), self.dim or len(prepared.path_vector))
+            self.path_collection_ready = True
+        self.store.replace_source(
+            path_collection_name(self.name), source, [ChunkRecord("", prepared.path_text)], [prepared.path_vector]
+        )
+
+    def _write_path_keywords(self, source: str, prepared: _Prepared, *, only_missing: bool) -> None:
+        """ファイルパスをキーワード索引にも入れる（索引の中のコレクション名は store.path_collection_name と同じ）。
+
+        拡張子は索引の語に含めない（"pdf"・"jpg" 等が同じ形式の全ファイルに一致してしまうため）。
+        検索結果に出す相対パスは拡張子付きのまま。
+        only_missing なら索引に無いときだけ入れる（パスのキーワード検索の導入前に取り込んだファイル用）。
+        """
+        keyword_collection = path_collection_name(self.name)
+        if only_missing and self.keywords.has_source(keyword_collection, source):
+            return
+        index_text = prepared.path_text.removesuffix(prepared.path.suffix)
+        self.keywords.replace_source(
+            keyword_collection, source, [ChunkRecord("", prepared.path_text)], index_texts=[index_text]
+        )
 
     def write(self, prepared: _Prepared) -> None:
         catalog, store, keywords, name, result = self.catalog, self.store, self.keywords, self.name, self.result
@@ -327,16 +389,24 @@ class _Writer:
                 result.too_large += 1
             return
         if prepared.kind in ("unchanged", "touch"):
+            if prepared.path_vector is not None:
+                self._write_path(source, prepared)
+            path_indexed = record.path_indexed or prepared.path_vector is not None
             if prepared.kind == "touch":
                 st = prepared.stat
-                catalog.upsert_file(name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, record.chunk_count, mode))
+                catalog.upsert_file(
+                    name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, record.chunk_count, mode, path_indexed)
+                )
+            elif prepared.path_vector is not None:
+                catalog.mark_path_indexed(name, source)
             if prepared.keyword_chunks is not None:
                 keywords.replace_source(name, source, prepared.keyword_chunks)
+            self._write_path_keywords(source, prepared, only_missing=True)
             result.unchanged += 1
             return
         chunks, pages, vectors, image_vectors = prepared.chunks, prepared.pages, prepared.vectors, prepared.image_vectors
         if self.dim is None:
-            self.dim = len((vectors or image_vectors)[0])
+            self.dim = len((vectors or image_vectors or [prepared.path_vector])[0])
             store.ensure_collection(name, self.dim)
             catalog.set_model(name, self.model, self.dim, self.cfg.vector_db_document_prefix)
         # 本文と画像は別のコレクションに入れる（store.image_collection_name 参照）。
@@ -354,9 +424,11 @@ class _Writer:
             store.replace_source(image_collection_name(name), source, image_chunks, image_vectors)
         else:
             store.delete_source(image_collection_name(name), source)
+        self._write_path(source, prepared)
+        self._write_path_keywords(source, prepared, only_missing=False)
         chunk_count = len(chunks) + len(pages)
         st = prepared.stat
-        catalog.upsert_file(name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, chunk_count, mode))
+        catalog.upsert_file(name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, chunk_count, mode, True))
         result.chunks += chunk_count
         if record is None:
             result.added += 1
@@ -400,7 +472,7 @@ def _ingest(
                         progress(completed, len(files), source)
                     needs_keywords = not keywords.has_source(name, source)
                     in_flight.add(
-                        pool.submit(_prepare, cfg, path, known.get(source), needs_keywords, max_bytes, embedding_client, should_stop)
+                        pool.submit(_prepare, cfg, folder, path, known.get(source), needs_keywords, max_bytes, embedding_client, should_stop)
                     )
                 if not in_flight:
                     break
@@ -425,9 +497,10 @@ def _ingest(
         # 未処理のファイルを「消えた」と誤って削除しないよう、ここで抜ける。
         return
     for source in sorted(set(known) - seen):
-        store.delete_source(name, source)
-        store.delete_source(image_collection_name(name), source)
+        for storage in storage_collection_names(name):
+            store.delete_source(storage, source)
         keywords.delete_source(name, source)
+        keywords.delete_source(path_collection_name(name), source)
         catalog.delete_file(name, source)
         result.removed += 1
     if progress is not None:

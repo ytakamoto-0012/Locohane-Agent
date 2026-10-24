@@ -861,9 +861,11 @@ const CONFIG_PRESETS = [
       "vector_db.max_result_chars",
       "vector_db.min_score",
       "vector_db.image_min_score",
+      "vector_db.path_min_score",
       "vector_db.rrf_weight_text",
       "vector_db.rrf_weight_keyword",
       "vector_db.rrf_weight_image",
+      "vector_db.rrf_weight_path_keyword",
     ],
   },
 ];

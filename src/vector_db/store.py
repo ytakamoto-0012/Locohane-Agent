@@ -36,11 +36,28 @@ def image_collection_name(name: str) -> str:
     return name + IMAGE_COLLECTION_SUFFIX
 
 
+# ファイルのパス（取り込み元フォルダからの相対パス）を1ファイル1件で埋め込んだベクターの保存先。
+# 写真・図面のように中身から内容を読み取れないファイルでも、ファイル名・フォルダ名に内容が
+# 書かれていることが多いため、パスの文字列でも意味検索できるようにする（search.search_paths）。
+PATH_COLLECTION_SUFFIX = ".path"
+
+
+def path_collection_name(name: str) -> str:
+    """コレクション name のファイルパスのベクターを入れる保存先のコレクション名。"""
+    return name + PATH_COLLECTION_SUFFIX
+
+
+def storage_collection_names(name: str) -> tuple[str, str, str]:
+    """コレクション name が使う保存先のコレクション（本文・ページ画像・ファイルパス）の名前。"""
+    return name, image_collection_name(name), path_collection_name(name)
+
+
 @dataclass(frozen=True)
 class ChunkRecord:
     """保存する1チャンク。locator はファイル内の位置（extract.Segment.locator）。
 
     ページ画像のチャンクの text は、検索結果の抜粋に使うそのページの文字。
+    ファイルパスのチャンクは locator が空で、text が取り込み元フォルダからの相対パス。
     """
 
     locator: str
@@ -55,8 +72,10 @@ class Hit:
     Euclid・Manhattan なら distance_to_score() で換算した値。キーワード検索では 0.0。
 
     matched は一致した検索（"text" = 本文の埋め込み、"keyword" = 本文のキーワード、
-    "image" = ページ画像）。other_chunks は同じ位置で他に一致した本文のチャンクの数。
-    どちらも保存先の search() は既定値のまま返し、search.search() が結果を統合するときに入れる。
+    "image" = ページ画像、"path" = ファイルパスの埋め込み、"path_keyword" = ファイルパスのキーワード
+    （この2つは search.search_paths()））。other_chunks は同じ位置で
+    他に一致した本文のチャンクの数。どちらも保存先の search() は既定値のまま返し、search.search() が
+    結果を統合するときに入れる。
     """
 
     collection: str

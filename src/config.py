@@ -506,9 +506,12 @@ class Config:
         vector_db_min_score: search_documents の結果に出す類似度の下限（本文のチャンク）。
         vector_db_image_min_score: 同じくページ画像（image_input）の類似度の下限。
             検索語（テキスト）と画像の類似度は本文より低めに出るため別に持つ。
+        vector_db_path_min_score: search_document_paths の結果に出すファイルパスの類似度の下限。
         vector_db_rrf_weight_text / vector_db_rrf_weight_keyword / vector_db_rrf_weight_image:
             本文の埋め込み・本文のキーワード（BM25）・ページ画像の検索結果を順位で統合する
             （Reciprocal Rank Fusion）ときの重み。0 ならその検索を使わない。
+        vector_db_rrf_weight_path_keyword: search_document_paths で、ファイルパスのキーワード（BM25）の結果を
+            ファイルパスの埋め込みの結果（重み 1.0）と順位で統合するときの重み。0 ならキーワードを使わない。
         script_timeout: run_script の実行タイムアウト秒数。
         script_python: run_script が .py スクリプトを起動する際に使う
             Python 実行ファイル。
@@ -1065,9 +1068,11 @@ class Config:
     vector_db_max_result_chars: int
     vector_db_min_score: float
     vector_db_image_min_score: float
+    vector_db_path_min_score: float
     vector_db_rrf_weight_text: float
     vector_db_rrf_weight_keyword: float
     vector_db_rrf_weight_image: float
+    vector_db_rrf_weight_path_keyword: float
 
     # --- ログファイル（app_*.log）の行数ベースローテーション・自動削除 ---
     log_max_lines: int
@@ -1960,7 +1965,9 @@ def _validate_vector_db(cfg: "Config") -> None:
         raise ValueError(f"[vector_db].min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_min_score}")
     if not (0.0 <= cfg.vector_db_image_min_score <= 1.0):
         raise ValueError(f"[vector_db].image_min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_image_min_score}")
-    for key in ("text", "keyword", "image"):
+    if not (0.0 <= cfg.vector_db_path_min_score <= 1.0):
+        raise ValueError(f"[vector_db].path_min_score は 0.0〜1.0 の範囲で指定してください: {cfg.vector_db_path_min_score}")
+    for key in ("text", "keyword", "image", "path_keyword"):
         if getattr(cfg, f"vector_db_rrf_weight_{key}") < 0:
             raise ValueError(f"[vector_db].rrf_weight_{key} は 0 以上で指定してください: {getattr(cfg, f'vector_db_rrf_weight_{key}')}")
     if cfg.vector_db_backend == "sqlite_vec" and cfg.vector_db_distance not in VECTOR_DB_SQLITE_VEC_DISTANCES:
@@ -3087,9 +3094,13 @@ def load_config(
         ),
         vector_db_min_score=float(os.getenv("VECTOR_DB_MIN_SCORE", vector_db.get("min_score", 0.3))),
         vector_db_image_min_score=float(os.getenv("VECTOR_DB_IMAGE_MIN_SCORE", vector_db.get("image_min_score", 0.1))),
+        vector_db_path_min_score=float(os.getenv("VECTOR_DB_PATH_MIN_SCORE", vector_db.get("path_min_score", 0.3))),
         vector_db_rrf_weight_text=float(os.getenv("VECTOR_DB_RRF_WEIGHT_TEXT", vector_db.get("rrf_weight_text", 1.0))),
         vector_db_rrf_weight_keyword=float(os.getenv("VECTOR_DB_RRF_WEIGHT_KEYWORD", vector_db.get("rrf_weight_keyword", 1.0))),
         vector_db_rrf_weight_image=float(os.getenv("VECTOR_DB_RRF_WEIGHT_IMAGE", vector_db.get("rrf_weight_image", 1.0))),
+        vector_db_rrf_weight_path_keyword=float(
+            os.getenv("VECTOR_DB_RRF_WEIGHT_PATH_KEYWORD", vector_db.get("rrf_weight_path_keyword", 1.0))
+        ),
         log_max_lines=int(os.getenv("LOG_MAX_LINES", log_section.get("max_lines", 5000))),
         log_retention_days=int(os.getenv("LOG_RETENTION_DAYS", log_section.get("retention_days", 7))),
         log_cleanup_interval_hours=float(os.getenv("LOG_CLEANUP_INTERVAL_HOURS", log_section.get("cleanup_interval_hours", 1))),

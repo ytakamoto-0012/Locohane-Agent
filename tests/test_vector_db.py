@@ -492,7 +492,7 @@ def test_ingest_applies_qdrant_preset_without_changed_files(tmp_path):
     tuned = make_config(tmp_path, vector_db_backend="qdrant", vector_db_qdrant_preset="2m")
     result = ingest.ingest_collection(tuned, "docs", embedding_transport=embed.transport, store_transport=qdrant.transport)
     assert result.unchanged == 1
-    assert [name for name, _ in qdrant.patches] == ["locohane_test_docs"]
+    assert [name for name, _ in qdrant.patches] == ["locohane_test_docs", "locohane_test_docs.path"]
 
 
 def test_qdrant_store_sends_api_key_and_reports_connection_error():

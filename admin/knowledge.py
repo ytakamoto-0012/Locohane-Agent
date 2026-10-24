@@ -27,7 +27,7 @@ from src.vector_db import catalog as vcat
 from src.vector_db.embeddings import EmbeddingError
 from src.vector_db.ingest import IngestError, effective_extensions, ingest_collection
 from src.vector_db.keyword_index import open_keyword_index
-from src.vector_db.store import StoreError, image_collection_name, open_store
+from src.vector_db.store import StoreError, open_store, path_collection_name, storage_collection_names
 
 from . import audit
 from . import instances as inst
@@ -427,14 +427,15 @@ def build_router(
             try:
                 store = open_store(cfg, transport=extra_ingest_kwargs.get("store_transport"))
                 try:
-                    store.drop_collection(collection)
-                    store.drop_collection(image_collection_name(collection))
+                    for storage in storage_collection_names(collection):
+                        store.drop_collection(storage)
                 finally:
                     store.close()
             except StoreError as exc:
                 raise HTTPException(status_code=502, detail=f"ベクターを削除できませんでした: {exc}") from exc
             with open_keyword_index(cfg.vector_db_dir) as keywords:
                 keywords.drop_collection(collection)
+                keywords.drop_collection(path_collection_name(collection))
             catalog.delete(collection)
         jobs.forget(name, collection)
         _audit(request, user, name, "knowledge_collection_delete", collection=collection)

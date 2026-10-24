@@ -1,4 +1,4 @@
-"""search_documents / list_document_collections ツールのテスト。"""
+"""search_documents / search_document_paths / list_document_collections ツールのテスト。"""
 
 from __future__ import annotations
 
@@ -43,6 +43,12 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(
         vector_db_tools.vector_search, "search", lambda *a, **k: real_search(*a, embedding_transport=embed.transport, **k)
     )
+    real_search_paths = vector_db_tools.vector_search.search_paths
+    monkeypatch.setattr(
+        vector_db_tools.vector_search,
+        "search_paths",
+        lambda *a, **k: real_search_paths(*a, embedding_transport=embed.transport, **k),
+    )
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", cfg)
     monkeypatch.setattr(tools._state, "_PATH_MEMORY_DIR", tmp_path / "path_memory")
     (tmp_path / "path_memory").mkdir()
@@ -54,6 +60,7 @@ def test_tools_report_disabled(monkeypatch, tmp_path):
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", make_config(tmp_path, vector_db_enabled=False))
     assert "無効" in tools.search_documents.func(query="溶接")
     assert "無効" in tools.list_document_collections.func()
+    assert "無効" in tools.search_document_paths.func(query="溶接")
 
 
 def test_list_document_collections(env):
@@ -84,14 +91,14 @@ def test_tools_are_registered_for_main_and_subagents():
     from src.config import load_config
 
     names = {t.name for t in tools.get_all_tools()}
-    assert {"search_documents", "list_document_collections"} <= names
+    assert {"search_documents", "search_document_paths", "list_document_collections"} <= names
     cfg = load_config()
     by_name = {a.name: a for a in scan_agent_types(cfg.agents_dir)}
     for agent in ("explore", "worker", "verifier"):
         resolved = {t.name for t in tools._resolve_agent_types([by_name[agent]])[agent].tools}
-        assert {"search_documents", "list_document_collections"} <= resolved, agent
+        assert {"search_documents", "search_document_paths", "list_document_collections"} <= resolved, agent
     allowed = {entry for entry, _ in cfg.main_agent_tool_guard_allow_entries}
-    assert {"search_documents", "list_document_collections"} <= allowed
+    assert {"search_documents", "search_document_paths", "list_document_collections"} <= allowed
 
 
 def test_search_documents_shows_image_matches(env, monkeypatch, tmp_path):
@@ -123,3 +130,22 @@ def test_search_documents_shows_keyword_matches_and_merged_chunks(env, monkeypat
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", env["cfg"])
     text = tools.search_documents.func(query="会議室の予約はポータルから行う。", top_k=1)
     assert "room.md" in text and "（同じ位置で他 1 チャンクも一致）" in text
+
+
+def test_search_document_paths_returns_files_with_path_memory_refs(env):
+    text = tools.search_document_paths.func(query="weld.md", top_k=1)
+    assert text.startswith("1件見つかりました。")
+    assert "@1 " + str(env["docs"] / "weld.md") in text and "相対パス: weld.md" in text
+    assert "（一致: 意味・キーワード）" in text
+
+
+def test_search_document_paths_shows_keyword_only_matches(env, monkeypatch):
+    monkeypatch.setattr(tools._state, "_LLM_CONFIG", dataclasses.replace(env["cfg"], vector_db_path_min_score=1.0))
+    text = tools.search_document_paths.func(query="weld", top_k=1)
+    assert "類似度 -（一致: キーワード）" in text and "相対パス: weld.md" in text
+
+
+def test_search_document_paths_reports_no_match_and_errors(env, monkeypatch):
+    monkeypatch.setattr(tools._state, "_LLM_CONFIG", dataclasses.replace(env["cfg"], vector_db_path_min_score=1.0))
+    assert "見つかりませんでした" in tools.search_document_paths.func(query="配管の写真")
+    assert tools.search_document_paths.func(query="x", collection="missing").startswith("エラー: ")
