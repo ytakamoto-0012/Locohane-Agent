@@ -6,3 +6,7 @@ rem it via sys.executable or the LOCOHANE_PYTHON environment variable.
 set PYTHON_DIR=C:\DT_Python\Python311\env_local_agent_system
 set LOCOHANE_PYTHON=%PYTHON_DIR%\Scripts\python.exe
 set PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%PATH%
+rem Python UTF-8 mode: stdio and open() default to UTF-8 regardless of the
+rem Windows language/code page (e.g. English Windows with cp1252/cp437), so
+rem Japanese paths, file contents and logs never raise UnicodeEncodeError.
+set PYTHONUTF8=1

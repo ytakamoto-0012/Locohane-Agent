@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import io
+import locale
 from pathlib import Path
 import threading
 
@@ -85,11 +86,11 @@ def _is_encrypted_office(path: Path, data: bytes | None) -> bool:
 
 
 def _decode_text(data: bytes) -> str:
-    """UTF-8（BOM 付き含む）で読み、失敗したら CP932 で読む。"""
-    for encoding in ("utf-8-sig", "cp932"):
+    """UTF-8（BOM 付き含む）→ CP932 → OS の ANSI コードページ（英語版 Windows なら cp1252 等）の順に読む。"""
+    for encoding in dict.fromkeys(("utf-8-sig", "cp932", locale.getencoding())):
         try:
             return data.decode(encoding)
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, LookupError):
             continue
     return data.decode("utf-8", errors="replace")
 

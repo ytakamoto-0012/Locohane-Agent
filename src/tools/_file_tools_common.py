@@ -10,15 +10,27 @@ src/memory.py と同じ契約: Chainlit・パスメモリー・作業ディレ�
 from __future__ import annotations
 
 import difflib
+import locale
 from pathlib import Path
 
 
 def read_text_with_fallback(path: Path) -> str:
-    """UTF-8 で読めなければ CP932（Shift-JIS系）にフォールバックして読む。"""
-    try:
-        return path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return path.read_text(encoding="cp932")
+    """UTF-8 で読めなければ CP932（Shift-JIS系）、OS の ANSI コードページ（英語版 Windows なら
+    cp1252 等）の順にフォールバックして読む。どれでも読めなければ UnicodeDecodeError を送出する。"""
+    data = path.read_bytes()
+    error: UnicodeDecodeError | None = None
+    for encoding in dict.fromkeys(("utf-8", "cp932", locale.getencoding())):
+        try:
+            text = data.decode(encoding)
+            break
+        except UnicodeDecodeError as e:
+            error = error or e
+        except LookupError:
+            continue
+    else:
+        raise error or UnicodeDecodeError("utf-8", data, 0, len(data), "undecodable")
+    # Path.read_text と同じく改行を \n にそろえる（universal newlines）。
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def looks_binary(path: Path) -> bool:

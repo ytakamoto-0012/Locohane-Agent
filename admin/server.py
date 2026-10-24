@@ -18,6 +18,7 @@ import logging
 import os
 import secrets as _secrets
 import sqlite3
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,10 @@ from .ini_catalog import parse_file as parse_ini_file
 from admin import i18n as admin_i18n
 from admin.i18n import t as _t
 
+# コンソールのコードページで表せない文字（英語版 Windows の cp437 で日本語のパス等）を
+# ログに出しても UnicodeEncodeError にしない（admin.bat 経由なら PYTHONUTF8=1 で UTF-8）。
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(errors="backslashreplace")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 

@@ -381,7 +381,10 @@ def start_background(cmd: list[str], workspace: Path, extra_meta: dict | None = 
 
 def is_process_alive(pid: int) -> bool:
     """Windows の tasklist で PID の生存を確認する（追加依存ライブラリ不要）。"""
-    result = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True)
+    # tasklist の出力は OEM コードページ（言語により異なる）。UTF-8 モードでも落ちないよう明示する。
+    result = subprocess.run(
+        ["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True, encoding="oem", errors="replace"
+    )
     return str(pid) in result.stdout
 
 

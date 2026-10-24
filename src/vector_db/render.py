@@ -295,7 +295,9 @@ def _find_process(image_name: str) -> int | None:
     try:
         out = subprocess.run(
             ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            # tasklist の出力は OEM コードページ（言語により異なる）。UTF-8 モードでも落ちないよう明示する。
+            capture_output=True, text=True, encoding="oem", errors="replace", timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return None

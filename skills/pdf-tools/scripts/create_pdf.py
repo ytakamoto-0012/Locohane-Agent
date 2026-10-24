@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import traceback
 from html.parser import HTMLParser
@@ -77,6 +78,14 @@ _JP_GOTHIC_CANDIDATES = ["YuGothR.ttc", "meiryo.ttc", "msgothic.ttc"]
 _JP_GOTHIC_BOLD_CANDIDATES = ["YuGothB.ttc", "meiryob.ttc", "msgothic.ttc"]
 _JP_MINCHO_CANDIDATES = ["yumin.ttf", "msmincho.ttc"]
 _JP_MINCHO_BOLD_CANDIDATES = ["yumindb.ttf", "msmincho.ttc"]
+# 日本語フォントが無い環境（英語版 Windows で日本語の追加フォントを入れていない等）で、
+# 文書に CJK 文字が無いときだけ使う欧文フォント（見出し=サンセリフ、本文=セリフ）。
+_LATIN_SANS_CANDIDATES = ["arial.ttf", "segoeui.ttf"]
+_LATIN_SANS_BOLD_CANDIDATES = ["arialbd.ttf", "segoeuib.ttf"]
+_LATIN_SERIF_CANDIDATES = ["times.ttf", "georgia.ttf"]
+_LATIN_SERIF_BOLD_CANDIDATES = ["timesbd.ttf", "georgiab.ttf"]
+# CJK の文字（ひらがな・カタカナ・CJK 統合漢字・全角記号）。
+_CJK_RE = re.compile(r"[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
 
 JP_GOTHIC = "JPGothic"
 JP_GOTHIC_BOLD = "JPGothic-Bold"
@@ -92,28 +101,31 @@ def _find_font_file(candidates: list[str]) -> Path | None:
     return None
 
 
-def register_jp_fonts() -> None:
-    """日本語TTFフォント（レギュラー/ボールド×ゴシック/明朝）をreportlabへ登録する。
+def register_jp_fonts(text: str = "") -> None:
+    """本文用・見出し用のTTFフォント（レギュラー/ボールド×ゴシック/明朝）をreportlabへ登録する。
 
-    レギュラー体が見つからない場合のみ例外を送出する（ボールド体が無い場合は
-    レギュラー体で代用するため必須ではない）。
+    日本語フォントがあればそれを使う。無い場合、text（文書に出る全テキスト）に CJK 文字が
+    無ければ欧文フォント（Arial/Times New Roman 等）で代用する。CJK 文字があるのに日本語
+    フォントが無い場合は例外を送出する（豆腐化けした PDF を正常終了として返さないため）。
+    レギュラー体が見つからない場合のみ例外にし、ボールド体が無ければレギュラー体で代用する。
     """
     gothic_path = _find_font_file(_JP_GOTHIC_CANDIDATES)
     mincho_path = _find_font_file(_JP_MINCHO_CANDIDATES)
+    gothic_bold_candidates, mincho_bold_candidates = _JP_GOTHIC_BOLD_CANDIDATES, _JP_MINCHO_BOLD_CANDIDATES
+    if (gothic_path is None or mincho_path is None) and not _CJK_RE.search(text):
+        gothic_path = _find_font_file(_LATIN_SANS_CANDIDATES)
+        mincho_path = _find_font_file(_LATIN_SERIF_CANDIDATES)
+        gothic_bold_candidates, mincho_bold_candidates = _LATIN_SANS_BOLD_CANDIDATES, _LATIN_SERIF_BOLD_CANDIDATES
     if gothic_path is None or mincho_path is None:
-        missing = []
-        if gothic_path is None:
-            missing.append(f"ゴシック体（候補: {_JP_GOTHIC_CANDIDATES}）")
-        if mincho_path is None:
-            missing.append(f"明朝体（候補: {_JP_MINCHO_CANDIDATES}）")
         raise RuntimeError(
-            f"日本語フォントが見つかりません: {', '.join(missing)}"
-            f"（探索先: {_WINDOWS_FONTS_DIR}）。Windows標準の日本語フォントが"
-            "導入されていない環境では日本語PDFを生成できません。"
+            f"No Japanese font found (gothic candidates: {_JP_GOTHIC_CANDIDATES}, "
+            f"mincho candidates: {_JP_MINCHO_CANDIDATES}, searched in {_WINDOWS_FONTS_DIR}). "
+            "A PDF containing Japanese/CJK text cannot be created without the Windows Japanese fonts "
+            "(install the Japanese Supplemental Fonts optional feature)."
         )
 
-    gothic_bold_path = _find_font_file(_JP_GOTHIC_BOLD_CANDIDATES) or gothic_path
-    mincho_bold_path = _find_font_file(_JP_MINCHO_BOLD_CANDIDATES) or mincho_path
+    gothic_bold_path = _find_font_file(gothic_bold_candidates) or gothic_path
+    mincho_bold_path = _find_font_file(mincho_bold_candidates) or mincho_path
 
     pdfmetrics.registerFont(TTFont(JP_GOTHIC, str(gothic_path)))
     pdfmetrics.registerFont(TTFont(JP_GOTHIC_BOLD, str(gothic_bold_path)))
@@ -478,7 +490,7 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        register_jp_fonts()
+        register_jp_fonts(" ".join([body_html, args.title or "", args.header_text or "", args.footer_text or ""]))
     except RuntimeError as e:
         print(str(e), file=sys.stderr)
         return 1
