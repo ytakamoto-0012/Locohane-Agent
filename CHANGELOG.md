@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-24
+
 ### 追加
 
 - ナレッジで `[vector_db] image_input = true` にすると、PDF・Word・Excel・PowerPoint は本文に加えてページごとの画像も
@@ -225,7 +227,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.1.1...v0.2.0
