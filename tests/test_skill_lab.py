@@ -614,10 +614,18 @@ def test_api_overview_shows_worker_workload(client, lab_env):
 
 
 def test_spec_filled_requires_purpose(lab_env):
-    """仕様の「目的」が見出しだけ・「要確認:」だけなら書かれていないとみなす（開始の条件）。"""
+    """仕様の Purpose が見出しだけ・「TODO:」だけなら書かれていないとみなす（開始の条件）。"""
     directory = _theme(lab_env)
-    assert not themes.spec_filled(directory)  # 作成直後のひな形
     spec = directory / themes.SPEC_FILENAME
+    assert [line for line in spec.read_text(encoding="utf-8").splitlines() if line.startswith("## ")] == [
+        f"## {heading}" for heading in themes.SPEC_HEADINGS
+    ]
+    assert not themes.spec_filled(directory)  # 作成直後のひな形
+    spec.write_text("# t\n## Purpose\nTODO: 何を確かめるか\n## When to use\n営業の確認\n", encoding="utf-8")
+    assert not themes.spec_filled(directory)  # Purpose 以外が書かれていても足りない
+    spec.write_text("# t\n## Purpose\nFind calculation errors in quotes\n## When to use\n", encoding="utf-8")
+    assert themes.spec_filled(directory)
+    # 日本語の旧見出し・「要確認:」で書かれた仕様も同じに扱う
     spec.write_text("# t\n## 目的\n要確認:\n## 使う場面\n営業の確認\n", encoding="utf-8")
     assert not themes.spec_filled(directory)  # 目的以外が書かれていても足りない
     spec.write_text("# t\n## 目的\n見積書の計算ミスを見つける\n## 使う場面\n", encoding="utf-8")

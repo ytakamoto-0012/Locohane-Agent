@@ -45,14 +45,19 @@ export function AskFileDropzone() {
         {t('ask.selectFile')}
         {askUser.spec.max_size_mb ? t('ask.maxSize', { size: askUser.spec.max_size_mb }) : ''}
       </p>
+      {/* ブラウザ標準のファイル選択の表示は OS・ブラウザの言語で出るため、隠して自前のボタンで開く */}
       <input
         ref={inputRef}
         type="file"
         accept={accept}
         multiple={(askUser.spec.max_files ?? 1) > 1}
         disabled={uploading}
+        hidden
         onChange={(e) => handleFiles(e.target.files)}
       />
+      <button type="button" className="ask-action-button ask-file-button" disabled={uploading} onClick={() => inputRef.current?.click()}>
+        {t('ask.chooseFile')}
+      </button>
       {uploading ? <span>{t('ask.uploading', { percent: Math.round(progress) })}</span> : null}
     </div>
   );

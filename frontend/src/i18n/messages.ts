@@ -126,6 +126,7 @@ export const ja = {
   'ask.otherFreeText': 'その他（自由記述）',
   'ask.answerPlaceholder': '回答を入力...',
   'ask.selectFile': 'ファイルを選択してください',
+  'ask.chooseFile': 'ファイルを選択',
   'ask.maxSize': '（最大 {size}MB）',
   'ask.uploading': 'アップロード中... {percent}%',
 
@@ -252,6 +253,7 @@ const en: Record<MessageKey, string> = {
   'ask.otherFreeText': 'Other (free text)',
   'ask.answerPlaceholder': 'Type your answer...',
   'ask.selectFile': 'Please choose a file',
+  'ask.chooseFile': 'Choose file',
   'ask.maxSize': ' (max {size} MB)',
   'ask.uploading': 'Uploading... {percent}%',
 

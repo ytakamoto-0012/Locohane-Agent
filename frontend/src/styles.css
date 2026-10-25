@@ -690,6 +690,10 @@
   font-size: 13px;
 }
 
+.ask-file-button {
+  margin-right: 8px;
+}
+
 .composer {
   border-top: 1px solid var(--border);
   padding: 14px 20px 18px;

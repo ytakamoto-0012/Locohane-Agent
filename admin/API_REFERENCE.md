@@ -5,7 +5,8 @@
 
 > このファイル（`admin/API_REFERENCE.md`）はダッシュボードの「APIリファレンス」
 > メニューにそのまま表示される。ファイルを編集すれば、次に画面を開いたときに
-> 反映される（管理ツールの再起動は不要）。
+> 反映される（管理ツールの再起動は不要）。表示言語が英語のときは英訳の
+> `admin/API_REFERENCE.en.md` を表示する。こちらが正本で、更新したら英訳も合わせて直す。
 
 ## 共通ルール
 
@@ -597,6 +598,8 @@ $C "$BASE/api/audit?limit=50&instance=default"
 ```
 
 ## このリファレンス自体
+
+`X-Locohane-Lang: en` を付けると英訳（`admin/API_REFERENCE.en.md`）を返す。
 
 ```bash
 $C $BASE/api/docs/api-reference

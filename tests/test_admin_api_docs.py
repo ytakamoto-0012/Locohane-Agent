@@ -34,3 +34,16 @@ def test_raw_html_is_escaped(tmp_path):
 def test_missing_file_raises(tmp_path):
     with pytest.raises(FileNotFoundError):
         api_docs.render(tmp_path / "missing.md")
+
+
+def test_reference_path_follows_display_language():
+    """英語表示では英訳を返す（日本語の原本と同じ見出しの数で、日本語を含まない）。"""
+    import re
+
+    assert api_docs.reference_path("ja") == api_docs.API_REFERENCE_PATH
+    assert api_docs.reference_path("en") == api_docs.API_REFERENCE_EN_PATH
+    ja = api_docs.API_REFERENCE_PATH.read_text(encoding="utf-8")
+    en = api_docs.API_REFERENCE_EN_PATH.read_text(encoding="utf-8")
+    headings = lambda text: re.findall(r"^#{1,3} ", text, re.M)  # noqa: E731
+    assert len(headings(en)) == len(headings(ja))
+    assert not re.search(r"[぀-ヿ一-鿿]", en)

@@ -1105,10 +1105,11 @@ def get_audit(instance: str | None = None, limit: int = 200, user: str = Depends
 
 @app.get("/api/docs/api-reference")
 def get_api_reference(user: str = Depends(require_login)):
+    path = api_docs.reference_path(admin_i18n.current_lang())
     try:
-        return api_docs.render()
+        return api_docs.render(path)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=_t("{0} が見つかりません。", api_docs.API_REFERENCE_PATH.name)) from exc
+        raise HTTPException(status_code=404, detail=_t("{0} が見つかりません。", path.name)) from exc
 
 
 # ---------------------------------------------------------------------------

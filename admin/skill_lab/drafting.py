@@ -25,26 +25,26 @@ what they are for, in which work and situations they are used, what they output 
 - If a research target is a copy of an official one in use now, base the spec on its current behavior, and follow the requester's note for the points to fix.
 - Treat a research target the AI is still creating as the thing its order asks for.
 - If the requester left a note, it takes precedence over what you read from the research targets.
-- If the current spec has content written by a person (other than "要確認:" lines), keep it and fill in only the empty parts.
-Output only a Markdown spec with the following headings (no preamble). Keep the heading text exactly as shown (the screen parses these Japanese headings):
+- If the current spec has content written by a person (other than "TODO:" lines), keep it and fill in only the empty parts.
+- If the current spec uses the old Japanese headings (目的, 使う場面, 期待する出力, やってはいけないこと), move their content under the matching English headings below.
+Output only a Markdown spec with the following headings (no preamble). Keep the heading text exactly as shown (the screen parses these headings):
 # <theme name>
-## 目的
-## 使う場面
-## 期待する出力
-## やってはいけないこと
-(目的 = purpose, 使う場面 = when it is used, 期待する出力 = expected output, やってはいけないこと = what it must not do.)
-Under 使う場面, write in which work and situations it is used; do not write concrete instructions a user would type (those go in the test cases).
-Do not add features by guesswork; write only what can be read from the material. Write unclear points as lines starting with "要確認:" (= needs confirmation).
+## Purpose
+## When to use
+## Expected output
+## Must not do
+Under "When to use", write in which work and situations it is used; do not write concrete instructions a user would type (those go in the test cases).
+Do not add features by guesswork; write only what can be read from the material. Write unclear points as lines starting with "TODO:".
 Write the body text in the same language as the requester's note or the existing spec (Japanese if there is neither)."""
 
 _CASES_SYSTEM = """You create test cases that check the behavior of a business AI assistant.
 The assistant runs on a fairly small local LLM, so write the user instructions (turns) short and to the point, as real users would type them, in the same language as the spec.
 A case is a test question that checks whether the research targets (the skills and sub-agents under assets/) behave as the spec (spec.md) says.
-- From the spec's "目的" (purpose) and "使う場面" (when it is used), create instructions users would actually type.
-- Turn the spec's "期待する出力" (expected output) into pass conditions (response_contains, judge), and "やってはいけないこと" (what it must not do) into fail conditions
+- From the spec's "Purpose" and "When to use", create instructions users would actually type.
+- Turn the spec's "Expected output" into pass conditions (response_contains, judge), and "Must not do" into fail conditions
   (response_not_contains, tool_not_called, judge).
 - Use only skill names, sub-agent names and tool names that actually exist in the research targets.
-- Do not check features not in the spec or points marked "要確認:". Do not create cases that check the same thing as existing cases.
+- Do not check features not in the spec or points marked "TODO:". Do not create cases that check the same thing as existing cases.
 A single case may check a flow that uses several skills and sub-agents.
 Output only a JSON array in the following format:
 [{"id": "001_basic", "turns": ["user instruction"],

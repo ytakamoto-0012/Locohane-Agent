@@ -4,7 +4,7 @@
 置く。組織別・役割別のインスタンスごとに置き場そのものが分かれるため、テーマが混ざらない。
 
     theme.json          名前・状態・担当の研究室・資産の入手元・反復の記録・タスク
-    spec.md             仕様（目的・使う場面・期待する出力・禁止事項）
+    spec.md             仕様（Purpose・When to use・Expected output・Must not do の見出しで書く）
     config_patch.json   評価と昇格で足す設定（evals/config_patch.py）
     assets/skills/<名前>/      開発中のスキル
     assets/agents/<名前>.md    開発中のサブエージェント
@@ -200,7 +200,7 @@ def create_theme(root: Path, *, instance: str, title: str, lab: str | None, acto
     for sub in (f"{ASSETS_DIRNAME}/skills", f"{ASSETS_DIRNAME}/agents", f"{CASES_DIRNAME}/{FIXTURES_DIRNAME}", RUNS_DIRNAME):
         (directory / sub).mkdir(parents=True)
     (directory / SPEC_FILENAME).write_text(
-        f"# {title}\n\n## 目的\n\n## 使う場面（どんな業務・状況で使うか。具体的な指示文はケースに書く）\n\n## 期待する出力\n\n## やってはいけないこと\n",
+        f"# {title}\n\n" + "\n".join(f"## {heading}\n" for heading in SPEC_HEADINGS),
         encoding="utf-8",
     )
     (directory / CONFIG_PATCH_FILENAME).write_text("{}\n", encoding="utf-8")
@@ -592,8 +592,13 @@ def list_cases(directory: Path) -> list[dict]:
     return result
 
 
+# 仕様（spec.md）の決まった見出し。画面（skill_lab.js の SPEC_FIELDS）と AI の下書き（drafting.py）も同じ見出しを使う。
+# 見出しと「TODO:」は英語圏でも打ちやすい半角にする。日本語の旧見出し・「要確認:」で書かれた仕様も読めるようにしている。
+SPEC_HEADINGS = ("Purpose", "When to use", "Expected output", "Must not do")
+_SPEC_PURPOSE_HEADINGS = ("Purpose", "目的")
 _SPEC_HEADING = re.compile(r"^#{1,6}\s*(.*?)\s*$")
-_SPEC_UNSURE = re.compile(r"^要確認\s*[:：]?")
+# AI の下書きが資料から読み取れなかった点の印（旧形式の「要確認:」も同じに扱う）。
+_SPEC_UNSURE = re.compile(r"^(?:TODO\b|要確認)\s*[:：]?", re.IGNORECASE)
 # 節の終わり（# か ## の見出し）。### 以下の小見出しは節の本文に含める。
 _SPEC_SECTION_END = re.compile(r"^#{1,2}(?!#)")
 
@@ -614,17 +619,17 @@ def _spec_section_lines(text: str, heading_prefix: str) -> list[str] | None:
 
 
 def spec_filled(directory: Path) -> bool:
-    """仕様の「目的」が書かれているか。
+    """仕様の Purpose（目的）が書かれているか。
 
     仕様は AI 修正と AI judge の正解の基準で、無いと AI がケースに通るだけの直し方をしても
-    気づけないため、開始の条件にする。見出しだけ・AI の下書きが「要確認:」しか書けなかった行は
-    書かれていないとみなす。「目的」の見出しが無い自由形式の仕様は、見出し以外の行があればよい。
+    気づけないため、開始の条件にする。見出しだけ・AI の下書きが「TODO:」しか書けなかった行は
+    書かれていないとみなす。Purpose の見出しが無い自由形式の仕様は、見出し以外の行があればよい。
     """
     try:
         text = (directory / SPEC_FILENAME).read_text(encoding="utf-8")
     except FileNotFoundError:
         return False
-    body = _spec_section_lines(text, "目的")
+    body = next((b for h in _SPEC_PURPOSE_HEADINGS if (b := _spec_section_lines(text, h)) is not None), None)
     if body is None:
         body = [line for line in text.splitlines() if not line.startswith("#")]
     return any(line.strip() and not _SPEC_UNSURE.match(line.strip()) for line in body)

@@ -420,24 +420,30 @@ async function themeFileEditor(state, box, path, rows, extraActions) {
   return { dirty: () => area.value !== saved, protect: true };
 }
 
-/* ② やってほしいこと: spec.md を見出しごとの欄で編集する（必須は「目的」だけ）。
- * 決まった見出し以外を含む spec.md は欄に振り分けられないため、そのまま編集する。 */
+/* ② やってほしいこと: spec.md を見出しごとの欄で編集する（必須は Purpose だけ）。
+ * 見出しは英語圏でも打ちやすい半角の英語（admin/skill_lab/themes.py の SPEC_HEADINGS と同じ）。
+ * 日本語の旧見出しで書かれた spec.md も読み、保存すると英語の見出しに揃う。
+ * 決まった見出し以外を含む spec.md は欄に振り分けられないため、そのまま編集する。
+ * 要素: [見出し, 旧見出し, 欄の名前, 必須, 行数, 入力例] */
 const SPEC_FIELDS = [
-  [_t("目的"), true, 3, _t("何のためのスキルか。例: 見積書の金額の計算ミスと記入漏れを、客先に出す前に見つける。")],
-  [_t("使う場面"), false, 2, _t("どんな業務・状況で使うか。例: 営業担当が見積書を作り終えて、提出前に確認するとき。")],
-  [_t("期待する出力"), false, 3, _t("例: 問題のある箇所を一覧にする。各行に場所・内容・正しい値。問題が無ければ「問題なし」とだけ答える。")],
-  [_t("やってはいけないこと"), false, 2, _t("例: 値引きの提案など、頼まれていないことをしない。見積書のファイルを書き換えない。")],
+  ["Purpose", "目的", _t("目的"), true, 3, _t("何のためのスキルか。例: 見積書の金額の計算ミスと記入漏れを、客先に出す前に見つける。")],
+  ["When to use", "使う場面", _t("使う場面"), false, 2, _t("どんな業務・状況で使うか。例: 営業担当が見積書を作り終えて、提出前に確認するとき。")],
+  ["Expected output", "期待する出力", _t("期待する出力"), false, 3, _t("例: 問題のある箇所を一覧にする。各行に場所・内容・正しい値。問題が無ければ「問題なし」とだけ答える。")],
+  ["Must not do", "やってはいけないこと", _t("やってはいけないこと"), false, 2, _t("例: 値引きの提案など、頼まれていないことをしない。見積書のファイルを書き換えない。")],
 ];
+// AI の下書きが資料から読み取れなかった点の印（旧形式の「要確認:」も含む）。
+const SPEC_UNSURE = /^(TODO\b|要確認)/im;
 
 function parseSpec(text) {
-  const values = Object.fromEntries(SPEC_FIELDS.map(([label]) => [label, []]));
+  const values = Object.fromEntries(SPEC_FIELDS.map(([heading]) => [heading, []]));
   let title = null;
   let cur = null;
   for (const line of text.split(/\r?\n/)) {
     const h2 = /^##\s+(.*)$/.exec(line);
     const h1 = /^#\s+(.*)$/.exec(line);
     if (h2) {
-      const field = SPEC_FIELDS.find(([label]) => h2[1].trim().startsWith(label));
+      const text = h2[1].trim();
+      const field = SPEC_FIELDS.find(([heading, legacy]) => text.toLowerCase().startsWith(heading.toLowerCase()) || text.startsWith(legacy));
       if (!field) return null;
       cur = field[0];
     } else if (h1 && title === null && cur === null) {
@@ -454,7 +460,7 @@ function parseSpec(text) {
 }
 
 function composeSpec(title, values) {
-  return `# ${title}\n\n` + SPEC_FIELDS.map(([label]) => `## ${label}\n${values[label] ? `${values[label]}\n` : ""}`).join("\n");
+  return `# ${title}\n\n` + SPEC_FIELDS.map(([heading]) => `## ${heading}\n${values[heading] ? `${values[heading]}\n` : ""}`).join("\n");
 }
 
 async function renderThemeSpec(state, box) {
@@ -473,21 +479,21 @@ async function renderThemeSpec(state, box) {
   );
   let read;
   if (parsed) {
-    const areas = SPEC_FIELDS.map(([label, required, rows, placeholder]) => {
+    const areas = SPEC_FIELDS.map(([heading, , label, required, rows, placeholder]) => {
       const area = el("textarea", { rows, placeholder });
-      area.value = parsed.values[label];
+      area.value = parsed.values[heading];
       box.append(el("label", {}, [requiredLabel(label, required), area]));
-      return [label, area];
+      return [heading, area];
     });
     const title = parsed.title || state.data.title;
-    read = () => composeSpec(title, Object.fromEntries(areas.map(([label, area]) => [label, area.value.trim()])));
-    if (areas.some(([, area]) => /^要確認/m.test(area.value))) {
-      box.append(el("p", { class: "warn-box", text: _t("「要確認:」の所は、AI が資料から読み取れなかった点です。書き直してください。") }));
+    read = () => composeSpec(title, Object.fromEntries(areas.map(([heading, area]) => [heading, area.value.trim()])));
+    if (areas.some(([, area]) => SPEC_UNSURE.test(area.value))) {
+      box.append(el("p", { class: "warn-box", text: _t("「TODO:」の所は、AI が資料から読み取れなかった点です。書き直してください。") }));
     }
   } else {
     const area = el("textarea", { rows: 14, class: "code-area" });
     area.value = file.content;
-    box.append(el("p", { class: "hint", text: _t("決まった見出し（目的・使う場面・期待する出力・やってはいけないこと）以外を含むため、そのまま編集します。") }), area);
+    box.append(el("p", { class: "hint", text: _t("決まった見出し（Purpose・When to use・Expected output・Must not do）以外を含むため、そのまま編集します。") }), area);
     read = () => area.value;
   }
   let saved = read();
@@ -983,10 +989,12 @@ function renderThemeCases(state, body) {
   if (editable) {
     const folder = el("input", { type: "text", placeholder: _t("フォルダ名（例: sample1）") });
     const fileInput = el("input", { type: "file", multiple: "multiple" });
+    const fileBox = el("span", {}, [fileInput]);
+    localizeFileInput(fileInput);
     body.append(
       el("div", { class: "inline-form" }, [
         folder,
-        fileInput,
+        fileBox,
         el("button", {
           text: _t("アップロード"),
           onclick: async () => {

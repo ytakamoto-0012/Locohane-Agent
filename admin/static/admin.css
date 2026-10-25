@@ -59,6 +59,7 @@ label.checkbox { display: flex; align-items: center; gap: 6px; }
 label.checkbox input { width: auto; }
 
 .hint { color: var(--text-dim); font-size: 12px; }
+.file-pick-name { margin: 0 8px; color: var(--text-dim); font-size: 12px; }
 .req-mark { color: #f0a050; font-size: 12px; font-weight: normal; margin-left: 4px; }
 h4 .hint { margin-left: 4px; font-weight: normal; }
 .add-way { border-left: 3px solid var(--border, #333); padding: 4px 0 8px 12px; margin: 12px 0; }

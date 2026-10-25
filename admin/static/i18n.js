@@ -38,8 +38,30 @@ function _t(text, ...args) {
 
 const I18N_ATTRS = ["title", "placeholder", "aria-label"];
 
-/** テンプレート（index.html）由来の DOM の文言を表示言語へ置き換える（日本語なら何もしない）。 */
+/** ファイル選択欄をボタンと選択中のファイル名の表示に置き換える。
+ * ブラウザ標準の表示（「ファイルの選択」等）は OS・ブラウザの言語で出て、画面の言語に従わないため。 */
+function localizeFileInput(input) {
+  if (input.dataset.localized) return;
+  input.dataset.localized = "1";
+  input.hidden = true;
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = _t("ファイルを選択");
+  const name = document.createElement("span");
+  name.className = "file-pick-name";
+  const update = () => {
+    const files = Array.from(input.files || []);
+    name.textContent = files.length ? files.map((f) => f.name).join(", ") : _t("選択されていません");
+  };
+  button.addEventListener("click", () => input.click());
+  input.addEventListener("change", update);
+  update();
+  input.after(button, name);
+}
+
+/** テンプレート（index.html）由来の DOM の文言を表示言語へ置き換える。 */
 function applyI18n(root) {
+  if (root.querySelectorAll) root.querySelectorAll("input[type=file]").forEach(localizeFileInput);
   if (I18N_LANG === "ja") return;
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
