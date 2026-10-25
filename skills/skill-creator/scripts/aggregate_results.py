@@ -47,25 +47,25 @@ def _summarize(results: list[dict]) -> dict[str, dict]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True, help="ドラフト名（自分のドラフトはスキル名だけでよい）")
-    parser.add_argument("--input", action="append", required=True, help="<ラベル>=<results.json のパス>（2つ以上）")
+    parser.add_argument("--name", required=True, help="draft name (for your own drafts, just the skill name)")
+    parser.add_argument("--input", action="append", required=True, help="<label>=<path of results.json> (2 or more)")
     args = parser.parse_args()
 
     inputs: list[tuple[str, dict[str, dict]]] = []
     for item in args.input:
         label, sep, path = item.partition("=")
         if not sep or not label or not path:
-            raise SkillCreatorError(f"--input は <ラベル>=<パス> で指定してください: {item!r}")
+            raise SkillCreatorError(f"Specify --input as <label>=<path>: {item!r}")
         try:
             results = json.loads(Path(path).read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as e:
-            raise SkillCreatorError(f"{path} を読めません: {e}") from e
+            raise SkillCreatorError(f"Cannot read {path}: {e}") from e
         inputs.append((label, _summarize(results if isinstance(results, list) else [results])))
 
     ctx = draft_context()
     ref = resolve_draft(ctx, args.name, "write")
     case_ids = sorted({cid for _, summary in inputs for cid in summary})
-    lines = [f"# {ref.full_name} 評価結果の比較", "", "| ケース | 実行 | 合格 | 不合格 | judge待ち | エラー | 平均トークン |", "|---|---|---|---|---|---|---|"]
+    lines = [f"# {ref.full_name} comparison of evaluation results", "", "| Case | Runs | Passed | Failed | Awaiting judge | Errors | Avg tokens |", "|---|---|---|---|---|---|---|"]
     for cid in case_ids:
         for label, summary in inputs:
             s = summary.get(cid)

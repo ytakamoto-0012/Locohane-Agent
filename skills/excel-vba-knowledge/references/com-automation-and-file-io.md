@@ -1,11 +1,11 @@
-# 他アプリ操作・ファイルI/Oの定石
+# Standard techniques for operating other apps and file I/O
 
-## COMオブジェクトの解放とゾンビプロセス対策
+## Releasing COM objects and preventing zombie processes
 
-`CreateObject("Excel.Application")` 等で別プロセスのアプリケーションを操作する
-マクロは、オブジェクト変数を `Nothing` にし忘れる・操作順序を誤ると、
-画面に何も表示されないまま `EXCEL.EXE` プロセスだけがバックグラウンドに
-残り続ける（タスクマネージャーで確認しないと気づきにくい典型トラブル）。
+In macros that operate an application in a separate process with `CreateObject("Excel.Application")` etc.,
+forgetting to set object variables to `Nothing` or getting the order of operations wrong leaves only
+the `EXCEL.EXE` process running in the background with nothing on screen
+(a typical problem that is hard to notice without checking Task Manager).
 
 ```vb
 Dim xlApp As Object, xlBook As Object
@@ -14,7 +14,7 @@ xlApp.Visible = False
 
 On Error GoTo CleanExit
 Set xlBook = xlApp.Workbooks.Open("C:\data\target.xlsx")
-' ... 操作 ...
+' ... operations ...
 
 CleanExit:
 On Error Resume Next
@@ -24,22 +24,21 @@ Set xlBook = Nothing
 Set xlApp = Nothing
 ```
 
-ポイント:
-- **`Quit` を呼んだ後で必ず変数を `Nothing` にする**（順序が逆でも動くことが
-  多いが、`Quit`せず`Nothing`だけにするとプロセスが残ることがあるため
-  `Close`→`Quit`→`Nothing`の順を徹底する）。
-- ネストした子オブジェクト（`Worksheets`/`Range`等）を一時変数に受けている場合、
-  それらも使い終わったら `Nothing` にするのが安全（特にループ内で毎回
-  取得する `Range`/`Cells` を変数に貯め込むと解放漏れの温床になる）。
-- 例外発生時に `CleanExit` を通らないコードだと、エラーダイアログの裏で
-  Excelプロセスが残り続ける。[[error-handling]] のCleanExitパターンを
-  必ず適用する。
+Points:
+- **Always set the variables to `Nothing` after calling `Quit`** (it often works even in the reverse order,
+  but setting only `Nothing` without `Quit` can leave the process behind, so stick to the order
+  `Close` -> `Quit` -> `Nothing`).
+- If you hold nested child objects (`Worksheets`/`Range`, etc.) in temporary variables,
+  it is safe to set them to `Nothing` too when done (especially, piling up `Range`/`Cells`
+  obtained on each iteration of a loop in variables is a breeding ground for release leaks).
+- Code that does not go through `CleanExit` when an exception occurs leaves the Excel process running
+  behind the error dialog. Always apply the CleanExit pattern of [[error-handling]].
 
-## FileSystemObject でのファイル操作
+## File operations with FileSystemObject
 
-テキストファイルの読み書き・ファイル存在確認・フォルダ操作には
-`Scripting.FileSystemObject`（遅延バインディング推奨、理由は
-[[common-gotchas]] 参照）を使う。
+For reading and writing text files, checking whether files exist and folder operations, use
+`Scripting.FileSystemObject` (late binding recommended; for the reason see
+[[common-gotchas]]).
 
 ```vb
 Dim fso As Object
@@ -54,17 +53,17 @@ If fso.FileExists(path) Then
 End If
 ```
 
-`OpenTextFile` の第4引数（Format）は `Tristate` 値で、省略時は `TristateFalse`（0）＝
-ANSI（Shift-JIS環境ではShift-JIS）になり、UTF-8ではない点に注意。
-`-1`（`TristateTrue`）を指定すると **UTF-16（Unicode）** として読み込まれるだけで、
-**UTF-8を正しく読み込めるわけではない**（UTF-8ファイルにこの引数を使うと文字化けする）。
-`FileSystemObject.OpenTextFile` にはUTF-8を直接扱う手段がないため、UTF-8のテキストを
-読む場合は `ADODB.Stream`（`Charset = "UTF-8"` を明示できる）を使うのが確実。
+Note that the 4th argument (Format) of `OpenTextFile` is a `Tristate` value; when omitted it is `TristateFalse` (0) =
+ANSI (the system code page, e.g. Shift-JIS on Japanese Windows), not UTF-8.
+Specifying `-1` (`TristateTrue`) only reads it as **UTF-16 (Unicode)**;
+**it does not read UTF-8 correctly** (using this argument on a UTF-8 file garbles the text).
+`FileSystemObject.OpenTextFile` has no way to handle UTF-8 directly, so to read UTF-8 text,
+using `ADODB.Stream` (where you can state `Charset = "UTF-8"` explicitly) is reliable.
 
-## Workbooks.Open のダイアログ抑止
+## Suppressing dialogs in Workbooks.Open
 
-外部ファイルを開く際、リンク更新確認・形式変換確認等のダイアログが
-マクロを止めてしまうことがある。バッチ処理では明示的に抑止する。
+When opening external files, dialogs such as confirming link updates or format conversion can
+stop the macro. Suppress them explicitly in batch processing.
 
 ```vb
 Application.DisplayAlerts = False
@@ -72,19 +71,18 @@ Set wb = Workbooks.Open(path, UpdateLinks:=0, ReadOnly:=True)
 Application.DisplayAlerts = True
 ```
 
-`DisplayAlerts` も `EnableEvents` と同様アプリケーション全体に効くグローバル
-設定であり、必ず処理後に戻す（[[performance-tips]] の退避・復元パターン参照）。
+Like `EnableEvents`, `DisplayAlerts` is a global setting that applies to the whole application,
+so always restore it after processing (see the save/restore pattern of [[performance-tips]]).
 
-## パスの扱い
+## Handling paths
 
-文字列結合でパスを組み立てる場合、区切りの `\` の重複・欠落に注意する。
+When building paths by string concatenation, watch out for duplicated or missing `\` separators.
 
 ```vb
 Dim fullPath As String
 fullPath = folder & IIf(Right(folder, 1) = "\", "", "\") & fileName
 ```
 
-UNCパス（`\\server\share\...`）やネットワークドライブは `FileSystemObject` の
-一部メソッド（`GetAbsolutePathName` 等）で挙動が環境依存になることがあるため、
-配布先の環境（ローカルドライブかネットワーク共有か）が不明な場合は
-`Dir()` 関数での存在確認も併用すると安全。
+For UNC paths (`\\server\share\...`) and network drives, some methods of `FileSystemObject`
+(`GetAbsolutePathName`, etc.) can behave differently depending on the environment, so when the target environment
+(local drive or network share) is unknown, it is safe to also check existence with the `Dir()` function.

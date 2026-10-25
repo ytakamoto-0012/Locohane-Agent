@@ -22,7 +22,7 @@ judge: |
      - 1回のみで、その後 `dispatch_agent`（agent_type="explore" 等）へ委譲して
        いれば合格。
      - 2回以上呼んでいた場合、2回目以降の `ToolMessage` の内容が
-       「エラー: Glob はメインエージェントとして既に呼び出し上限...」という
+       「Error: Glob has already reached the call limit for the main agent ...」という
        新設ガードの拒否メッセージであり、かつそれを受けてモデルが3回目の
        `Glob` を試みず `dispatch_agent` へ切り替えていれば合格
        （ガードが機能し、モデルもそれを受けて正しく回復できている状態）。

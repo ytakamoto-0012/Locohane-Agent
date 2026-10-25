@@ -51,7 +51,7 @@ async def _ask(payload: dict) -> dict:
 
 def main() -> int:
     if len(sys.argv) != 2:
-        print("使い方: python _llm_helper.py <input.json>", file=sys.stderr)
+        print("usage: python _llm_helper.py <input.json>", file=sys.stderr)
         return 2
 
     payload = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))

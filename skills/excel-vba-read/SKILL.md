@@ -1,6 +1,6 @@
 ---
 name: excel-vba-read
-description: xlsm/xlsファイルのVBAマクロコード（標準モジュール・クラスモジュール・Sub/Function）を読み込み専用で取得するスキル。Excel本体は不要（oletoolsでバイト列から直接抽出するため、edit_vba.pyより前提条件が緩い）。ユーザーがVBAマクロのコードを見たいとき、excel-vba-editスキルでコードを書き換える前に既存コードを確認したいときに使う。
+description: A skill that gets the VBA macro code (standard modules, class modules, Sub/Function) of xlsm/xls files read-only. No Excel needed (it extracts directly from the bytes with oletools, so it has looser prerequisites than edit_vba.py). Use it when the user wants to see the code of VBA macros, or to check the existing code before rewriting it with the excel-vba-edit skill.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,28 +9,28 @@ metadata:
 
 # excel-vba-read
 
-xlsm/xls のVBAマクロコードを読み込み専用で取得するスキル。
-`read_vba.py` を実行する。
+A skill that gets the VBA macro code of xlsm/xls read-only.
+Runs `read_vba.py`.
 
-## 呼び出し
+## Calling it
 
 ```bash
 python read_vba.py "C:\Users\me\book.xlsm" --module Module1
 ```
-`--module`省略でモジュール一覧モード。`oletools`（`olevba`）でバイト列から直接抽出するため**Excel本体・COM不要**（excel-vba-editスキルとは対照的に前提条件が緩い）。
+Omitting `--module` gives the module list mode. It extracts directly from the bytes with `oletools` (`olevba`), so **no Excel or COM is needed** (looser prerequisites, in contrast to the excel-vba-edit skill).
 
-## 入出力の型
+## Input/output types
 
-成功=終了コード0＋JSON1行を標準出力。失敗=終了コード非0＋エラーメッセージを標準エラー。エラー文はそのままユーザーへ伝える。未導入ライブラリは`ImportError`終了コード1（原因: `oletools`）→該当する`pip install oletools`をユーザーに促す。
+Success = exit code 0 + one line of JSON on stdout. Failure = non-zero exit code + an error message on stderr. Pass the error text to the user as is. A missing library gives `ImportError` with exit code 1 (cause: `oletools`) -> prompt the user to run `pip install oletools`.
 
-このスクリプトは本文（modules一覧/コード全文）を標準出力に出さず、一時JSONへ書き出して`result_path`を返す。`result_path`を読む。一覧モードは`modules_count`と`result_path`（中身は`modules`＝各要素`{"name","type","line_count"}`）。`--module`指定時は`code_length`と`result_path`（中身`code`＝ソース全文）。
+This script does not print the body (module list / full code) to stdout; it writes it to a temporary JSON file and returns `result_path`. Read `result_path`. The list mode gives `modules_count` and `result_path` (its content is `modules` = elements `{"name","type","line_count"}`). With `--module`, it gives `code_length` and `result_path` (content `code` = the full source).
 
-## 手順
+## Procedure
 
-1. `--module`なしで一覧確認。
-2. 目的のモジュールを`--module`指定で全文取得。
-3. excel-vba-editスキルで書き換える前に必ずこれで既存コードを確認する（`set_code`は全文置換のため）。
+1. Check the list without `--module`.
+2. Get the full text of the target module with `--module`.
+3. Always check the existing code with this before rewriting it with the excel-vba-edit skill (`set_code` replaces the whole text).
 
-## エッジケース
+## Edge cases
 
-対象はxlsm/xls（`.xlsx`は即エラー）。VBAプロジェクト無しのファイルはエラーにせず正常終了する。標準出力は他の場合と同じ形（`modules`は`modules_count: 0`に変換され、`result_path`も付く）で`{"path":..., "has_vba": false, "modules_count": 0, "result_path": "..."}`。`result_path`の中身（生JSON）は`modules: []`のまま。モジュール種別（`standard`/`class`/`document`/`form`）は名前パターン・コード内容からの**簡易推測**であり保証はない（正確な種別が要る場合はExcelのVBE(Alt+F11)確認をユーザーに案内）。存在しないモジュール名指定はエラー（存在する一覧付き）。UserFormは`type:"form"`として一覧表示され読込は可能だがexcel-vba-editスキルの編集対象外。
+Targets are xlsm/xls (`.xlsx` errors immediately). Files without a VBA project end normally without an error. stdout has the same shape as in other cases (`modules` is converted to `modules_count: 0`, and `result_path` is included): `{"path":..., "has_vba": false, "modules_count": 0, "result_path": "..."}`. The content of `result_path` (raw JSON) keeps `modules: []`. The module type (`standard`/`class`/`document`/`form`) is a **simple guess** from name patterns and code content and is not guaranteed (if the exact type is needed, guide the user to check in Excel's VBE (Alt+F11)). Specifying a module name that does not exist is an error (with the list of existing ones). UserForms are listed as `type:"form"` and can be read, but are not editable with the excel-vba-edit skill.

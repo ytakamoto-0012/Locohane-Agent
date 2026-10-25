@@ -1,6 +1,6 @@
 ---
 name: docx-read
-description: Word文書（.docx）の読み込み専用スキル。段落・表・文書プロパティ（タイトル・著者・作成日等）・Track Changes（変更履歴）の有無を取得する。Excel等と異なりアプリケーション本体は不要。ユーザーがWord文書の内容を確認・要約・検索したいとき、文書の章立てや表の中身を把握したいとき、編集前に既存の変更履歴の有無を確認したいときに使う。.doc（レガシーのバイナリ形式）の読み込みには対応していない。新規作成は`docx-create`、既存文書の編集は`docx-edit`、レイアウトを画像で確認したい場合は`docx-render`を使う。
+description: A read-only skill for Word documents (.docx). Gets the paragraphs, tables, document properties (title, author, creation date, etc.) and whether there are Track Changes (revisions). Unlike Excel etc., the application itself is not needed. Use it when the user wants to check, summarize or search the content of a Word document, understand the chapter structure or the contents of tables, or check before editing whether there are existing tracked changes. Reading .doc (the legacy binary format) is not supported. Use `docx-create` for creating new ones, `docx-edit` for editing existing documents, and `docx-render` to check the layout as images.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,31 +9,31 @@ metadata:
 
 # docx-read
 
-Word文書（`.docx`）を読み込み、段落・表・文書プロパティ・Track Changes（変更履歴）の
-有無を取得するスキルです。`read_docx.py` を実行して結果を得ます。
+A skill that reads Word documents (`.docx`) and gets the paragraphs, tables, document properties and whether there are
+Track Changes (revisions). Run `read_docx.py` to get the result.
 
-このスキルは `.docx`（Word 2007以降のXML形式）のみを扱います。**`.doc`
-（レガシーのバイナリ形式）は読み込みに対応していません。** ユーザーが `.doc`
-ファイルを渡してきた場合は、Microsoft Wordで開いて「名前を付けて保存」から
-`.docx` 形式に変換してもらうよう案内してください。
+This skill handles only `.docx` (the XML format of Word 2007 and later). **Reading `.doc`
+(the legacy binary format) is not supported.** If the user gives you a `.doc`
+file, guide them to open it in Microsoft Word and convert it to `.docx` with
+"Save As".
 
-正常系なら終了コード0でJSON1行を標準出力へ、異常系なら終了コード非0で
-エラーメッセージを標準エラーへ出力します。
+On success it prints one line of JSON to stdout with exit code 0; on failure it prints an
+error message to stderr with a non-zero exit code.
 
-本文データ（段落・表）は直接標準出力へは返さず、一時JSONファイルへ書き出して
-そのパス（`result_path`）を返します。中身を確認するには `result_path` を
-読んでください（内容は複数行に整形されているため部分読み込みできます）。
+The body data (paragraphs, tables) is not returned directly on stdout; it is written to a temporary JSON file
+and its path (`result_path`) is returned. To check the content, read `result_path`
+(the content is formatted over multiple lines, so it can be read partially).
 
-## read_docx.py — docxの読み込み（段落・表・プロパティ取得）
+## read_docx.py — read docx (get paragraphs, tables, properties)
 
-呼び出し例:
+Call example:
 ```bash
 python read_docx.py "C:\Users\me\report.docx" --offset 0 --limit 300
 ```
-`--offset`/`--limit` は省略可（既定 offset=0, limit=300）。段落単位のページングです
-（`read_file.py` の行番号版と同じ考え方）。表（`tables`）は既定ですべて返します。
+`--offset`/`--limit` can be omitted (defaults offset=0, limit=300). Paging is per paragraph
+(the same idea as the line-number version of `read_file.py`). Tables (`tables`) are all returned by default.
 
-出力例:
+Output example:
 ```json
 {
   "path": "C:\\foo\\report.docx",
@@ -44,60 +44,58 @@ python read_docx.py "C:\Users\me\report.docx" --offset 0 --limit 300
   "table_count": 1,
   "tables_count": 1,
   "body_order_count": 452,
-  "core_properties": {"title": "報告書", "author": "山田太郎", "created": "2026-01-10T09:00:00", "modified": null},
+  "core_properties": {"title": "Report", "author": "Taro Yamada", "created": "2026-01-10T09:00:00", "modified": null},
   "track_changes": {"has_pending_revisions": false, "insertion_count": 0, "deletion_count": 0},
   "result_path": "C:\\...\\docx_read\\1a2b3c4d_20260805_153012_123456.json"
 }
 ```
 
-段落本文（`paragraphs`、各要素は `{"index", "style", "text"}`）と表本体
-（`tables`、「表1つ＝行の配列（各行はセル文字列の配列）」）は上記のように
-標準出力からは省かれ、`result_path` が指すJSONファイルにのみ含まれます。
-`result_path` を読んで内容を確認してください。
+The paragraph text (`paragraphs`, each element `{"index", "style", "text"}`) and the table bodies
+(`tables`, "1 table = an array of rows (each row is an array of cell strings)") are left out of stdout
+as above and included only in the JSON file that `result_path` points to.
+Read `result_path` to check the content.
 
-トップレベルに以下のフィールドも返されます（構造的な不備検知用）：
-- `sections`: 文書内の各セクション（ページ設定）の寸法・余白情報。
-  `{"page_width_cm", "page_height_cm", "left_margin_cm", "right_margin_cm", "top_margin_cm", "bottom_margin_cm"}`。
-- `table_column_widths`: 各表について、列幅の配列（`[[12.3, null, 8.5], [15.2, 10.0]]`）。
-  自動レイアウトで未設定の列は`null`。テーブル内の表のみ（テキストボックス内の表は含まない）。
-- `inline_images`: 本文に直接挿入された画像の一覧（`[{"image_index": 0, "width_cm": 10.5, "height_cm": 5.2}, ...]`）。
-  `image_index`は`doc.inline_shapes`の0始まり通し番号で、`docx-edit`スキルの
-  `set_image_size`が受け取る`image_index`と完全に一致する。
-- `warnings`: 構造的な不備の警告配列（該当なしならキー省略）。
-  表の列幅合計がページ幅を超える、または挿入画像がページ幅を超えている場合に指摘。
-  Wordは表セル内のテキスト折り返しが既定のため「文字が切れる」より
-  「表/画像がページ幅を超える」ほうが主な検知対象です。
+The following fields are also returned at the top level (for detecting structural problems):
+- `sections`: the dimensions and margins of each section (page setup) in the document.
+  `{"page_width_cm", "page_height_cm", "left_margin_cm", "right_margin_cm", "top_margin_cm", "bottom_margin_cm"}`.
+- `table_column_widths`: for each table, an array of column widths (`[[12.3, null, 8.5], [15.2, 10.0]]`).
+  Columns not set because of automatic layout are `null`. Only tables in the body (tables inside text boxes are not included).
+- `inline_images`: the list of images inserted directly in the body (`[{"image_index": 0, "width_cm": 10.5, "height_cm": 5.2}, ...]`).
+  `image_index` is the 0-based sequence number of `doc.inline_shapes` and exactly matches the `image_index`
+  that `set_image_size` of the `docx-edit` skill takes.
+- `warnings`: an array of warnings about structural problems (the key is omitted if there are none).
+  Points out when the total column width of a table exceeds the page width, or an inserted image exceeds the page width.
+  Word wraps text in table cells by default, so "a table/image exceeds the page width" is the main thing detected,
+  rather than "text gets cut off".
 
-- `paragraphs` の各要素の `style` は見出しレベルの判定に使えます
-  （`"Title"`, `"Heading 1"`, `"Heading 2"`, ... , `"Normal"` など）。
-  `text` を `style` に応じて章立てとしてユーザーに報告してください。
-- `total_paragraphs` が `end_index + 1` より多い場合は続きがあります。
-  `--offset` を `end_index + 1` に指定して再度呼び出すことを案内してください。
-- `track_changes.has_pending_revisions` が `true` の場合、文書内に未確定の
-  変更履歴（`w:ins`/`w:del`）があります。`docx-edit` の `find_replace` は
-  この変更履歴内のテキストを検出できないため、編集前に
-  `accept_all_changes`/`reject_all_changes` で確定させるべきかユーザーに
-  確認するとよいです。
-- 標準出力の`body_order_count`は本文の段落＋表の要素数（上記出力例の件数）。本体の
-  `body_order`（`[{"type":"paragraph"/"table","index":N}, ...]`）は、段落と表が
-  文書内でどの順で交互に現れるかを表す。`paragraphs`/`tables`は別々のフラットな
-  リストで返るため、これが無いと「表2の直前/直後にある段落はどれか」が分からない。
-  表の近くに段落を追記したい、章立てと表の対応関係を把握したい、といった
-  位置関係が必要な場面で使う（`paragraphs`/`tables`と同じく`result_path`側にのみ
-  含まれる）。
+- The `style` of each element of `paragraphs` can be used to determine heading levels
+  (`"Title"`, `"Heading 1"`, `"Heading 2"`, ... , `"Normal"`, etc.).
+  Report `text` to the user as the chapter structure according to `style`.
+- If `total_paragraphs` is larger than `end_index + 1`, there is more.
+  Tell the user to call it again with `--offset` set to `end_index + 1`.
+- If `track_changes.has_pending_revisions` is `true`, the document has unresolved
+  tracked changes (`w:ins`/`w:del`). `find_replace` of `docx-edit` cannot detect
+  text inside these tracked changes, so before editing it is good to confirm with the user
+  whether to resolve them with `accept_all_changes`/`reject_all_changes`.
+- `body_order_count` on stdout is the number of body paragraph + table elements (the count in the output example above). The body
+  `body_order` (`[{"type":"paragraph"/"table","index":N}, ...]`) shows in which order paragraphs and tables
+  alternate in the document. `paragraphs`/`tables` are returned as separate flat
+  lists, so without it you cannot tell "which paragraph is right before/after table 2".
+  Use it when positional relationships are needed, such as adding a paragraph near a table or understanding
+  how the chapter structure corresponds to the tables (like `paragraphs`/`tables`, it is included only on the `result_path` side).
 
-### エッジケース
+### Edge cases
 
-- ファイル不在・ディレクトリ指定はエラー終了します。
-- 拡張子が `.doc` の場合は専用のエラーメッセージ（上記の変換案内）を返して
-  終了コード1になります。`.docx`/`.doc` 以外の拡張子もエラー終了します。
-- 壊れた `.docx`（ZIP/XMLとして不正）はエラー終了します。
-- パスワード保護された `.docx` は python-docx が開けずエラー終了します。
-- 依存パッケージ `python-docx`（import名は `docx`）が実行環境に無いと
-  `ModuleNotFoundError` で終了コード非0になります。その場合は導入者へ
-  `pip install python-docx` の実施を促してください。
+- A missing file or a directory ends with an error.
+- If the extension is `.doc`, it returns a dedicated error message (the conversion guidance above) with
+  exit code 1. Extensions other than `.docx`/`.doc` also end with an error.
+- A broken `.docx` (invalid as ZIP/XML) ends with an error.
+- A password-protected `.docx` cannot be opened by python-docx and ends with an error.
+- If the dependency `python-docx` (import name `docx`) is not in the environment, it ends with
+  `ModuleNotFoundError` and a non-zero exit code. In that case, prompt the installer to
+  run `pip install python-docx`.
 
-## レイアウト・表・強調表現を画像で確認したい場合
+## To check the layout, tables and emphasis as images
 
-テキスト抽出だけでは読み取れないレイアウト・表・画像の配置・強調表現が
-知りたい場合は `docx-render` スキルの `render_docx.py` + `analyze_image` を使ってください。
+If you want to know the layout, tables, image placement and emphasis that text extraction alone cannot show,
+use `render_docx.py` of the `docx-render` skill + `analyze_image`.

@@ -1,6 +1,6 @@
 ---
 name: excel-render
-description: xlsx/xlsm/xlsのシートをOLE→PDF→PNG変換で画像化し、罫線・書式・グラフ・レイアウトなどセル値だけでは分からない見た目をLLMに見せるスキル。ローカルにMicrosoft Excelが導入されている必要がある。画像化しただけではLLMは中身を見られないため、続けてanalyze_imageで確認する2段階手順が必須。ユーザーがExcelのレイアウトや罫線を確認したいとき、excel-editでの装飾作業の前後に見た目を検証したいときに使う。
+description: A skill that renders xlsx/xlsm/xls sheets as images via OLE -> PDF -> PNG conversion, showing the LLM the look that cell values alone cannot show, such as borders, formatting, charts and layout. Microsoft Excel must be installed locally. Rendering alone does not let the LLM see the content, so the 2-step procedure of checking with analyze_image next is mandatory. Use it when the user wants to check the layout or borders of an Excel file, or to verify the look before and after decoration work with excel-edit.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,63 +9,63 @@ metadata:
 
 # excel-render
 
-Excelシートを画像化してLLMに見せるスキル。`render_excel.py` を実行する。
+A skill that renders Excel sheets as images to show them to the LLM. Runs `render_excel.py`.
 
-excel-readスキルは数値・テキストは取れても罫線・書式・グラフ・レイアウトは読み取れないため、シートの意図をより正確に把握したいときに画像で確認する。
+The excel-read skill can get numbers and text but cannot read borders, formatting, charts or layout, so check with images when you want to grasp the intent of a sheet more accurately.
 
-PDF化前に各シートの印刷設定を「横1ページ×縦1ページ」フィット印刷（`Zoom=False`+`FitToPagesWide=1`+`FitToPagesTall=1`）へ自動強制し、使用範囲が複数ページに分割される（画像が細切れになる）ことを防ぐ。`--print-as-is`を指定するとこの強制を行わず、シートに既に設定されている印刷範囲・拡大縮小率をそのまま使ってPDF化する。PDF→画像化は既定300DPIで行い、クロップ後の出力は`target_dpi`=150に縮小する。シートの縮尺が小さいほどキャプチャDPI・`target_dpi`を自動的に引き上げる（上限900DPI、`--print-as-is`指定時はブーストなし）。全シート（PDF化後の全ページ）を一度に画像化する。
+Before converting to PDF, it automatically forces each sheet's print settings to "1 page wide x 1 page tall" fit printing (`Zoom=False` + `FitToPagesWide=1` + `FitToPagesTall=1`), preventing the used range from being split into several pages (fragmented images). With `--print-as-is`, it does not force this and converts to PDF using the print area and scaling already set on the sheet. PDF -> image conversion is done at 300 DPI by default, and the cropped output is shrunk to `target_dpi`=150. The smaller the sheet's scale, the more the capture DPI and `target_dpi` are raised automatically (up to 900 DPI; no boost with `--print-as-is`). All sheets (all pages after PDF conversion) are rendered at once.
 
-## 呼び出し
+## Calling it
 
-罫線・書式・グラフ等の見た目を確認したいだけなら、まずこちらを使う（印刷設定に関係なく横1×縦1ページに強制フィットして画像化）。
+If you just want to check the look, such as borders, formatting and charts, use this first (it forces a fit to 1 page wide x 1 page tall regardless of the print settings).
 
 ```bash
 python render_excel.py "C:\Users\me\book.xlsx"
 ```
 
-シートに既に設定されている印刷範囲・拡大縮小率をそのまま（強制フィットせずに）確認したいときだけ`--print-as-is`を付ける。「印刷したときの見え方を確認したい」「強制フィットだと不自然になる／指定した印刷範囲と違う」と言われた場合に使う。
+Add `--print-as-is` only when you want to check the print area and scaling already set on the sheet as they are (without forced fitting). Use it when told "I want to check how it looks when printed" or "forced fitting looks unnatural / differs from the print area I set".
 
 ```bash
 python render_excel.py "C:\Users\me\book.xlsx" --print-as-is
 ```
 
-## 引数一覧
+## Arguments
 
-| 引数 | 必須/任意 | 値の型 | 既定値 | 説明 |
+| Argument | Required/optional | Type | Default | Description |
 |---|---|---|---|---|
-| `excel_path`（位置引数） | 必須 | 文字列（絶対パス） | - | 画像化対象の`.xlsx`/`.xlsm`/`.xls`ファイルパス。他拡張子はエラー |
-| `--print-as-is` | 任意 | フラグ | 指定なし（＝強制フィット） | 指定すると、各シートに既に設定されている印刷範囲・印刷の向き・拡大縮小率（Zoom/FitToPagesWide/FitToPagesTall）をそのまま使ってPDF化する。既定の「横1×縦1ページへの強制フィット」を行わないため、シート側の設定次第で複数ページに分割されることがある（この場合もDPIブースト・分割警告（10%下限）は行わない） |
+| `excel_path` (positional) | Required | String (absolute path) | - | Path of the `.xlsx`/`.xlsm`/`.xls` file to render. Other extensions are errors |
+| `--print-as-is` | Optional | Flag | Not specified (= forced fit) | When given, converts to PDF using the print area, orientation and scaling (Zoom/FitToPagesWide/FitToPagesTall) already set on each sheet. It does not do the default "forced fit to 1 page wide x 1 page tall", so depending on the sheet's settings it may be split into several pages (in this case too, no DPI boost and no split warning (10% minimum) are applied) |
 
-## 入出力の型
+## Input/output types
 
-成功=終了コード0＋JSON1行を標準出力。失敗=終了コード非0＋エラーメッセージを標準エラー。エラー文はそのままユーザーへ伝える。
+Success = exit code 0 + one line of JSON on stdout. Failure = non-zero exit code + an error message on stderr. Pass the error text to the user as is.
 
-## 出力
+## Output
 
 ```json
 {"path": "C:\\foo\\book.xlsx", "tool": "excel", "total_pages": 5, "start_page": 1, "end_page": 5,
  "dpi": 300, "target_dpi": 150, "crop_applied": true,
  "images": [{"page": 1, "sheet": "Sheet1", "image_path": "C:\\...\\rendered\\1a2b3c4d_Sheet1_cropped.png", "original_dpi": 300, "cropped": true}, ...]}
 ```
-`images`には全ページ（=全シート、通常は`total_pages`件、非表示シートは除く）が含まれる。
-画像ファイル名にはシート名がそのまま使われる（`1a2b3c4d_Sheet1_cropped.png`等）。1シートが複数ページに分割された場合のみ`_p2`のようにページ番号が付く。
-`images`の各要素は常に`original_dpi`（クロップ前の実解像度）と`sheet`（元シート名）を持つ。`cropped`（bbox検出に
-成功しクロップできたら`true`、検出できず元画像のままなら`false`）は既定動作で各画像に付与される。
+`images` contains all pages (= all sheets, normally `total_pages` entries, excluding hidden sheets).
+The sheet name is used as is in the image file name (`1a2b3c4d_Sheet1_cropped.png`, etc.). A page number like `_p2` is added only when one sheet is split into several pages.
+Each element of `images` always has `original_dpi` (the actual resolution before cropping) and `sheet` (the original sheet name). `cropped` (`true` if bbox detection
+succeeded and it could be cropped, `false` if detection failed and the image is left as is) is added to each image by default.
 
-**DPIの動的ブースト**: シート内容が用紙に収まりにくいほど、キャプチャDPI・`target_dpi`は自動的に引き上げられる場合がある（上限900DPI）。
+**Dynamic DPI boost**: the harder the sheet content is to fit on the paper, the more the capture DPI and `target_dpi` may be raised automatically (up to 900 DPI).
 
-## 重要（2段階手順、必須ルール）
+## Important (2-step procedure, a mandatory rule)
 
-このスクリプトはPNGを保存しパスをJSONで返すだけで、LLMへ見せる処理は別。各`images[].image_path`（絶対パス）を続けて`analyze_image`（共通ツール）の`relative_path`引数に渡す。1回の`analyze_image`で1ページ分見えるので複数ページは呼び出しを分ける。`render_excel.py`が返す`image_path`は必ず続けてこの手順を行うこと（画像化だけでは中身を確認したことにならない）。
+This script only saves PNGs and returns their paths in JSON; showing them to the LLM is a separate step. Pass each `images[].image_path` (absolute path) next to the `relative_path` argument of `analyze_image` (a shared tool). One `analyze_image` call shows one page, so split the calls for several pages. Always follow this procedure for the `image_path` returned by `render_excel.py` (rendering alone does not count as having checked the content).
 
-デザイン・レイアウト（配色・罫線・列幅・グラフ配置・印刷時の見え方等）の調整を行う前後には、必ずこのスキル＋`analyze_image`でシートを画像として確認する。excel-readのセル値・style情報だけで見た目を判断して完了報告しない。
+Before and after adjusting design and layout (colors, borders, column widths, chart placement, how it looks when printed, etc.), always check the sheet as images with this skill + `analyze_image`. Do not judge the look only from excel-read's cell values and style information and report completion.
 
-余白除去は既定オン（白黒境界判定）。
+Margin removal is on by default (black/white boundary detection).
 
-## エッジケース
+## Edge cases
 
-ファイル不在／ディレクトリ指定／拡張子が`.xlsx`・`.xlsm`・`.xls`以外／壊れたファイル／Excel未インストールはエラー終了。シートが1枚も無い等でPDFが0ページになった場合は終了コード0で返るが、通常時とJSONの形が異なる点に注意（`images: []`に加え`start_page`/`end_page`が`null`になり、**`target_dpi`キー自体が無くなる**）。生成PNGは`rendered/`配下に保存され同一ファイル再実行時は上書きされる。`pywin32`/`pypdfium2`/`pillow`未導入は`ImportError`（該当する`pip install <パッケージ名>`をユーザーに促す）。
+A missing file / a directory / an extension other than `.xlsx`, `.xlsm`, `.xls` / a broken file / Excel not installed ends with an error. If the PDF has 0 pages, e.g. because there are no sheets, it returns with exit code 0, but note that the shape of the JSON differs from normal (in addition to `images: []`, `start_page`/`end_page` become `null`, and **the `target_dpi` key itself disappears**). Generated PNGs are saved under `rendered/` and overwritten when rerun on the same file. Missing `pywin32`/`pypdfium2`/`pillow` gives `ImportError` (prompt the user to run `pip install <package name>`).
 
-内部でEXCEL.EXEを一時起動する。処理完了時は必ず終了させるが、実行タイムアウト等でスクリプトが強制終了された場合は残留する可能性がある。この場合はタスクマネージャーでの手動終了ではなく、`excel-recalc`スキルの`recalc_excel.py`または`excel-vba-edit`スキルの`edit_vba.py`を`--recover-locks`だけ付けて実行する（自セッションがexcel-render等で起動して残留したCOMプロセスのうち、まだ生存しているものだけを内部で終了する）。
+It starts EXCEL.EXE temporarily. It always closes it when done, but if the script is forcibly terminated, e.g. by the execution timeout, it may be left behind. In that case, instead of ending it manually in Task Manager, run `recalc_excel.py` of the `excel-recalc` skill or `edit_vba.py` of the `excel-vba-edit` skill with only `--recover-locks` (it terminates internally only those COM processes started by this session with excel-render etc. that were left behind and are still alive).
 
-シートの列幅・行高さの合計が用紙1ページに収めるための下限スケール（10%）を下回ると、複数ページに分割された上で出力JSONに`warnings`配列（stderrにも同内容を出力）が付与される。終了コードは0のまま。`excel-edit`の`set_column_width`（単位は文字幅、目安1〜60）で列幅を見直してください。
+If the total of a sheet's column widths and row heights falls below the minimum scale (10%) for fitting it on one page, it is split into several pages and a `warnings` array is added to the output JSON (the same content is also printed to stderr). The exit code stays 0. Review the column widths with `set_column_width` of `excel-edit` (the unit is character width, roughly 1-60).

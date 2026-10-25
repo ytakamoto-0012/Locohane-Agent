@@ -31,19 +31,19 @@ def main() -> int:
 
     path = Path(args.pdf_path)
     if not path.exists():
-        print(f"ファイルが見つかりません: {args.pdf_path}", file=sys.stderr)
+        print(f"File not found: {args.pdf_path}", file=sys.stderr)
         return 1
     if path.is_dir():
-        print(f"指定パスはディレクトリです（ファイル専用）: {args.pdf_path}", file=sys.stderr)
+        print(f"The specified path is a directory (files only): {args.pdf_path}", file=sys.stderr)
         return 1
 
     try:
         reader = PdfReader(str(path))
     except PdfReadError as e:
-        print(f"PDFとして読み込めませんでした（壊れている可能性）: {e}", file=sys.stderr)
+        print(f"Could not load it as a PDF (it may be broken): {e}", file=sys.stderr)
         return 1
     except OSError as e:
-        print(f"ファイル読み込みに失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to read the file: {e}", file=sys.stderr)
         return 1
 
     if reader.is_encrypted:
@@ -55,7 +55,7 @@ def main() -> int:
     try:
         total_pages = len(reader.pages)
     except FileNotDecryptedError:
-        print("パスワード保護されたPDFです（空パスワードでの復号に失敗しました）。", file=sys.stderr)
+        print("The PDF is password-protected (decryption with an empty password failed).", file=sys.stderr)
         return 1
 
     meta = reader.metadata
@@ -74,7 +74,7 @@ def main() -> int:
             text = reader.pages[i].extract_text() or ""
             page_entry = {"page": i + 1, "text": text}
         except Exception as e:  # noqa: BLE001 - 1ページの破損で全体を失敗させない
-            page_entry = {"page": i + 1, "text": "", "error": f"このページの抽出に失敗しました: {e}"}
+            page_entry = {"page": i + 1, "text": "", "error": f"Failed to extract this page: {e}"}
 
         # ページサイズをpt単位で取得
         try:

@@ -1,25 +1,25 @@
-# フォント名変更でraw openpyxlに頼るときの安全な手順
+# A safe procedure when relying on raw openpyxl to change font names
 
-[[beyond-excel-edit-capabilities]]の「積み上げグラフ」と同じ失敗類型
-（`excel-edit`のopで表現できない要求→生openpyxlへのバイパス→`.xlsm`破損）の
-別実例。実際の作業ログ（`.xlsm`のフォントを「游ゴシック」に統一する依頼）で
-観測された、この類型特有の追加の落とし穴と、迷走を長引かせないための
-振る舞いをまとめる。
+Another real case of the same type of failure as the "stacked chart" in [[beyond-excel-edit-capabilities]]
+(a request `excel-edit`'s ops cannot express -> bypassing to raw openpyxl -> a broken `.xlsm`).
+This summarizes the additional pitfalls specific to this type, observed in an actual work log
+(a request to unify the fonts of an `.xlsm` to "Yu Gothic"), and how to behave so as not to prolong
+going in circles.
 
-## 前提: excel-editのstyleスキーマにフォント名（フォントファミリー）は無い
+## Premise: excel-edit's style schema has no font name (font family)
 
-`excel-edit`（`edit_excel.py`）の`style`辞書は`bold`/`italic`/`font_color`/
+The `style` dict of `excel-edit` (`edit_excel.py`) supports only `bold`/`italic`/`font_color`/
 `font_size`/`fill_color`/`number_format`/`align`/`valign`/`wrap_text`/
-`border`/`role`のみに対応しており、**フォント名を変更するキーは存在しない**
-（内部実装`excel-edit/scripts/_style.py`の`build_font()`を確認済み）。
-「フォントを游ゴシックに統一して」はopsだけでは実現できない。まず
-[[beyond-excel-edit-capabilities]]の「推奨する対処の順序」（制約を先に
-ユーザーへ伝える→どうしても必要ならバックアップ前提で生openpyxl）に従う。
+`border`/`role`, and **there is no key that changes the font name**
+(confirmed in `build_font()` of the internal implementation `excel-edit/scripts/_style.py`).
+"Unify the font to Yu Gothic" cannot be achieved with ops alone. First follow
+"Recommended order of actions" of [[beyond-excel-edit-capabilities]] (tell the user about the constraint first
+-> if really necessary, raw openpyxl on the premise of a backup).
 
-## raw openpyxlでフォント名だけを変える際に追加で必要な注意
+## Additional cautions needed when changing only the font name with raw openpyxl
 
-生openpyxlに進む場合、`.xlsm`なら`keep_vba=True`・保存前バックアップ・
-render確認という基本手順に加えて、**フォント変更特有の罠**がもう1つある。
+If you proceed to raw openpyxl, in addition to the basic steps for `.xlsm` (`keep_vba=True`, a backup before saving,
+checking with render), there is one more **trap specific to font changes**.
 
 ```python
 from copy import copy
@@ -32,69 +32,61 @@ for ws in wb.worksheets:
         for cell in row:
             if cell.font is None:
                 continue
-            # 既存Fontを copy() してから name だけ変更する。
-            # cell.font = Font(name="...") のように新規Fontを直接代入すると、
-            # 明示しなかった bold/size/color 等が既定値へ巻き戻り、
-            # 既存の書式（太字・色分け等）が意図せず消える
-            # （openpyxl公式ドキュメントがcopy()使用を推奨している理由）。
+            # copy() the existing Font and then change only name.
+            # Assigning a new Font directly, like cell.font = Font(name="..."),
+            # resets bold/size/color etc. that you did not specify back to the defaults,
+            # unintentionally erasing the existing formatting (bold, color coding, etc.)
+            # (the reason the openpyxl documentation recommends using copy()).
             new_font = copy(cell.font)
-            new_font.name = "游ゴシック"
+            new_font.name = "Yu Gothic"
             cell.font = new_font
 ```
 
-`Font`オブジェクトはセル単位の不変オブジェクトで、部分更新ができない
-（`cell.font.name = "..."`のような属性直接代入は効かない）。全セルを
-一括で書き換える配列処理（`excel-edit`の`set_range`のような発想）は
-`Font`には使えないため、対象セル数が多い場合は時間がかかる旨を先に
-ユーザーへ伝えておくとよい。
+`Font` objects are immutable per cell and cannot be partially updated
+(direct attribute assignment like `cell.font.name = "..."` does not work). Array processing that rewrites
+all cells at once (an idea like `set_range` of `excel-edit`) cannot be used for `Font`,
+so if there are many target cells, it is good to tell the user beforehand that it takes time.
 
-## render_excelの失敗は「破損」を意味するとは限らない
+## A render_excel failure does not necessarily mean "corruption"
 
-観測されたセッションでは、`excel-render`の`render_excel.py`が同一の
-`.xlsm`ファイルに対して、**内容を変更していないにもかかわらず**
-失敗→成功→失敗→成功を繰り返した（Excel COM由来のエラー:
-`Excel でファイル '...' を開くことができません。ファイル形式または
-ファイル拡張子が正しくありません。` `-2147352567`/`0x800A03EC`）。
-ファイル自体はopenpyxlで問題なく再読込できており、**保存直後にExcel COM
-自動化で開こうとした際の一時的な現象**である可能性が高い。
+In the observed session, `render_excel.py` of `excel-render` repeated failure -> success -> failure -> success
+on the same `.xlsm` file, **even though its content had not been changed**
+(an error from Excel COM: "Excel cannot open the file '...' because the file format or
+file extension is not valid." `-2147352567`/`0x800A03EC`).
+The file itself could be reread with openpyxl without problems, so it is likely **a transient phenomenon when trying to open it
+with Excel COM automation right after saving**.
 
-**`render_excel.py`が直前まで成功していたファイルで突然失敗した場合、
-即座に「ファイルが破損した」と結論づけない。** 内容を変更せずもう一度
-だけ`render_excel.py`を実行してみる。それでも継続して失敗する場合のみ
-実際の破損を疑う。zipの内部XMLサイズを1バイトずつ比較するような深掘りは
-低スペックモデルには非効率で（実際のセッションでも結論に至らず時間を
-浪費した）、まず「openpyxlで読み直せるか」「もう一度renderが通るか」の
-2点だけを先に確認する方が早い。
+**If `render_excel.py` suddenly fails on a file that had been succeeding until just before,
+do not immediately conclude that "the file got corrupted".** Run `render_excel.py` once more
+without changing the content. Suspect actual corruption only if it keeps failing. Digging deep, such as comparing
+the sizes of the zip's internal XML byte by byte, is inefficient for low-spec models (in the actual session too,
+it reached no conclusion and wasted time); it is faster to first check only 2 points:
+"can it be reread with openpyxl" and "does render pass once more".
 
-## 同じ仮説を実行せず繰り返し始めたら、迷走のサインとして扱う
+## When you start repeating the same hypotheses without running anything, treat it as a sign of going in circles
 
-観測されたセッションでは、[[beyond-excel-edit-capabilities]]の教訓に反して
-生openpyxlへバイパスした後、1時間以上・70ターン以上を「VBAプロジェクトが
-壊れた」→「いや無かった」→「content-typeの不整合では」→「zip構造が
-壊れているのでは」→「一時ファイル経由で保存すれば直るかも」→「やっぱり
-VBA関連かも」と**一度否定した仮説に戻り続ける**ことに消費し、最終的に
-Locohane自身のループ検知機構に強制停止された。「シンプルな方法を試そう」と
-宣言しては実行せず別の仮説の検討に戻る、という「実行せず思考だけが循環する」
-状態が続いた。
+In the observed session, after bypassing to raw openpyxl contrary to the lesson of [[beyond-excel-edit-capabilities]],
+more than an hour and more than 70 turns were consumed **going back again and again to hypotheses once rejected**:
+"the VBA project broke" -> "no, there wasn't one" -> "maybe a content-type mismatch" -> "maybe the zip structure
+is broken" -> "maybe saving via a temporary file fixes it" -> "maybe it is VBA-related after all", and finally
+it was force-stopped by Locohane's own loop detection mechanism. A state of "only thinking circulates without running anything"
+continued, where it declared "let's try a simple method" and then returned to considering another hypothesis without running it.
 
-**同じ2〜3個の対応案の間を、実行せずに行ったり来たりし始めたら、それ自体を
-迷走のサインとして扱う。** 気づいた時点で、直前に検討していた案のうち
-最もシンプルなものを**1回だけ**実際に実行し、成功しても失敗しても
-その結果をそのままユーザーに報告する。**「原因を完全に特定してから
-報告する」必要はない。** 「〜という制約があり、A/B/Cを試したがいずれも
-根本原因は特定できなかった。現状ファイルは（正常/バックアップから復元済み）
-です。次にどうするか指示をください」という報告は、自己検証を無限に
-続けるより有用。特にopenpyxl/Excel COM関連のように低スペックモデルが
-内部XML構造を推測で診断するのが不得手な領域では、深掘りを継続するより
-早めにユーザー（人間）に判断を委ねる方が総合的に速い。
+**When you start going back and forth between the same 2-3 options without running them, treat that itself as
+a sign of going in circles.** As soon as you notice, actually run **just once** the simplest of the options
+you were just considering, and report the result to the user as is, whether it succeeds or fails.
+**There is no need to "fully identify the cause before reporting".** A report like
+"There is a constraint ..., and I tried A/B/C, but could not identify the root cause in any of them.
+The file is currently (fine / restored from the backup). Please tell me what to do next" is more useful
+than continuing self-verification forever. Especially in areas like openpyxl/Excel COM, where low-spec models are bad at
+diagnosing the internal XML structure by guesswork, handing the decision to the user (a human) early is faster overall
+than continuing to dig.
 
-## 再発時の手がかり: xlsm拡張子でもVBAが無いことがある
+## A clue if it recurs: even with the xlsm extension, there may be no VBA
 
-対象ファイルには元々`xl/vbaProject.bin`が存在しなかった（`.xlsm`拡張子だが
-実質VBAマクロを持たないブックだった）。「`.xlsm`だから必ずVBAが入っている」
-と決めつけず、`zipfile.ZipFile(path).namelist()`に`xl/vbaProject.bin`が
-含まれるかで実際の有無を確認できる。`excel-edit`経由の構造変更（行挿入・
-書式適用等）だけでは`render_excel.py`は安定して成功しており、失敗が
-目立ち始めたのは生openpyxlによるフォント名変更を試みた前後からだった。
-「直前にどちらの経路で保存したか」を都度記録しておくと、失敗の原因切り分けが
-速くなる。
+The target file originally had no `xl/vbaProject.bin` (it had the `.xlsm` extension but was effectively a workbook
+without VBA macros). Do not assume "it is `.xlsm`, so it surely contains VBA"; you can check whether it actually exists
+by whether `zipfile.ZipFile(path).namelist()` includes `xl/vbaProject.bin`. With only structural changes via
+`excel-edit` (inserting rows, applying formatting, etc.), `render_excel.py` succeeded stably, and failures
+started to stand out around the time the font name change with raw openpyxl was attempted.
+Recording "which route you saved with last" each time speeds up isolating the cause of failures.

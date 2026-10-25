@@ -86,7 +86,7 @@ def _recalc(path: Path) -> dict:
         errors = _collect_errors(workbook)
         workbook.Save()
         result = {"path": str(path), "recalculated": True, "errors": errors}
-        path_memory = register_output_path(path, description="recalc_excelが再計算・保存したファイル")
+        path_memory = register_output_path(path, description="file recalculated and saved by recalc_excel")
         if path_memory:
             result["path_memory"] = path_memory
         return result
@@ -109,13 +109,13 @@ def _recalc(path: Path) -> dict:
 def main() -> int:
     setup_utf8_stdio()
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", nargs="?", default=None, help="再計算対象のxlsx/xlsm/xlsパス（--recover-locks指定時は不要）")
+    parser.add_argument("path", nargs="?", default=None, help="xlsx/xlsm/xls path to recalculate (not needed with --recover-locks)")
     parser.add_argument(
         "--recover-locks",
         action="store_true",
         help=(
-            "path指定を無視し、自セッションが起動して残留したExcelプロセスのうち"
-            "まだ生存しているものだけを終了する。PID番号は受け取らない。"
+            "ignore path, and terminate only the Excel processes started by this session that were left behind "
+            "and are still alive. Does not take PID numbers."
         ),
     )
     args = parser.parse_args()
@@ -126,24 +126,24 @@ def main() -> int:
         return 0
 
     if not args.path:
-        print("usage: recalc_excel.py <path> (または --recover-locks)", file=sys.stderr)
+        print("usage: recalc_excel.py <path> (or --recover-locks)", file=sys.stderr)
         return 1
 
     path = Path(args.path)
     if not path.is_file():
-        print(f"ファイルが見つかりません: {args.path}", file=sys.stderr)
+        print(f"File not found: {args.path}", file=sys.stderr)
         return 1
     if path.suffix.lower() not in (".xlsx", ".xlsm", ".xls"):
-        print(f"対応拡張子は .xlsx/.xlsm/.xls のみです: {path.suffix}", file=sys.stderr)
+        print(f"Only the .xlsx/.xlsm/.xls extensions are supported: {path.suffix}", file=sys.stderr)
         return 1
 
     try:
         result = _recalc(path)
     except ImportError as e:
-        print(f"必要なライブラリが見つかりません（pywin32が必要です）: {e}", file=sys.stderr)
+        print(f"A required library was not found (pywin32 is required): {e}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - COMエラーはExcelのバージョン・状態により多様なため丸めて報告する
-        print(f"Excelでの再計算に失敗しました: {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"Recalculation with Excel failed: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return 1
 
     print(json.dumps(result, ensure_ascii=False))

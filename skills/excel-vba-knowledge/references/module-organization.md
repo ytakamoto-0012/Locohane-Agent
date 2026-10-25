@@ -1,63 +1,60 @@
-# モジュールの効果的な分け方
+# How to split modules effectively
 
-VBAプロジェクトが育つと「1つの標準モジュールに全Sub/Functionを書き続ける」
-状態になりがちで、他人（将来の自分含む）が読めなくなる。モジュール種別ごとの
-役割を意識して分けると、[[excel-vba-read]] で読む際にも該当箇所を探しやすくなる。
+As a VBA project grows, it tends to end up "writing every Sub/Function into one standard module",
+and others (including your future self) can no longer read it. Splitting with the role of each module type in mind
+also makes the relevant parts easier to find when reading with [[excel-vba-read]].
 
-## モジュール種別と置くべきコードの目安
+## Module types and what code to put in them
 
-| 種別 | 置くべきコード | 置くべきでないコード |
+| Type | Code to put in | Code not to put in |
 |---|---|---|
-| `ThisWorkbook`（ブックモジュール） | `Workbook_Open`/`Workbook_BeforeClose`等のブックイベントのみ | 汎用処理（標準モジュールへ委譲する） |
-| シートモジュール（`Sheet1`等） | そのシート固有の `Worksheet_Change`/`Worksheet_SelectionChange`等のイベントのみ | 他シートでも使う汎用ロジック |
-| 標準モジュール | 業務ロジック本体、ボタンから呼ぶマクロ、ヘルパー関数 | フォーム固有のUI制御コード |
-| クラスモジュール | 状態とふるまいをまとめたオブジェクト（後述） | エントリーポイント（`Sub Main`のような開始点） |
-| フォームモジュール | そのフォームのコントロールイベントのみ | フォームを介さない純粋な計算ロジック（標準/クラスへ切り出す） |
+| `ThisWorkbook` (workbook module) | Only workbook events such as `Workbook_Open`/`Workbook_BeforeClose` | General processing (delegate to standard modules) |
+| Sheet module (`Sheet1`, etc.) | Only events specific to that sheet, such as `Worksheet_Change`/`Worksheet_SelectionChange` | General logic also used by other sheets |
+| Standard module | The business logic itself, macros called from buttons, helper functions | UI control code specific to a form |
+| Class module | Objects that bundle state and behavior (see below) | Entry points (starting points like `Sub Main`) |
+| Form module | Only the control events of that form | Pure calculation logic that does not go through the form (move it to standard/class modules) |
 
-**イベントハンドラ（`ThisWorkbook`/シートモジュール/フォームモジュール）は
-「受け取ったら即座に標準モジュールの処理を1行呼ぶだけ」に留める**のが実務上の
-定石。イベントモジュール内にロジックを書き込むと、同じ処理を別の場所
-（ボタンクリック、他のイベント等）から再利用したくなった時に重複コピーが
-発生しやすい。
+**Keep event handlers (`ThisWorkbook`/sheet modules/form modules) to "just call the processing in a standard module
+in one line as soon as they receive the event"** — a standard practice. Writing logic in event modules
+tends to cause duplicate copies when you want to reuse the same processing from elsewhere
+(button clicks, other events, etc.).
 
 ```vb
-' Sheet1（シートモジュール）
+' Sheet1 (sheet module)
 Private Sub Worksheet_Change(ByVal Target As Range)
-    modDataValidation.HandleSheetChange Me, Target   ' 標準モジュールへ委譲
+    modDataValidation.HandleSheetChange Me, Target   ' delegate to a standard module
 End Sub
 ```
 
-## 標準モジュールの分割単位
+## The unit of splitting standard modules
 
-機能領域（ドメイン）ごとに分けるのが基本。ファイル/データ入出力・集計計算・
-UI制御・定数定義のように**責務で分ける**と、[[excel-vba-read]]でモジュール
-一覧を見ただけで目的のコードの見当がつけやすい。
+Splitting by functional area (domain) is the basis. **Splitting by responsibility**, such as file/data I/O, aggregation,
+UI control and constant definitions, makes it easy to guess where the target code is just by looking at
+the module list with [[excel-vba-read]].
 
-- `modConstants`: `Public Const` の集約（マジックナンバー・固定文字列を1箇所に）
-- `modIO`: ファイル読み書き・外部接続（[[com-automation-and-file-io]]参照のコード）
-- `modCalc`: 集計・計算ロジック（副作用なし、引数を受け取り値を返す関数中心）
-- `modUI`: メッセージ表示・フォーム呼び出しの窓口
-- `modMain`（または `modEntry`）: ボタンに紐付ける「入口」だけを集めたモジュール
-  （中身は他モジュールの呼び出しのみで、実処理は書かない）
+- `modConstants`: gathers `Public Const` (magic numbers and fixed strings in one place)
+- `modIO`: reading/writing files, external connections (code like in [[com-automation-and-file-io]])
+- `modCalc`: aggregation/calculation logic (no side effects; mainly functions that take arguments and return values)
+- `modUI`: the gateway for showing messages and calling forms
+- `modMain` (or `modEntry`): a module that collects only the "entrances" tied to buttons
+  (contains only calls to other modules; no actual processing)
 
-命名は `mod` プレフィックスに限らずプロジェクトの慣習に合わせてよいが、
-**「このマクロがどこにあるか」をモジュール名から推測できる一貫した命名規則**
-を保つことが重要（標準モジュールが増えるほど効いてくる）。
+The naming need not use the `mod` prefix and can follow the project's conventions, but
+it is important to keep **a consistent naming rule that lets you guess "where this macro is" from the module name**
+(the more standard modules, the more it matters).
 
-## クラスモジュールを使うべき場面
+## When to use class modules
 
-VBAは`Type`（ユーザー定義型）でもデータをまとめられるが、以下のような場合は
-クラスモジュールの方が保守しやすい:
+VBA can also bundle data with `Type` (user-defined types), but class modules are easier to maintain in cases like these:
 
-- **同じ構造のデータが配列やコレクションで複数存在し、それぞれにふるまい
-  （メソッド）も必要**な場合（例: 複数の「注文」を扱い、各注文が
-  `CalcTotal()` のような自分自身の計算を持つ）。
-- **状態を隠蔽したい**場合。標準モジュールの `Public` 変数はプロジェクト内
-  どこからでも書き換えられてしまうが、クラスの `Private` 変数は
-  `Property Get`/`Property Let` を介してのみアクセスさせられる。
+- **When there are several pieces of data with the same structure in an array or collection, and each also needs behavior
+  (methods)** (e.g. handling several "orders", where each order has its own calculation such as
+  `CalcTotal()`).
+- **When you want to hide state.** `Public` variables in standard modules can be rewritten from anywhere in the project,
+  but `Private` variables of a class can be accessed only through `Property Get`/`Property Let`.
 
 ```vb
-' クラスモジュール "COrder"
+' Class module "COrder"
 Private mAmount As Currency
 Private mQty As Long
 
@@ -66,7 +63,7 @@ Public Property Get Amount() As Currency
 End Property
 
 Public Property Let Amount(v As Currency)
-    If v < 0 Then Err.Raise vbObjectError + 1, , "金額は0以上である必要があります"
+    If v < 0 Then Err.Raise vbObjectError + 1, , "The amount must be 0 or more"
     mAmount = v
 End Property
 
@@ -75,37 +72,35 @@ Public Function Total() As Currency
 End Function
 ```
 
-`Property Let` 内でバリデーションを一元化できるため、「金額に負数が
-セットされる」ような不正状態が発生する箇所をクラス定義の1箇所に閉じ込め
-られる（標準モジュールの `Public` 変数直接代入だと、代入している全箇所を
-探して検証コードを埋め込む必要が出てくる）。
+Validation can be centralized in `Property Let`, so the places where an invalid state such as "a negative amount
+is set" can occur are confined to one place in the class definition (with direct assignment to `Public` variables of a
+standard module, you would have to find every place that assigns and embed validation code).
 
-## WithEvents によるイベント監視の集約
+## Gathering event monitoring with WithEvents
 
-複数のコントロール・複数のオブジェクトのイベントをまとめて扱いたい場合
-（[[userforms]]の動的コントロール等）はクラスモジュールに `WithEvents` で
-宣言し、標準モジュール側からは意識せず済むようにする。
+When you want to handle the events of several controls or objects together
+(such as the dynamic controls of [[userforms]]), declare them with `WithEvents` in a class module,
+so the standard module side does not need to be aware of them.
 
 ```vb
-' クラスモジュール "CButtonHandler"
+' Class module "CButtonHandler"
 Public WithEvents Btn As MSForms.CommandButton
 
 Private Sub Btn_Click()
-    MsgBox Btn.Name & " が押されました"
+    MsgBox Btn.Name & " was clicked"
 End Sub
 ```
 
-## 循環参照・相互依存を避ける
+## Avoid circular references and mutual dependencies
 
-`modA` が `modB` の関数を呼び、`modB` も `modA` の関数を呼ぶという相互依存は
-デバッグ時にどちらが起点か追いにくくなる。**依存の向きを一方向に揃える**
-（例: `modMain` → `modUI` → `modCalc`/`modIO` の順に呼ばれる一方向の階層とし、
-下位モジュールが上位モジュールを呼び返さない）ことを意識すると見通しが良い。
+Mutual dependencies, where `modA` calls functions of `modB` and `modB` also calls functions of `modA`,
+make it hard to trace which is the starting point when debugging. **Keep the direction of dependencies one-way**
+(e.g. a one-way hierarchy called in the order `modMain` -> `modUI` -> `modCalc`/`modIO`,
+where lower modules do not call back upper modules) for a clearer view.
 
-## モジュールを分けすぎた場合の弊害
+## The downside of splitting modules too much
 
-過度に細分化する（1関数1モジュール等）と、[[excel-vba-read]]で一覧を
-確認する際にモジュール数が多すぎて逆に見通しが悪くなる。「同じ理由で
-一緒に変更されることが多いコード」をまとめる、くらいの粒度が実務上は
-扱いやすい。迷ったら上記の種別テーブル（IO/Calc/UI/Constants/Main）程度の
-粒度から始め、実際に肥大化したモジュールが出てきたら分割を検討する。
+Splitting too finely (one function per module, etc.) makes the number of modules too large when checking the list with
+[[excel-vba-read]], which actually makes it harder to see. A granularity of "gather code that is often changed
+together for the same reason" is practical. When in doubt, start with about the granularity of the type table above
+(IO/Calc/UI/Constants/Main), and consider splitting when a module actually grows too large.

@@ -1,15 +1,15 @@
-# skill-creator 補助資料: 各スクリプトの入出力形式
+# skill-creator reference: input/output formats of each script
 
-共通:
-- 正常時は終了コード0で標準出力に1行のJSON、異常時は終了コード1で標準エラーに `エラー: 理由`。
-- `--name` はドラフト名。自分のドラフトはスキル名だけ（例 `my-skill`）、他の人のドラフトは `ユーザー名/スキル名`。
-- 他の人のドラフトは、config.ini `[skill_creator].other_users_drafts` が許す範囲でしか扱えない（`full` のときだけ書き込み・評価できる）。
-- ドラフトの場所: `<ドラフト置き場>/<ユーザー名>/<スキル名>/`。評価の結果は `<ドラフト置き場>/<ユーザー名>/_workspace/<スキル名>/`。
+Common:
+- On success, exit code 0 with one line of JSON on stdout; on failure, exit code 1 with `Error: reason` on stderr.
+- `--name` is the draft name. For your own drafts, just the skill name (e.g. `my-skill`); for other people's drafts, `username/skill name`.
+- Other people's drafts can be handled only to the extent config.ini `[skill_creator].other_users_drafts` allows (writing and evaluating only with `full`).
+- Draft location: `<draft location>/<username>/<skill name>/`. Evaluation results are in `<draft location>/<username>/_workspace/<skill name>/`.
 
-## 非同期実行（start / status）
+## Asynchronous execution (start / status)
 
-`run_isolated_eval.py` `run_trigger_eval.py` `propose_description.py` は実際にローカルLLMを動かすため、
-`start` で `job_id` を受け取り、`status` で結果を受け取る。`status` が `running` の間は1分ほど待ってから再度呼ぶ。
+`run_isolated_eval.py`, `run_trigger_eval.py` and `propose_description.py` actually run the local LLM,
+so you receive a `job_id` with `start` and the result with `status`. While `status` is `running`, wait about a minute before calling it again.
 
 ---
 
@@ -19,34 +19,34 @@
 python scaffold_skill.py --name my-skill --description "..." [--with-script]
 ```
 
-自分のドラフト置き場に SKILL.md・references/・evals/（`--with-script` なら scripts/run.py も）を作る。
-正式スキルと同じ名前、自分の既存ドラフトと同じ名前はエラー。
+Creates SKILL.md, references/ and evals/ (and scripts/run.py with `--with-script`) in your draft location.
+The same name as an official skill, or as one of your existing drafts, is an error.
 
-出力: `{"draft", "skill_dir", "note"}`
+Output: `{"draft", "skill_dir", "note"}`
 
 ## fork_skill.py
 
 ```
-python fork_skill.py --name <正式スキル名>
+python fork_skill.py --name <official skill name>
 ```
 
-正式スキルを自分のドラフトへ複製する（改善案。正式スキルは変わらない）。`evals/cases/<名前>/` のケースも evals/ へ写す。
+Copies an official skill into your drafts (an improvement; the official skill does not change). The cases of `evals/cases/<name>/` are also copied to evals/.
 
-出力: `{"draft", "skill_dir", "base_dir", "copied_cases", "note"}`
+Output: `{"draft", "skill_dir", "base_dir", "copied_cases", "note"}`
 
 ## write_draft_file.py
 
 ```
-python write_draft_file.py --name my-skill --path SKILL.md --content "全文"
-python write_draft_file.py --name my-skill --path scripts/run.py --content-file <ファイル>
-python write_draft_file.py --name my-skill --path SKILL.md --old "古い文" --new "新しい文"
+python write_draft_file.py --name my-skill --path SKILL.md --content "full text"
+python write_draft_file.py --name my-skill --path scripts/run.py --content-file <file>
+python write_draft_file.py --name my-skill --path SKILL.md --old "old text" --new "new text"
 ```
 
-`--content` / `--content-file` / `--old`+`--new` のどれか1つ。`--old` はファイル内で1か所だけ一致する必要がある。
-`--path` はスキルフォルダからの相対パス（`..`・絶対パス・`_draft_meta.json` は不可）。
-SKILL.md の frontmatter が不正になる書き込みは取り消される。
+Exactly one of `--content` / `--content-file` / `--old`+`--new`. `--old` must match exactly one place in the file.
+`--path` is a path relative to the skill folder (`..`, absolute paths and `_draft_meta.json` are not allowed).
+Writes that would make the frontmatter of SKILL.md invalid are undone.
 
-出力: `{"draft", "path", "chars"}`
+Output: `{"draft", "path", "chars"}`
 
 ## delete_draft.py
 
@@ -54,9 +54,9 @@ SKILL.md の frontmatter が不正になる書き込みは取り消される。
 python delete_draft.py --name my-skill [--path references/old.md]
 ```
 
-`--path` 無しならドラフトごと（評価結果も）削除。SKILL.md・`_draft_meta.json` は単体では消せない。
+Without `--path`, deletes the whole draft (including evaluation results). SKILL.md and `_draft_meta.json` cannot be deleted on their own.
 
-出力: `{"deleted"}` または `{"draft", "deleted_file"}`
+Output: `{"deleted"}` or `{"draft", "deleted_file"}`
 
 ## list_drafts.py
 
@@ -64,13 +64,13 @@ python delete_draft.py --name my-skill [--path references/old.md]
 python list_drafts.py
 ```
 
-出力: `{"user", "drafts": [{"draft", "own", "readable", "kind", "base_skill", "status", "description", "updated_at", "eval_cases", "last_tryout", "returned_reason"}]}`
-（読み取りできない他ユーザーの分は `{"draft", "own": false, "readable": false}` だけ）
+Output: `{"user", "drafts": [{"draft", "own", "readable", "kind", "base_skill", "status", "description", "updated_at", "eval_cases", "last_tryout", "returned_reason"}]}`
+(other users' drafts that cannot be read show only `{"draft", "own": false, "readable": false}`)
 
-- `kind`: `new`（新規）/ `improve`（既存スキルの改善案）
-- `status`: `draft` / `promoted`（正式化済み）/ `returned`（差し戻し。理由は `returned_reason`）/ `rejected`
-- `returned` のドラフトは、`write_draft_file.py`・`make_eval_case.py`・`delete_draft.py --path` で中身を直すと `draft` に戻り、再び昇格の候補になる。
-- 中身を直すと `tryouts`（トライアウトの記録）は空になる（合格回数は0から数え直し）。
+- `kind`: `new` (new) / `improve` (an improvement of an existing skill)
+- `status`: `draft` / `promoted` (made official) / `returned` (sent back; the reason is in `returned_reason`) / `rejected`
+- A `returned` draft goes back to `draft` when its content is fixed with `write_draft_file.py`, `make_eval_case.py` or `delete_draft.py --path`, and becomes a candidate for promotion again.
+- Fixing the content empties `tryouts` (the tryout records) (the pass count starts over from 0).
 
 ## validate_skill.py
 
@@ -78,27 +78,27 @@ python list_drafts.py
 python validate_skill.py --name my-skill
 ```
 
-出力: `{"draft", "valid", "error", "name", "description", "description_length", "script_files", "eval_cases"}`
+Output: `{"draft", "valid", "error", "name", "description", "description_length", "script_files", "eval_cases"}`
 
 ## make_eval_case.py
 
 ```
 python make_eval_case.py --name my-skill --case-id 001_basic \
-    --turns "[\"発話\"]" \
-    [--expect "{...}"] [--judge "判定観点"] \
+    --turns "[\"message\"]" \
+    [--expect "{...}"] [--judge "judging viewpoint"] \
     [--work-dir "./evals/fixtures/xxx"] [--timeout-seconds 600] [--notes "..."]
 ```
 
-`--expect` と `--judge` はどちらか必須（両方でもよい）。ケースはドラフトの `evals/<case-id>.yaml` に保存される。
-評価中のスキル名はユーザー名の付かないスキル名になる（expect にもスキル名だけを書く）。
+Either `--expect` or `--judge` is required (both are fine). The case is saved as `evals/<case-id>.yaml` of the draft.
+The skill name during evaluation is the skill name without the username (write only the skill name in expect too).
 
-`--expect` の主なキー:
-- `tool_called_any`: list[str] — いずれかのツールが呼ばれれば合格
-- `tool_not_called`: list[str] — 指定ツールが一度も呼ばれなければ合格
-- `tool_call_args_contains`: dict[str, dict] — 例 `{"read_skill": {"skill_name": "my-skill"}}`
-- `response_contains` / `response_not_contains`: list[str] — 最終回答の文字列の部分一致
+Main keys of `--expect`:
+- `tool_called_any`: list[str] — passes if any of the tools is called
+- `tool_not_called`: list[str] — passes if the specified tools are never called
+- `tool_call_args_contains`: dict[str, dict] — e.g. `{"read_skill": {"skill_name": "my-skill"}}`
+- `response_contains` / `response_not_contains`: list[str] — partial match on the final answer string
 
-出力: `{"draft", "case_path", "case_id"}`
+Output: `{"draft", "case_path", "case_id"}`
 
 ## run_isolated_eval.py
 
@@ -107,13 +107,13 @@ python run_isolated_eval.py start --name my-skill [--mode with_skill|without_ski
 python run_isolated_eval.py status --name my-skill --job-id <job_id>
 ```
 
-- `with_skill`（既定）: 本番のスキル構成の上にドラフトを重ねて評価する（改善案は同名の正式スキルを上書きした状態）。
-- `without_skill`: ドラフト無し（新規ならスキル無し、改善案なら正式スキルのまま）。比較用。
-- `--repeat N`: 各ケースを N 回繰り返す（スキル安定化トライアウト）。全回合格で合格。
+- `with_skill` (default): evaluates with the draft layered on top of the production skill setup (for improvements, with the official skill of the same name overridden).
+- `without_skill`: without the draft (no skill for new ones, the official skill as is for improvements). For comparison.
+- `--repeat N`: repeats each case N times (skill stabilization tryout). Passes if every run passes.
 
-`start` の出力: `{"job_id", "pid", "log_path", "status": "started", "runs"}`
-`status` の出力（実行中）: `{"job_id", "status": "running", "started_runs", "total_runs"}`
-`status` の出力（完了）:
+Output of `start`: `{"job_id", "pid", "log_path", "status": "started", "runs"}`
+Output of `status` (running): `{"job_id", "status": "running", "started_runs", "total_runs"}`
+Output of `status` (finished):
 ```json
 {
   "status": "finished", "mode": "with_skill", "repeat": 10,
@@ -125,8 +125,8 @@ python run_isolated_eval.py status --name my-skill --job-id <job_id>
 }
 ```
 
-- `needs_judge`: ルール上は不合格が無いが judge 付きのケースがある。`runs` の `judge` と `final_answer`（詳しくは `results_path` の `transcript`）を読んで判定する。
-- 完了結果はドラフトの `_draft_meta.json` の `tryouts` にも記録される。ただし評価中・評価後にドラフト（ケースを含む）が変わっていたら `stale: true` になり記録しない（今の内容で評価し直す）。
+- `needs_judge`: no failures by the rules, but there are cases with judge. Read `judge` and `final_answer` of `runs` (for details, `transcript` in `results_path`) and judge it.
+- Finished results are also recorded in `tryouts` of the draft's `_draft_meta.json`. But if the draft (including cases) changed during or after the evaluation, it becomes `stale: true` and is not recorded (evaluate again with the current content).
 
 ## aggregate_results.py
 
@@ -134,33 +134,33 @@ python run_isolated_eval.py status --name my-skill --job-id <job_id>
 python aggregate_results.py --name my-skill --input with_skill=<results.json> --input without_skill=<results.json>
 ```
 
-ケースごとの合格回数・平均トークンの比較表を作る。出力: `{"output_path", "cases", "markdown"}`
+Makes a comparison table of pass counts and average tokens per case. Output: `{"output_path", "cases", "markdown"}`
 
 ## run_trigger_eval.py
 
-eval-set の形式:
+Format of the eval-set:
 ```json
 [
-  {"query": "ユーザーが実際に打ちそうな発話", "should_trigger": true},
-  {"query": "紛らわしいが本来は使うべきでない発話", "should_trigger": false}
+  {"query": "a message a user would actually type", "should_trigger": true},
+  {"query": "a confusing message where it should not be used", "should_trigger": false}
 ]
 ```
 
 ```
-python run_trigger_eval.py start --name my-skill --eval-set <JSONファイル> [--repeats 3]
+python run_trigger_eval.py start --name my-skill --eval-set <JSON file> [--repeats 3]
 python run_trigger_eval.py status --name my-skill --job-id <job_id>
 ```
 
-`status` の出力（完了）: `{"status": "finished", "accuracy", "per_query": [{"query", "should_trigger", "trigger_rate", "matched"}], "results_path"}`
+Output of `status` (finished): `{"status": "finished", "accuracy", "per_query": [{"query", "should_trigger", "trigger_rate", "matched"}], "results_path"}`
 
-`matched: false` の項目だけ抜き出して `propose_description.py` の `--failed-queries` に渡す。
+Extract only the `matched: false` items and pass them to `--failed-queries` of `propose_description.py`.
 
 ## propose_description.py
 
 ```
-python propose_description.py start --name my-skill --failed-queries <JSONファイル>
+python propose_description.py start --name my-skill --failed-queries <JSON file>
 python propose_description.py status --name my-skill --job-id <job_id>
 ```
 
-現在の description はドラフトの SKILL.md から読む。`status` の出力（完了）: `{"status": "finished", "proposed_description"}`。
-提案は自動では反映されない（`write_draft_file.py` で書く）。
+The current description is read from the draft's SKILL.md. Output of `status` (finished): `{"status": "finished", "proposed_description"}`.
+The proposal is not applied automatically (write it with `write_draft_file.py`).

@@ -58,5 +58,5 @@ def resolve_theme(name: str | None) -> dict:
         key = DEFAULT_THEME.lower()
     if key not in THEMES:
         supported = ", ".join(sorted(THEMES))
-        raise ValueError(f"未対応の theme です: {name!r}（対応: {supported}）")
+        raise ValueError(f"Unsupported theme: {name!r} (supported: {supported})")
     return THEMES[key]

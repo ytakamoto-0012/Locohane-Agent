@@ -36,50 +36,50 @@ from _common import (
 def _target_path(skill_dir: Path, raw: str) -> Path:
     rel = PurePosixPath(raw.replace("\\", "/"))
     if not raw.strip() or rel.is_absolute() or ".." in rel.parts or ":" in raw:
-        raise SkillCreatorError(f"--path はスキルフォルダからの相対パスで指定してください: {raw!r}")
+        raise SkillCreatorError(f"Specify --path relative to the skill folder: {raw!r}")
     if rel.parts[0] == DRAFT_META_FILENAME:
-        raise SkillCreatorError(f"{DRAFT_META_FILENAME} は書き換えられません。")
+        raise SkillCreatorError(f"{DRAFT_META_FILENAME} cannot be rewritten.")
     target = (skill_dir / Path(*rel.parts)).resolve()
     if not target.is_relative_to(skill_dir.resolve()):
-        raise SkillCreatorError(f"スキルフォルダの外へは書き込めません: {raw!r}")
+        raise SkillCreatorError(f"Cannot write outside the skill folder: {raw!r}")
     return target
 
 
 def _new_text(target: Path, args: argparse.Namespace) -> str:
     modes = [args.content is not None, args.content_file is not None, args.old is not None]
     if sum(modes) != 1:
-        raise SkillCreatorError("--content / --content-file / --old（と --new）のどれか1つを指定してください。")
+        raise SkillCreatorError("Specify exactly one of --content / --content-file / --old (with --new).")
     if args.content is not None:
         return args.content
     if args.content_file is not None:
         source = Path(args.content_file)
         if not source.is_file():
-            raise SkillCreatorError(f"--content-file が見つかりません: {source}")
+            raise SkillCreatorError(f"--content-file not found: {source}")
         try:
             return source.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as e:
-            raise SkillCreatorError(f"--content-file を読めません: {e}") from e
+            raise SkillCreatorError(f"Cannot read --content-file: {e}") from e
     if args.new is None:
-        raise SkillCreatorError("--old には --new も指定してください。")
+        raise SkillCreatorError("Specify --new together with --old.")
     if not target.is_file():
-        raise SkillCreatorError(f"置き換え対象のファイルがありません: {target.name}（全体を書くなら --content）")
+        raise SkillCreatorError(f"The file to replace in does not exist: {target.name} (use --content to write the whole file)")
     text = target.read_text(encoding="utf-8")
     count = text.count(args.old)
     if count != 1:
         raise SkillCreatorError(
-            f"--old がファイル内で{count}か所一致しました（1か所だけ一致する必要があります）。前後の文も含めて指定してください。"
+            f"--old matched {count} places in the file (it must match exactly one place). Include the surrounding text."
         )
     return text.replace(args.old, args.new, 1)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True, help="ドラフト名（自分のドラフトはスキル名だけでよい）")
-    parser.add_argument("--path", required=True, help="スキルフォルダからの相対パス（例: SKILL.md, scripts/run.py）")
-    parser.add_argument("--content", help="ファイル全体の内容")
-    parser.add_argument("--content-file", help="内容を写すファイル（作業フォルダに書いた長い内容など）")
-    parser.add_argument("--old", help="置き換える部分（ファイル内で1か所だけ一致すること）")
-    parser.add_argument("--new", help="--old を置き換える内容")
+    parser.add_argument("--name", required=True, help="draft name (for your own drafts, just the skill name)")
+    parser.add_argument("--path", required=True, help="path relative to the skill folder (e.g. SKILL.md, scripts/run.py)")
+    parser.add_argument("--content", help="content of the whole file")
+    parser.add_argument("--content-file", help="file to copy the content from (such as long content written in the working folder)")
+    parser.add_argument("--old", help="the part to replace (must match exactly one place in the file)")
+    parser.add_argument("--new", help="content that replaces --old")
     args = parser.parse_args()
 
     ctx = draft_context()
@@ -97,7 +97,7 @@ def main() -> int:
                 target.unlink()
             else:
                 target.write_bytes(previous)
-            raise SkillCreatorError(f"SKILL.md の frontmatter が不正なため書き込みを取り消しました: {error}")
+            raise SkillCreatorError(f"The write was undone because the frontmatter of SKILL.md is invalid: {error}")
     touch_meta(ctx, ref)
     print_json({"draft": ref.full_name, "path": str(target), "chars": len(text)})
     return 0

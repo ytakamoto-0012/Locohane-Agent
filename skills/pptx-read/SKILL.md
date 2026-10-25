@@ -1,6 +1,6 @@
 ---
 name: pptx-read
-description: PowerPoint（.pptx）の読み込み専用スキル。スライドごとのタイトル・本文テキスト・表・発表者ノートを人間向けの要約として抽出する。python-pptxを使いLibreOffice等の外部アプリは不要。ユーザーがPowerPointファイルの内容を確認・要約したいとき、pptxからテキストや表を抽出したいときに使う。新規作成は`pptx-create`、既存テンプレートの部分編集は`pptx-edit`（事前に`pptx-inspect`が必要）、レイアウトを画像で確認したい場合は`pptx-render`を使う。
+description: A read-only skill for PowerPoint (.pptx). Extracts the title, body text, tables and speaker notes of each slide as a human-oriented summary. Uses python-pptx; no external apps such as LibreOffice are needed. Use it when the user wants to check or summarize the content of a PowerPoint file, or extract text and tables from a pptx. Use `pptx-create` for creating new ones, `pptx-edit` for partially editing existing templates (`pptx-inspect` is needed first), and `pptx-render` to check the layout as images.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,53 +9,52 @@ metadata:
 
 # pptx-read
 
-pptxの読み込み（テキスト・表・発表者ノートの抽出）を行うスキルです。
-`read_pptx.py` を実行して結果を得ます。
-`python-pptx` を使っており、LibreOffice等の外部アプリは不要です。
+A skill that reads pptx (extracts text, tables and speaker notes).
+Run `read_pptx.py` to get the result.
+It uses `python-pptx`; no external apps such as LibreOffice are needed.
 
-正常系なら終了コード0でJSON1行を標準出力へ、異常系なら終了コード非0で
-エラーメッセージを標準エラーへ出力します。
+On success it prints one line of JSON to stdout with exit code 0; on failure it prints an
+error message to stderr with a non-zero exit code.
 
-スライドごとの本文データは直接標準出力へは返さず、一時JSONファイルへ書き出して
-そのパス（`result_path`）を返します。中身を確認するには `result_path` を
-読んでください（内容は複数行に整形されているため部分読み込みできます）。
+The per-slide body data is not returned directly on stdout; it is written to a temporary JSON file
+and its path (`result_path`) is returned. To check the content, read `result_path`
+(the content is formatted over multiple lines, so it can be read partially).
 
-## read_pptx.py — pptxからテキスト・表・ノート抽出
+## read_pptx.py — extract text, tables and notes from pptx
 
-呼び出し例:
+Call example:
 ```bash
 python read_pptx.py "C:\Users\me\sample.pptx" --start-slide 1 --max-slides 20
 ```
-`--start-slide`/`--max-slides` は省略可（既定 start-slide=1, max-slides=20）。
+`--start-slide`/`--max-slides` can be omitted (defaults start-slide=1, max-slides=20).
 
-出力例:
+Output example:
 ```json
 {"path": "C:\\foo\\sample.pptx", "total_slides": 12, "start_slide": 1, "end_slide": 12,
  "slides_count": 12,
  "result_path": "C:\\...\\pptx_read\\1a2b3c4d_20260805_153012_123456.json"}
 ```
-スライドごとの本文（`slides`、各要素は `{"index", "title", "texts", "tables", "notes"}`）は
-標準出力からは省かれ、`result_path` が指すJSONファイルにのみ含まれます。
-これを読んで内容を確認してください。各要素のキーの意味は以下の通りです。
+The per-slide body (`slides`, each element `{"index", "title", "texts", "tables", "notes"}`) is
+left out of stdout and included only in the JSON file that `result_path` points to.
+Read it to check the content. The keys of each element mean the following.
 
-- `title`: そのスライドのタイトルプレースホルダのテキスト（無ければ `null`）。
-- `texts`: タイトル以外のテキストを持つ図形のテキスト一覧（1図形＝1要素、複数行はそのまま`\n`区切り）。
-- `tables`: 表があれば2次元配列（1行目を含む全行）のリストとして格納。表が無ければ `[]`。
-- `notes`: 発表者ノートのテキスト（無ければ `null`）。
+- `title`: the text of the slide's title placeholder (`null` if none).
+- `texts`: the list of texts of shapes with text other than the title (1 shape = 1 element; multiple lines stay separated by `\n`).
+- `tables`: if there are tables, stored as a list of 2D arrays (all rows including the first). `[]` if there are no tables.
+- `notes`: the text of the speaker notes (`null` if none).
 
-`total_slides` が `max_slides` より多い場合は、続きを読みたければ `--start-slide` を
-`end_slide + 1` に指定して再度呼び出すことを案内してください（`read_pdf.py` の
-start-page/max-pageと同じ考え方のスライド版です）。
+If `total_slides` is larger than `max_slides`, tell the user that to read on, call it again with `--start-slide`
+set to `end_slide + 1` (the slide version of the same idea as start-page/max-page of `read_pdf.py`).
 
-## エッジケース
+## Edge cases
 
-- ファイル不在・ディレクトリ指定・pptx以外の壊れたファイルはエラー終了します。
-- `start_slide` が総スライド数を超える場合はエラーにはならず、
-  `slides_count: 0`, `start_slide`/`end_slide`: `null` を終了コード0で返します。
-- 依存パッケージ `python-pptx` が実行環境に入っていないと `ModuleNotFoundError` で
-  終了コード非0になります。その場合は導入者へ `pip install python-pptx` の実施を促してください。
+- A missing file, a directory, or a broken non-pptx file ends with an error.
+- If `start_slide` exceeds the total number of slides, it is not an error;
+  it returns `slides_count: 0`, `start_slide`/`end_slide`: `null` with exit code 0.
+- If the dependency `python-pptx` is not installed in the environment, it ends with `ModuleNotFoundError` and
+  a non-zero exit code. In that case, prompt the installer to run `pip install python-pptx`.
 
-## 編集対象を特定したい場合
+## To identify what to edit
 
-既存テンプレートを編集する目的でshape単位の構造（`shape_index`等）を知りたい
-場合は、このスキルではなく `pptx-inspect` を使ってください。
+If you want to know the structure per shape (`shape_index`, etc.) in order to edit an existing template,
+use `pptx-inspect` instead of this skill.

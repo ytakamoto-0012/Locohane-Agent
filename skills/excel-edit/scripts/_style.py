@@ -82,7 +82,7 @@ def build_border(style: dict) -> Border | None:
     elif isinstance(spec, dict):
         sides = spec
     else:
-        raise ValueError(f"border の指定が不正です: {spec!r}")
+        raise ValueError(f"Invalid border specification: {spec!r}")
     return Border(**{side: Side(style=sides[side]) for side in sides if sides.get(side)})
 
 

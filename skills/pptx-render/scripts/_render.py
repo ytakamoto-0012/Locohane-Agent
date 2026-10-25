@@ -112,7 +112,7 @@ def _convert_office_to_pdf(path: Path, tool: str, thread_id: str) -> Path:
             doc.Close(SaveChanges=False)
 
         else:
-            raise ValueError(f"未知のツール: {tool}")
+            raise ValueError(f"Unknown tool: {tool}")
 
         return Path(pdf_path)
 

@@ -1,6 +1,6 @@
 ---
 name: docx-render
-description: Word文書（.docx）のページを画像化し、analyze_imageでLLMに見せるためのスキル（OLE→PDF→PNG変換）。ローカルのMicrosoft Word本体が必要。テキスト抽出だけでは分からないレイアウト・表・画像配置・強調表現を確認したいとき、生成・編集したdocxの見た目を確認したいときに使う。テキストの抽出・検索には`docx-read`、生成には`docx-create`、編集には`docx-edit`を使う。
+description: A skill that renders the pages of Word documents (.docx) as images to show them to the LLM with analyze_image (OLE -> PDF -> PNG conversion). Needs a local Microsoft Word installation. Use it when you want to check the layout, tables, image placement and emphasis that text extraction alone cannot show, or to check the look of a docx you generated or edited. Use `docx-read` for extracting and searching text, `docx-create` for generating, and `docx-edit` for editing.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,28 +9,28 @@ metadata:
 
 # docx-render
 
-DOCXページを画像化してLLMに見せるスキルです。`render_docx.py` を実行して
-結果を得ます。`docx-read` の `read_docx.py` でテキストは取得
-できても、レイアウト・表・画像の配置・強調表現などテキストだけでは読み取れない
-情報があるため、文書の意図をより高精度に汲み取りたいときはこちらを使って
-画像として内容を確認します。
+A skill that renders DOCX pages as images to show them to the LLM. Run `render_docx.py` to
+get the result. `read_docx.py` of `docx-read` can get the text,
+but some information, such as the layout, tables, image placement and emphasis, cannot be read from text alone,
+so when you want to grasp the intent of a document more accurately, use this to check the content
+as images.
 
-正常系なら終了コード0でJSON1行を標準出力へ、異常系なら終了コード非0で
-エラーメッセージを標準エラーへ出力します。
+On success it prints one line of JSON to stdout with exit code 0; on failure it prints an
+error message to stderr with a non-zero exit code.
 
-呼び出し例:
+Call example:
 ```bash
 python render_docx.py "C:\Users\me\report.docx"
 ```
-## 引数一覧
+## Arguments
 
-| 引数 | 必須/任意 | 値の型 | 既定値 | 説明 |
+| Argument | Required/optional | Type | Default | Description |
 |---|---|---|---|---|
-| `docx_path`（位置引数） | 必須 | 文字列（絶対パス） | - | 画像化対象の`.docx`ファイルパス。他拡張子はエラー |
+| `docx_path` (positional) | Required | String (absolute path) | - | Path of the `.docx` file to render. Other extensions are errors |
 
-全ページを一度に画像化します（ページ範囲の指定はできません）。
+All pages are rendered at once (a page range cannot be specified).
 
-出力例:
+Output example:
 ```json
 {"path": "C:\\foo\\report.docx", "tool": "docx", "total_pages": 3, "start_page": 1, "end_page": 3, "dpi": 300, "target_dpi": 150, "crop_applied": false,
  "images": [
@@ -39,22 +39,22 @@ python render_docx.py "C:\Users\me\report.docx"
    {"page": 3, "image_path": "C:\\...\\rendered\\1a2b3c4d_p3.png", "original_dpi": 300}
  ]}
 ```
-`images`には`total_pages`件全てが含まれる。
+`images` contains all `total_pages` entries.
 
-**重要（2段階手順）**: このスクリプト自体はPNGファイルを保存してパスをJSONで
-返すだけで、LLMへ画像を見せるところまでは行いません。`images` の各要素の
-`image_path`（絶対パス）を、続けて `analyze_image` ツール（このスキル専用ではなく
-共通ツール）の `relative_path` 引数にそのまま渡して呼び出してください。
-1回の `analyze_image` 呼び出しで1ページ分が見えるので、複数ページある場合は
-ページ数分 `analyze_image` を呼びます。
+**Important (2-step procedure)**: this script only saves PNG files and returns their paths in JSON;
+it does not go as far as showing the images to the LLM. Next, pass the `image_path` (absolute path) of each element of `images`
+as is to the `relative_path` argument of the `analyze_image` tool (a shared tool,
+not specific to this skill) and call it.
+One `analyze_image` call shows one page, so if there are several pages,
+call `analyze_image` once per page.
 
-## エッジケース
+## Edge cases
 
-- ファイル不在・ディレクトリ指定・拡張子が`.docx`以外・壊れたファイル/Word未インストールはエラー終了します。
-- PDF化後のページ数が0になった場合はエラーにはならず終了コード0で返りますが、
-  返るJSONの形が通常時と異なる点に注意（`images: []`に加えて`start_page`/`end_page`が
-  `null`になり、**`target_dpi`キー自体が無くなる**）。
-- 生成されるPNGは一時フォルダ（`rendered/`配下）に保存されます。同一ファイルの
-  再実行時は上書きされます。
-- 依存パッケージ `pywin32`・`pypdfium2`・`pillow` が実行環境に無い場合は
-  `ImportError` で終了コード非0になります。
+- A missing file, a directory, an extension other than `.docx`, a broken file, or Word not installed ends with an error.
+- If the number of pages after PDF conversion is 0, it is not an error and returns with exit code 0,
+  but note that the shape of the returned JSON differs from normal (in addition to `images: []`, `start_page`/`end_page` become
+  `null`, and **the `target_dpi` key itself disappears**).
+- Generated PNGs are saved in a temporary folder (under `rendered/`). Rerunning on the same file
+  overwrites them.
+- If the dependencies `pywin32`, `pypdfium2` and `pillow` are not in the environment, it ends
+  with `ImportError` and a non-zero exit code.

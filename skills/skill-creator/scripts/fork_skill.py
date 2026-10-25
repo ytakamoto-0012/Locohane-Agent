@@ -40,16 +40,16 @@ from _common import (
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True, help="改善したい正式スキルの名前")
+    parser.add_argument("--name", required=True, help="name of the official skill you want to improve")
     args = parser.parse_args()
 
     base_dir = find_official_skill(args.name)
     if base_dir is None:
-        raise SkillCreatorError(f"正式スキルが見つかりません: {args.name}")
+        raise SkillCreatorError(f"Official skill not found: {args.name}")
     ctx = draft_context()
     ref = resolve_draft(ctx, args.name, "write", must_exist=False)
     if ref.dir.exists():
-        raise SkillCreatorError(f"同じ名前のドラフトが既にあります: {ref.full_name}（続きはそのドラフトを編集してください）")
+        raise SkillCreatorError(f"A draft with the same name already exists: {ref.full_name} (continue by editing that draft)")
 
     shutil.copytree(base_dir, ref.dir, ignore=copy_ignore_for(base_dir))
     evals_dir = ref.dir / DRAFT_EVALS_DIRNAME
@@ -83,7 +83,7 @@ def main() -> int:
             "skill_dir": str(ref.dir),
             "base_dir": str(base_dir),
             "copied_cases": copied_cases,
-            "note": f"次のメッセージから、自分の会話では {ref.full_name} として改善案を試せます（正式スキルはそのまま）。",
+            "note": f"From the next message, you can try your improvements as {ref.full_name} in your own conversations (the official skill stays as is).",
         }
     )
     return 0

@@ -1,52 +1,51 @@
-# ユーザーフォームのテクニック
+# User form techniques
 
-## 表示方法: vbModal と vbModeless
+## How to show: vbModal and vbModeless
 
 ```vb
-UserForm1.Show vbModal      ' 既定。閉じるまで裏の操作をブロック
-UserForm1.Show vbModeless   ' 非モーダル。表示したままシート操作を続けられる
+UserForm1.Show vbModal      ' default. Blocks operations behind it until closed
+UserForm1.Show vbModeless   ' modeless. You can keep working on the sheet while it is shown
 ```
 
-非モーダルにすると、フォームを開いたままシートを触ってその変化をフォーム側で
-拾う（進捗表示・リアルタイムプレビュー等）ことができるが、フォームを閉じずに
-マクロが終了する経路があると、Excel終了時までフォームが残り続けることがあるため
-`Unload` を確実に呼ぶ設計にする。
+Making it modeless lets you touch the sheet with the form open and pick up the changes on the form side
+(progress display, real-time preview, etc.), but if there is a path where the macro ends without closing the form,
+the form may stay until Excel exits, so design it to reliably call `Unload`.
 
-## 初期化データの受け渡し（Public プロパティ経由）
+## Passing initialization data (via Public properties)
 
-フォームモジュールに直接パラメータを渡す構文は無いため、`Public` プロパティ
-または `Public` 変数をフォーム側に用意し、呼び出し元から `Show` の前にセットする。
+There is no syntax for passing parameters directly to a form module, so prepare `Public` properties
+or `Public` variables on the form side and set them from the caller before `Show`.
 
 ```vb
-' UserForm1 側
+' UserForm1 side
 Public TargetSheetName As String
 
 Private Sub UserForm_Initialize()
-    Me.Caption = "対象: " & TargetSheetName
+    Me.Caption = "Target: " & TargetSheetName
 End Sub
 ```
 
 ```vb
-' 呼び出し元
+' Caller
 With New UserForm1
     .TargetSheetName = "Data"
     .Show vbModal
 End With
 ```
 
-`New UserForm1` で毎回新しいインスタンスを生成する書き方にすると、グローバルな
-`UserForm1`（既定インスタンス）の状態が前回表示時のまま残る事故を避けられる
-（同じフォームを複数回表示する処理で値が引き継がれてしまうバグの典型原因）。
+Creating a new instance every time with `New UserForm1` avoids accidents where the state of the global
+`UserForm1` (the default instance) remains as it was the last time it was shown
+(a typical cause of bugs where values carry over in processing that shows the same form several times).
 
-## OK/キャンセルの結果を呼び出し元へ返す（キャンセルフラグパターン）
+## Returning the OK/Cancel result to the caller (the cancel flag pattern)
 
 ```vb
-' UserForm1 側
+' UserForm1 side
 Public Cancelled As Boolean
 
 Private Sub btnOK_Click()
     Cancelled = False
-    Me.Hide   ' Unloadではなく Hide（呼び出し元がプロパティを読めるように残す）
+    Me.Hide   ' Hide, not Unload (keep it so the caller can read the properties)
 End Sub
 
 Private Sub btnCancel_Click()
@@ -55,29 +54,28 @@ Private Sub btnCancel_Click()
 End Sub
 
 Private Sub UserForm_Initialize()
-    Cancelled = True   ' 右上×ボタンで閉じられた場合の既定値
+    Cancelled = True   ' the default for when it is closed with the X button at the top right
 End Sub
 ```
 
 ```vb
-' 呼び出し元
+' Caller
 Dim frm As New UserForm1
 frm.Show vbModal
 If Not frm.Cancelled Then
-    ' frm の入力値を使って処理
+    ' process using the input values of frm
 End If
 Unload frm
 ```
 
-ボタンクリック側で `Unload Me` してしまうと、`Show vbModal` の直後の行に
-制御が戻った時点で既にフォームのコントロール値・プロパティが破棄されて
-読み取れない。**結果を読み終わるまでは `Hide` に留め、呼び出し元が読み終わった
-後で `Unload`** する。
+If the button click side does `Unload Me`, by the time control returns to the line right after `Show vbModal`,
+the form's control values and properties have already been destroyed and cannot be read.
+**Keep it at `Hide` until the results have been read, and `Unload` after the caller has finished reading.**
 
-## 右上×ボタン（QueryClose）のハンドリング
+## Handling the X button at the top right (QueryClose)
 
-ユーザーがタイトルバーの×で閉じた場合も `Cancelled` を確定させたいときは
-`QueryClose` イベントで拾う。
+To settle `Cancelled` even when the user closes it with the X on the title bar,
+catch it in the `QueryClose` event.
 
 ```vb
 Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
@@ -87,43 +85,43 @@ Private Sub UserForm_QueryClose(Cancel As Integer, CloseMode As Integer)
 End Sub
 ```
 
-## 入力検証はコントロールの Exit / フォームの OK 押下時の両方で
+## Validate input both on the control's Exit and when OK is pressed on the form
 
-`TextBox` の `Exit` イベントで即時検証すると、ユーザーが値を空にしたまま
-別のボタン（キャンセル等）を押した場合にも検証が走ってしまい体験が悪くなる
-ことがある。**「その場で入力形式だけ軽くチェック」は `Exit`、「全項目そろって
-いるかの最終確認」は OK ボタン押下時にまとめて行う**、と役割を分けるのが定石。
+Validating immediately in the `Exit` event of a `TextBox` also runs validation when the user leaves the value empty
+and presses another button (Cancel, etc.), which can make for a bad experience.
+**The standard practice is to split roles: "a light check of the input format on the spot" in `Exit`, and "the final check that
+all items are filled in" all together when the OK button is pressed.**
 
 ```vb
 Private Sub txtAmount_Exit(ByVal Cancel As MSForms.ReturnBoolean)
     If Not IsNumeric(Me.txtAmount.Value) And Len(Me.txtAmount.Value) > 0 Then
-        MsgBox "数値を入力してください"
-        Cancel = True   ' フォーカスをこのコントロールに留める
+        MsgBox "Enter a number"
+        Cancel = True   ' keep the focus on this control
     End If
 End Sub
 ```
 
-`Cancel = True` にするとフォーカス移動自体をキャンセルできる（ユーザーは
-修正するまで次のコントロールへ移れない）。多用すると使い勝手を損なうため、
-必須項目や致命的な形式違反のみに絞るのが無難。
+`Cancel = True` cancels the focus move itself (the user cannot move to the next control
+until fixing it). Overusing it hurts usability, so it is safest to limit it to
+required items and critical format violations.
 
-## ListBox / ComboBox への一括データ投入
+## Filling a ListBox / ComboBox with data in bulk
 
-行ごとに `.AddItem` するより、`List` プロパティへ2次元配列を渡す方が速く
-コードも短い（考え方は [[performance-tips]] の配列一括読み書きと同じ）。
+Passing a 2D array to the `List` property is faster and shorter than `.AddItem` per row
+(the same idea as the bulk array reading/writing of [[performance-tips]]).
 
 ```vb
 Me.ListBox1.ColumnCount = 3
 Me.ListBox1.List = Range("A2:C100").Value
 ```
 
-行選択と対応データの紐付けが必要な場合、表示に使わない列も`ColumnCount`に
-含めて `ColumnWidths` で幅0にして隠す（内部IDを持たせるテクニック）か、
-`.List(選択行, 列)` で選択後にシート側の対応行を逆引きする設計にする。
+If you need to link the selected row to the corresponding data, include columns not used for display in `ColumnCount`
+and hide them with width 0 in `ColumnWidths` (a technique for holding an internal ID), or design it to look up
+the corresponding row on the sheet with `.List(selected row, column)` after selection.
 
-## コントロールを動的に増やす（Controls.Add）
+## Adding controls dynamically (Controls.Add)
 
-固定数のコントロールで足りない場合（可変件数の入力行等）は実行時に追加できる。
+When a fixed number of controls is not enough (input rows of a variable count, etc.), you can add them at run time.
 
 ```vb
 Dim ctl As MSForms.Control
@@ -133,27 +131,26 @@ ctl.Left = 10
 ctl.Width = 100
 ```
 
-動的コントロールのイベント（Click等）を拾いたい場合は、クラスモジュールで
-`WithEvents` を使ったイベントハンドラのコレクションを別途用意する必要があり、
-標準モジュールの単純なコードでは対応できない点に注意（複雑になりやすいため、
-可変件数が数件程度ならフォーム自体を複数回表示する設計の方が単純なことも多い）。
+Note that to catch events (Click, etc.) of dynamic controls, you need to prepare separately a collection of event handlers
+using `WithEvents` in a class module, which simple code in a standard module cannot handle (it tends to get complex,
+so if the variable count is only a few, designing it to show the form itself several times is often simpler).
 
-## 既定インスタンスの状態が残るのは「Unloadを挟まなかった」場合（誤解に注意）
+## The default instance's state remains when "Unload was not done in between" (beware of a misconception)
 
 ```vb
 UserForm1.Show vbModal
 Unload UserForm1
-UserForm1.Show vbModal   ' Unloadを挟んでいるので TextBox1.Value 等は初期状態に戻る
+UserForm1.Show vbModal   ' Unload is in between, so TextBox1.Value etc. return to the initial state
 ```
 
-`Unload` を挟むと既定インスタンスはメモリ上から破棄され、次に `UserForm1` を
-参照した時点で新しいインスタンスが生成されて `UserForm_Initialize` が再度走る。
-そのため上のコードでは、コントロール値も独自の `Public`/`Private` 変数も
-**前回値を引き継がない**（初期状態にリセットされる）。「Unloadした後も値が
-残る」というのはよくある誤解なので注意する。
+With `Unload` in between, the default instance is destroyed from memory, and the next time `UserForm1`
+is referenced a new instance is created and `UserForm_Initialize` runs again.
+So in the code above, neither control values nor your own `Public`/`Private` variables
+**carry over the previous values** (they are reset to the initial state). "Values remain even after Unload"
+is a common misconception, so be careful.
 
-本当に注意すべきなのは逆のケースで、**`Unload` を挟まずに `Hide` のまま
-次の `Show` を呼ぶと、既定インスタンスは破棄されていないため前回の値が
-そのまま残ってしまう**（前述の「初期化データの受け渡し」節で触れた事故の
-典型パターン）。`New UserForm1` で都度新規インスタンス化するか、`Show` の
-前に明示的なリセット処理を入れると挙動を予測しやすくなる。
+What you really need to watch out for is the opposite case: **calling the next `Show` while it is only `Hide`, without `Unload` in between,
+keeps the previous values as they are, because the default instance has not been destroyed**
+(the typical pattern of the accident mentioned in the "Passing initialization data" section above).
+Creating a new instance each time with `New UserForm1`, or putting an explicit reset before `Show`,
+makes the behavior easier to predict.

@@ -134,7 +134,7 @@ def _add_table(doc, block: dict, theme: dict):
 
     rows = block.get("rows") or []
     if not rows:
-        raise ValueError("table.rows が空です（少なくとも1行必要）")
+        raise ValueError("table.rows is empty (at least 1 row is needed)")
     n_cols = max(len(r) for r in rows)
     table = doc.add_table(rows=len(rows), cols=n_cols)
     table.style = "Table Grid"
@@ -158,7 +158,7 @@ def _add_image(doc, block: dict, theme: dict):
 
     image_path = Path(str(block.get("path", "")))
     if not image_path.is_file():
-        raise ValueError(f"画像ファイルが見つかりません: {block.get('path')}")
+        raise ValueError(f"Image file not found: {block.get('path')}")
     kwargs = {}
     if block.get("width_cm"):
         kwargs["width"] = Cm(float(block["width_cm"]))

@@ -233,7 +233,7 @@ def _convert_office_to_pdf(
             pdf_entries.append((None, pdf_path))
 
         else:
-            raise ValueError(f"未知のツール: {tool}")
+            raise ValueError(f"Unknown tool: {tool}")
 
         return pdf_entries, scale_by_sheet
 
@@ -434,10 +434,9 @@ def render_office_file(
         split_sheets = [name for name, s in scale_by_sheet.items() if s < _FIT_SCALE_FLOOR]
         if split_sheets:
             msg = (
-                "警告: シート " + ", ".join(split_sheets) + " は列幅・行高さの合計が用紙1ページに収めるための下限スケール"
-                "(10%)を下回っています。1ページに収まらず複数ページに分割され"
-                "ています。excel-editのset_column_width（単位は文字幅、目安1〜60）"
-                "で列幅を見直してください。"
+                "Warning: sheet " + ", ".join(split_sheets) + " has a total of column widths and row heights below the minimum scale for fitting it on one page"
+                " (10%). It does not fit on one page and is split into several pages. "
+                "Review the column widths with set_column_width of excel-edit (the unit is character width, roughly 1-60)."
             )
             warnings.append(msg)
             print(msg, file=sys.stderr)

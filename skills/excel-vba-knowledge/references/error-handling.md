@@ -1,9 +1,9 @@
-# エラー処理の定石
+# Standard patterns for error handling
 
-## 基本パターン（後片付き保証つき）
+## The basic pattern (with guaranteed cleanup)
 
-VBAには `try/finally` が無いため、`On Error GoTo` + ラベル + `Exit Sub` の組み合わせで
-「異常時も後片付け（オブジェクト解放・画面更新の復元等）を必ず通す」形にする。
+VBA has no `try/finally`, so combine `On Error GoTo` + a label + `Exit Sub` into a form that
+"always goes through cleanup (releasing objects, restoring screen updating, etc.) even on errors".
 
 ```vb
 Sub DoSomething()
@@ -15,7 +15,7 @@ Sub DoSomething()
     Application.ScreenUpdating = False
 
     Set wb = Workbooks.Open("C:\data\input.xlsx")
-    ' ... 本処理 ...
+    ' ... main processing ...
 
 CleanExit:
     On Error Resume Next
@@ -24,57 +24,57 @@ CleanExit:
     Exit Sub
 
 ErrHandler:
-    MsgBox "エラー " & Err.Number & ": " & Err.Description, vbExclamation
+    MsgBox "Error " & Err.Number & ": " & Err.Description, vbExclamation
     Resume CleanExit
 End Sub
 ```
 
-ポイント:
-- `ErrHandler` から `Resume CleanExit` で正常系と同じ後片付けルートに合流させる。
-  後片付けコードを正常系・異常系の2箇所に書かない（重複すると片方だけ直し忘れる事故が起きる）。
-- 後片付け中（`CleanExit`ブロック）で再度エラーが起きても連鎖で落ちないよう、
-  直前に `On Error Resume Next` を置く。
+Points:
+- From `ErrHandler`, join the same cleanup route as the normal path with `Resume CleanExit`.
+  Do not write cleanup code in 2 places, the normal and error paths (duplication leads to accidents where only one gets fixed).
+- So that another error during cleanup (the `CleanExit` block) does not cascade,
+  put `On Error Resume Next` right before it.
 
-## `On Error Resume Next` は範囲を最小に絞る
+## Keep the scope of `On Error Resume Next` minimal
 
-「次の1行だけエラーを無視したい」場合に使うが、無視区間が広いと本来検知すべき
-エラーまで握りつぶしてしまう。無視したい行の直後で必ず `On Error GoTo 0`
-（またはハンドラへ戻す）に戻すこと。
+It is used when you want to "ignore errors on just the next line", but a wide ignored section swallows
+errors you should have detected. Always go back with `On Error GoTo 0`
+(or back to the handler) right after the line you want to ignore.
 
 ```vb
 On Error Resume Next
 Set ws = ThisWorkbook.Worksheets("Sheet_NotExist")
 On Error GoTo 0
 If ws Is Nothing Then
-    ' シートが無い場合の分岐
+    ' The branch for when the sheet does not exist
 End If
 ```
 
-シート存在確認・オブジェクトが Nothing になりうる判定など、
-「無ければ Nothing のままにして後続で判定する」パターンでよく使う。
+It is often used in the pattern "leave it Nothing if it does not exist, and check later", such as
+checking whether a sheet exists or whether an object can be Nothing.
 
-## Err オブジェクトはハンドラ内でのみ有効な情報を持つ
+## The Err object has valid information only inside the handler
 
-`Err.Number` / `Err.Description` はハンドラに入った直後に読み取る。
-ハンドラ内で別の処理（別のSub呼び出し等）を挟むとその処理が新たにエラーを
-起こした場合に上書きされるため、必要な値は最初に変数へ退避してから使う。
+Read `Err.Number` / `Err.Description` right after entering the handler.
+If you put other processing (calling another Sub, etc.) in the handler and that processing raises a new error,
+they are overwritten, so save the values you need into variables first and then use them.
 
-## エラー番号の主な使い分け
+## The main error numbers
 
-- `9`（インデックスが有効範囲にありません）: 存在しないシート名・配列範囲外アクセス。
-- `1004`（アプリケーション定義またはオブジェクト定義のエラー）: Range操作の失敗
-  （非表示シートへの書き込み、保護シートへの書き込み等）で頻出。原因はメッセージだけでは
-  特定できないことが多く、直前の操作（どのRangeに何をしようとしたか）をコメントや
-  ログで残しておくと切り分けが早い。
-- `91`（オブジェクト変数または With ブロック変数が設定されていません）: `Set` し忘れ、
-  または `Find` 系メソッドが見つからず `Nothing` を返した戻り値をそのまま使った場合。
-  `Find` の戻り値は必ず `Is Nothing` で判定してから使う。
+- `9` (Subscript out of range): a nonexistent sheet name, an out-of-range array access.
+- `1004` (Application-defined or object-defined error): frequent in failed Range operations
+  (writing to a hidden sheet, writing to a protected sheet, etc.). The cause often cannot be identified
+  from the message alone, so leaving the preceding operation (what you tried to do with which Range) in comments or
+  logs speeds up isolating it.
+- `91` (Object variable or With block variable not set): forgetting `Set`,
+  or using as is the return value `Nothing` when a `Find` method found nothing.
+  Always check the return value of `Find` with `Is Nothing` before using it.
 
-## カスタムエラーの送出
+## Raising custom errors
 
-自作関数が異常を呼び出し元に伝える場合は `Err.Raise` を使う。番号は
-`vbObjectError + 任意の正の数`（Excel/VBA予約範囲との衝突を避けるため）。
+When your own function needs to tell the caller about an abnormal situation, use `Err.Raise`. Use the number
+`vbObjectError + any positive number` (to avoid collisions with the Excel/VBA reserved range).
 
 ```vb
-Err.Raise vbObjectError + 1001, "ValidateInput", "入力シートが見つかりません"
+Err.Raise vbObjectError + 1001, "ValidateInput", "The input sheet was not found"
 ```

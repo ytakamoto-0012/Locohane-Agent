@@ -1,6 +1,6 @@
 ---
 name: pptx-create
-description: JSON定義を渡すだけでPowerPoint（.pptx）を新規生成するスキル。表紙・箇条書き・章区切り・2カラム・表・数値強調（stat）・画像・白紙の各レイアウトに対応し、配色テーマ（8種のアクセントカラー）とダーク表紙も指定できる。同梱の16:9テンプレート（python-pptx既定テーマ準拠）で1回のスクリプト実行でデザイン済みのプレゼン資料を作成できる。新しいプレゼン資料・スライドを作成してほしいとき、見た目の良い資料をpptx形式で出力したいときに使う。既存テンプレートのデザインを保った部分編集は`pptx-edit`（事前に`pptx-inspect`が必要）、内容確認は`pptx-read`を使う。
+description: A skill that generates a new PowerPoint file (.pptx) just by passing a JSON definition. Supports the layouts cover, bullets, section break, two columns, table, number emphasis (stat), picture and blank, and a color theme (8 accent colors) and dark covers can be specified. With the bundled 16:9 template (based on the python-pptx default theme), a designed presentation can be created with one script run. Use it when asked to create a new presentation or slides, or when you want to output a good-looking presentation in pptx format. Use `pptx-edit` for partial edits that keep the design of an existing template (`pptx-inspect` is needed first), and `pptx-read` for checking content.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,135 +9,133 @@ metadata:
 
 # pptx-create
 
-JSON定義から新規pptxを生成するスキルです。`create_pptx.py` を実行して結果を
-得ます。`python-pptx` を使っており、LibreOffice等の
-外部アプリやサムネイル画像化には対応しません。土台は同梱の16:9テンプレート
-（`assets/template_16x9.pptx`、python-pptx既定テーマ準拠）で、その上に
-`theme`（配色テーマ）で見出し・表見出し行・stat数値の色を指定します。
-会社ロゴや独自テンプレートの適用が必要な場合は、このスキルではなく
-`pptx-edit`（既存テンプレートの部分編集）を使ってください。
+A skill that generates a new pptx from a JSON definition. Run `create_pptx.py` to get the
+result. It uses `python-pptx` and does not support external apps such as LibreOffice
+or rendering thumbnails. The base is the bundled 16:9 template
+(`assets/template_16x9.pptx`, based on the python-pptx default theme), and on top of it
+`theme` (the color theme) specifies the colors of headings, table header rows and stat numbers.
+If a company logo or a custom template needs to be applied, use
+`pptx-edit` (partial editing of an existing template) instead of this skill.
 
-正常系なら終了コード0でJSON1行を標準出力へ、異常系なら終了コード非0で
-エラーメッセージを標準エラーへ出力します。
+On success it prints one line of JSON to stdout with exit code 0; on failure it prints an
+error message to stderr with a non-zero exit code.
 
-呼び出し例:
+Call example:
 ```bash
-python create_pptx.py "C:\Users\me\out.pptx" --data '{"slides": [{"layout": "title", "title": "四半期報告", "subtitle": "2026年度 第2四半期"}]}'
+python create_pptx.py "C:\Users\me\out.pptx" --data '{"slides": [{"layout": "title", "title": "Quarterly report", "subtitle": "FY2026 Q2"}]}'
 ```
-`--data` の値は下記「JSON定義スキーマ」に従うJSON文字列です。スライド数が
-多くJSONが長大になる場合は `--data` の代わりに
-`<出力先pptxの絶対パス> --data-file <スライド定義JSONを書いたUTF-8ファイルの絶対パス>`
-を使う（`--data`/`--data-file` はどちらか一方を必ず指定。両方指定・両方省略はエラー）。
+The value of `--data` is a JSON string following the "JSON definition schema" below. When there are
+many slides and the JSON gets very long, use
+`<absolute path of the output pptx> --data-file <absolute path of a UTF-8 file with the slide definition JSON>`
+instead of `--data` (always specify exactly one of `--data`/`--data-file`; specifying both or neither is an error).
 
-## 引数一覧
+## Arguments
 
-| 引数 | 必須/任意 | 値の型 | 既定値 | 説明 |
+| Argument | Required/optional | Type | Default | Description |
 |---|---|---|---|---|
-| `output_path`（位置引数） | 必須 | 文字列（絶対パス） | - | 生成する`.pptx`の出力先パス |
-| `--data` | `--data-file`と排他で必須 | 文字列（JSON） | - | スライド定義JSONをそのまま1行の文字列で渡す |
-| `--data-file` | `--data`と排他で必須 | 文字列（絶対パス） | - | スライド定義JSONを書いたUTF-8ファイルのパス |
+| `output_path` (positional) | Required | String (absolute path) | - | Output path of the `.pptx` to generate |
+| `--data` | Required, exclusive with `--data-file` | String (JSON) | - | Pass the slide definition JSON as is as a one-line string |
+| `--data-file` | Required, exclusive with `--data` | String (absolute path) | - | Path of a UTF-8 file with the slide definition JSON |
 
-`output_path`は書き込み可能なディレクトリ配下の絶対パスを指定してください。
+Specify an absolute path under a writable directory for `output_path`.
 
-## JSON定義スキーマ
+## JSON definition schema
 
-トップレベルは `{"theme": "...", "slides": [...]}` です。`theme` は省略可
-（既定 `charcoal`）で、プレゼン全体の配色を下記から選びます。`slides` の各要素が
-1スライド分の定義で、`layout` キーで種類を指定します（省略時は `content`）。
+The top level is `{"theme": "...", "slides": [...]}`. `theme` can be omitted
+(default `charcoal`) and chooses the colors of the whole presentation from below. Each element of `slides` is
+the definition of one slide, and the `layout` key specifies its kind (`content` if omitted).
 
-### theme（配色テーマ、プレゼン全体で1つ）
+### theme (color theme, one for the whole presentation)
 
-Anthropic公式pptxスキルのDesign Ideas（配色パレット）に準拠した8種類です。
-見出し文字色・表の見出し行の塗り・stat数値の色に自動で反映されます。
-トピックに合わせて選んでください（迷ったら`charcoal`が無難、力強さや専門性を
-出したいなら`navy`、成長・環境系なら`forest`など）。
+8 kinds based on the Design Ideas (color palettes) of Anthropic's official pptx skill.
+They are applied automatically to the heading text color, the fill of table header rows and the color of stat numbers.
+Choose one that suits the topic (when in doubt, `charcoal` is safe; `navy` to convey strength or
+expertise; `forest` for growth and environment topics, etc.).
 
-| theme | 主な色調 |
+| theme | Main tone |
 |---|---|
-| `charcoal`（既定） | チャコールグレー・落ち着いた中立トーン |
-| `navy` | 濃紺・信頼感のあるビジネス調 |
-| `forest` | 深緑・成長や環境をイメージ |
-| `coral` | 紺+コーラル、明るく力強い |
-| `terracotta` | テラコッタ・温かみのある土色系 |
-| `ocean` | 深い青系のグラデーション調 |
-| `teal` | ティール・清潔感のあるトーン |
-| `berry` | ベリー色・落ち着いた華やかさ |
+| `charcoal` (default) | Charcoal gray, a calm neutral tone |
+| `navy` | Dark navy, a trustworthy business tone |
+| `forest` | Deep green, evoking growth and the environment |
+| `coral` | Navy + coral, bright and strong |
+| `terracotta` | Terracotta, warm earth tones |
+| `ocean` | A deep blue gradient tone |
+| `teal` | Teal, a clean tone |
+| `berry` | Berry color, calm and elegant |
 
-### layout（スライド種類）
+### layout (slide kind)
 
-| layout | 用途 | 主なキー |
+| layout | Use | Main keys |
 |---|---|---|
-| `title` | 表紙スライド | `title`, `subtitle`, `dark` |
-| `content` | タイトル＋箇条書き | `title`, `bullets`, `notes` |
-| `section` | 章区切りスライド | `title`, `dark` |
-| `two_content` | 2カラムの箇条書き | `title`, `left_bullets`, `right_bullets` |
-| `table` | タイトル＋表 | `title`, `table` |
-| `stat` | タイトル＋大きな数値の強調表示（1〜4件） | `title`, `stats` |
-| `picture` | タイトル＋画像 | `title`, `image_path`, `caption` |
-| `blank` | 白紙（notesのみ） | `notes` |
+| `title` | Cover slide | `title`, `subtitle`, `dark` |
+| `content` | Title + bullets | `title`, `bullets`, `notes` |
+| `section` | Section break slide | `title`, `dark` |
+| `two_content` | Bullets in two columns | `title`, `left_bullets`, `right_bullets` |
+| `table` | Title + table | `title`, `table` |
+| `stat` | Title + large emphasized numbers (1-4) | `title`, `stats` |
+| `picture` | Title + image | `title`, `image_path`, `caption` |
+| `blank` | Blank (notes only) | `notes` |
 
-- `bullets` / `left_bullets` / `right_bullets` は文字列のリスト、または
-  `{"text": "本文", "level": 1}` のようなdict（`level`はインデント段数、0始まり、省略時0）を
-  混在させたリストです。
-- `table` は `{"headers": ["列1", "列2"], "rows": [["a", "b"], ["c", "d"]]}` の形（`headers`は省略可）。
-  `headers`を指定するとtheme色の見出し行が自動で付きます。
-- `stats` は `[{"value": "+12%", "label": "売上成長率"}, ...]` の形（1〜4件）。
-  大きな太字の数値の下に小さいラベルが並ぶ、公式pptxスキルの「Large stat callouts」
-  パターンです。1件だけ渡すと単一の数値をスライド幅いっぱいに大きく強調表示できます。
-  件数が0件または5件以上の場合はエラー終了します。
-- `dark`（`title`/`section`のみ、既定`false`）: `true`にすると背景をtheme主色で塗り、
-  文字を白系にした表紙・章区切り向けの濃色スライドになります（公式スキルが推奨する
-  「表紙・締めは濃色、本文は淡色」の構成に使えます）。
-- `image_path` は挿入したい画像ファイルの絶対パス（実行環境から読める必要があります）。
-- `notes`（発表者ノート）は全layout共通で指定できます。
+- `bullets` / `left_bullets` / `right_bullets` are lists of strings, possibly mixed with
+  dicts like `{"text": "body", "level": 1}` (`level` is the indent depth, 0-based, 0 if omitted).
+- `table` has the form `{"headers": ["Col 1", "Col 2"], "rows": [["a", "b"], ["c", "d"]]}` (`headers` can be omitted).
+  Specifying `headers` automatically adds a header row in the theme color.
+- `stats` has the form `[{"value": "+12%", "label": "Sales growth"}, ...]` (1-4 items).
+  It is the "Large stat callouts" pattern of the official pptx skill, with small labels under large bold numbers.
+  Passing just one shows a single number emphasized large across the full slide width.
+  0 items or 5 or more items end with an error.
+- `dark` (only `title`/`section`, default `false`): `true` fills the background with the theme's main color
+  and makes the text whitish, giving a dark slide for covers and section breaks (usable for the structure
+  recommended by the official skill: "dark covers and closings, light body").
+- `image_path` is the absolute path of the image file to insert (it must be readable from the execution environment).
+- `notes` (speaker notes) can be specified for every layout.
 
-サンプルJSON（`--data` にそのまま渡せる1行にする場合はこれを圧縮してください）:
+Sample JSON (compress it into one line to pass it as is to `--data`):
 ```json
 {
   "theme": "navy",
   "slides": [
-    {"layout": "title", "title": "四半期報告", "subtitle": "2026年度 第2四半期", "dark": true},
-    {"layout": "content", "title": "サマリ", "bullets": ["売上は前年比+12%", {"text": "詳細は次スライド", "level": 1}]},
-    {"layout": "stat", "title": "主要指標", "stats": [{"value": "+12%", "label": "売上成長率"}, {"value": "142", "label": "月間契約数"}]},
-    {"layout": "table", "title": "実績一覧", "table": {"headers": ["月", "売上"], "rows": [["4月", "120"], ["5月", "135"]]}},
-    {"layout": "blank", "notes": "質疑応答用の白紙ページ"}
+    {"layout": "title", "title": "Quarterly report", "subtitle": "FY2026 Q2", "dark": true},
+    {"layout": "content", "title": "Summary", "bullets": ["Sales +12% year on year", {"text": "Details on the next slide", "level": 1}]},
+    {"layout": "stat", "title": "Key metrics", "stats": [{"value": "+12%", "label": "Sales growth"}, {"value": "142", "label": "Monthly contracts"}]},
+    {"layout": "table", "title": "Results", "table": {"headers": ["Month", "Sales"], "rows": [["April", "120"], ["May", "135"]]}},
+    {"layout": "blank", "notes": "Blank page for Q&A"}
   ]
 }
 ```
 
-出力例:
+Output example:
 ```json
 {"output_path": "C:\\foo\\out.pptx", "total_slides": 4, "size_bytes": 34200}
 ```
-生成が終わったら `output_path` と `total_slides` をユーザーに伝えてください。
+When generation is done, tell the user `output_path` and `total_slides`.
 
-## エッジケース
+## Edge cases
 
-- `--data` と `--data-file` を両方指定、または両方省略した場合はエラー終了します。
-- `--data-file` に指定したファイルが存在しない場合はエラー終了します。
-- JSONとして解析できない場合、`slides` キーが無い/空の場合はエラー終了します。
-- 未対応の `theme` 値を指定した場合、対応一覧を添えてエラー終了します。
-- 未対応の `layout` 値を指定した場合、対応一覧を添えてエラー終了します。
-- `layout: table` で `table` キーが無い、`headers`/`rows` が両方空の場合はエラー終了します。
-- `layout: stat` で `stats` が空（0件）、または5件以上の場合はエラー終了します（1〜4件は有効）。
-- `layout: picture` で `image_path` が無い、または指定パスにファイルが存在しない場合はエラー終了します。
-- 出力先ディレクトリが存在しない場合は自動的に作成されます。
-- 既存ファイルと同名の場合は上書きされます（上書きしてよいか事前にユーザーへ確認するとよい）。
-- 会社ロゴや独自テンプレートの適用（`theme`では変えられない部分）はこのスキルの対象外です。`pptx-edit`を使ってください。
-- 依存パッケージ `python-pptx` が実行環境に入っていないと `ModuleNotFoundError` で
-  終了コード非0になります。その場合は導入者へ `pip install python-pptx` の実施を促してください。
+- Specifying both `--data` and `--data-file`, or neither, ends with an error.
+- If the file given to `--data-file` does not exist, it ends with an error.
+- If it cannot be parsed as JSON, or the `slides` key is missing/empty, it ends with an error.
+- An unsupported `theme` value ends with an error listing the supported ones.
+- An unsupported `layout` value ends with an error listing the supported ones.
+- With `layout: table`, a missing `table` key or both `headers`/`rows` empty ends with an error.
+- With `layout: stat`, empty `stats` (0 items) or 5 or more items end with an error (1-4 items are valid).
+- With `layout: picture`, a missing `image_path` or no file at the given path ends with an error.
+- If the output directory does not exist, it is created automatically.
+- A file with the same name is overwritten (it is good to confirm with the user beforehand whether overwriting is OK).
+- Applying a company logo or a custom template (parts that `theme` cannot change) is out of scope for this skill. Use `pptx-edit`.
+- If the dependency `python-pptx` is not installed in the environment, it ends with `ModuleNotFoundError` and
+  a non-zero exit code. In that case, prompt the installer to run `pip install python-pptx`.
 
-## テンプレート資産について
+## About the template asset
 
-同梱の `assets/template_16x9.pptx` は `scripts/build_template_16x9.py`
-（python-pptxの既定4:3テンプレートを16:9へスケーリングするビルドスクリプト）で
-生成されたものです。テンプレート仕様自体を見直す場合のみ実行し、生成物を
-`assets/` にコミットし直します（通常の生成フローでLLMがこのスクリプトを
-実行する必要はありません）。
+The bundled `assets/template_16x9.pptx` was generated by `scripts/build_template_16x9.py`
+(a build script that scales python-pptx's default 4:3 template to 16:9).
+Run it only when revising the template spec itself, and commit the output to
+`assets/` again (the LLM does not need to run this script in the normal generation flow).
 
-## 生成後の確認・既存テンプレートの編集
+## Checking after generation, editing existing templates
 
-生成した資料のレイアウトを画像で確認したい場合は `pptx-render` スキルの
-`render_pptx.py` + `analyze_image` を使ってください。既存のPowerPointテンプレート
-（社内フォーマット等）のデザインを保ったまま一部だけ差し替えたい場合は、
-このスキルではなく `pptx-inspect`→`pptx-edit` を使ってください。
+To check the layout of the generated presentation as images, use `render_pptx.py` of the `pptx-render` skill
++ `analyze_image`. To replace only part of an existing PowerPoint template
+(an internal format, etc.) while keeping its design, use `pptx-inspect` -> `pptx-edit`
+instead of this skill.

@@ -20,7 +20,7 @@ from _common import draft_context, find_official_skill, parse_frontmatter, print
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True, help="ドラフト名（自分のドラフトはスキル名だけでよい）")
+    parser.add_argument("--name", required=True, help="draft name (for your own drafts, just the skill name)")
     args = parser.parse_args()
 
     ctx = draft_context()
@@ -28,7 +28,7 @@ def main() -> int:
     error = validate_skill_md(ref.dir)
     fm = parse_frontmatter((ref.dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")) or {}
     if error is None and read_meta(ref).get("kind") != "improve" and find_official_skill(ref.name) is not None:
-        error = f"正式スキル '{ref.name}' と同じ名前です（新規スキルは別の名前にする）"
+        error = f"It has the same name as the official skill '{ref.name}' (give a new skill another name)"
     scripts_dir = ref.dir / "scripts"
     print_json(
         {

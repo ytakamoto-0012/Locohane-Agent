@@ -1,126 +1,118 @@
-# トラブルシューティング（症状別診断）
+# Troubleshooting (diagnosis by symptom)
 
-[[error-handling]] が「コード側でエラーをどう捌くか」の書き方なのに対し、
-このノートは「ユーザーから報告された症状から原因を絞り込む」ための逆引き。
+While [[error-handling]] is about how to write code that handles errors, this note is a reverse lookup
+for "narrowing down the cause from symptoms reported by the user".
 
-## マクロがそもそも実行できない
+## The macro cannot run at all
 
-### 「マクロを有効にする」の通知バーが出ない・ボタンを押しても実行されない
+### The "Enable Content" notification bar does not appear / pressing the button does not run it
 
-- ファイルの拡張子が `.xlsx` になっていないか確認する。マクロは `.xlsm`/`.xlsb`/`.xls`
-  にしか保存されない。`.xlsx` で開いている場合、VBAコード自体がブックに含まれて
-  いない（[[version-and-platform-differences]] 参照）。
-- トラストセンターの設定（`ファイル > オプション > トラストセンター > マクロの設定`）
-  でマクロが無効化されている可能性がある。VBAコード側からこの設定は変更できないため、
-  ユーザー側での有効化操作（または「信頼できる場所」へのファイル配置）を案内する。
-- インターネット経由でダウンロードしたファイルは既定でブロックされる
-  （Mark of the Web）。ファイルのプロパティで「許可する」にチェックが必要な場合がある。
+- Check that the file extension is not `.xlsx`. Macros are saved only in `.xlsm`/`.xlsb`/`.xls`.
+  If it is opened as `.xlsx`, the VBA code itself is not contained in the workbook
+  (see [[version-and-platform-differences]]).
+- Macros may be disabled in the Trust Center settings (`File > Options > Trust Center > Macro Settings`).
+  VBA code cannot change this setting, so guide the user to enable it themselves
+  (or to place the file in a "Trusted Location").
+- Files downloaded from the internet are blocked by default
+  (Mark of the Web). It may be necessary to check "Unblock" in the file's properties.
 
-### コンパイルエラーで実行前に止まる
+### A compile error stops it before running
 
-- `ユーザー定義型は定義されていません` は、参照設定が外れている
-  （ライブラリ一覧の先頭に `MISSING:` と表示される)ことが多い。
-  `VBE > ツール > 参照設定` で `MISSING:` の項目のチェックを外し、代替の
-  ライブラリを選び直すか、該当箇所を遅延バインディングに書き換える
-  （[[common-gotchas]] の早期/遅延バインディングの項参照）。
-- `Sub または Function が定義されていません` は、呼び出し先のプロシージャ名の
-  タイプミス、または `Private` で宣言されたプロシージャを別モジュールから
-  呼ぼうとしている場合に起きる。
-- モジュール全体が一度もコンパイルされていない状態だと、実際には無関係な行で
-  コンパイルエラーが表示されることがある。`VBE > デバッグ > VBAProjectのコンパイル`
-  を実行し、プロジェクト全体を一括でコンパイルしてから該当行を特定する方が早い。
+- `User-defined type not defined` is often because a reference has broken
+  (`MISSING:` appears at the top of the library list).
+  In `VBE > Tools > References`, uncheck the `MISSING:` item and choose an alternative
+  library, or rewrite that part with late binding
+  (see the early/late binding item of [[common-gotchas]]).
+- `Sub or Function not defined` happens when the called procedure name has a typo,
+  or when trying to call a procedure declared `Private` from another module.
+- If the module has never been compiled as a whole, a compile error may be shown on a line that is actually unrelated.
+  It is faster to run `VBE > Debug > Compile VBAProject`,
+  compile the whole project at once, and then identify the line.
 
-## 実行時エラーが出る
+## A runtime error occurs
 
-### エラー番号から原因を絞り込む
+### Narrowing down the cause from the error number
 
-`Err.Number` の値は [[error-handling]] にも一覧があるが、トラブルシューティング
-時によく出会うものを再掲する:
+The values of `Err.Number` are also listed in [[error-handling]], but here are the ones you often meet
+when troubleshooting:
 
-- `9`（インデックスが有効範囲にありません）: 配列の範囲外アクセス、または
-  存在しないシート名・コレクションのインデックス指定。
-- `91`（オブジェクト変数または With ブロック変数が設定されていません）:
-  `Set` し忘れ、または `Find`/`Range` 系メソッドが `Nothing` を返した戻り値を
-  未チェックで使用。
-- `1004`（アプリケーション定義またはオブジェクト定義のエラー）: メッセージだけ
-  では原因が特定しにくい「なんでもエラー」。よくある原因は非表示シートへの
-  書き込み・保護シートへの書き込み・存在しないシート名の指定・貼り付け先の
-  サイズ不一致（コピー元とペースト先の範囲サイズが違う）・グラフ/ピボット
-  操作時の対象オブジェクト不整合など。**「直前にどのオブジェクトへ何を
-  しようとしたか」を1行ずつ`Debug.Print`で出力させて特定するのが最短**。
-- `438`（オブジェクトはこのプロパティまたはメソッドをサポートしていません）:
-  基本的には「そのオブジェクトの型に存在しないプロパティ・メソッドを呼んだ」
-  ことが原因（オブジェクトブラウザー`F2`で実際に使えるメンバーを確認できる）。
-  正しい型のはずなのに起きる場合は、バージョン依存の関数・プロパティを
-  古い/新しいExcelで呼んだ場合や、Mac版で非対応のAPIを呼んだ場合が多い
-  （[[version-and-platform-differences]] 参照）。
-- `13`（型が一致しません）: `Variant`に文字列が入っている変数を数値演算に
-  使った、セルの値が期待した型（数値のつもりが文字列扱いのセル等）でない
-  場合に多い。`IsNumeric`/`TypeName`で実際の値・型を確認する。
+- `9` (Subscript out of range): an out-of-range array access, or specifying
+  a nonexistent sheet name or collection index.
+- `91` (Object variable or With block variable not set):
+  forgetting `Set`, or using unchecked the return value `Nothing` from a `Find`/`Range` method.
+- `1004` (Application-defined or object-defined error): a "catch-all error" whose cause is hard to identify
+  from the message alone. Common causes are writing to a hidden sheet, writing to a protected sheet,
+  specifying a nonexistent sheet name, a size mismatch at the paste destination (the copy source and paste destination ranges
+  differ in size), inconsistent target objects when operating charts/pivots, etc.
+  **The quickest way is to identify it by printing "what you just tried to do to which object" line by line with `Debug.Print`**.
+- `438` (Object doesn't support this property or method):
+  basically caused by "calling a property or method that does not exist on that object type"
+  (you can check the members actually available in the Object Browser, `F2`).
+  If it happens even though the type should be correct, it is often a version-dependent function/property called
+  in an older/newer Excel, or an API not supported on the Mac version
+  (see [[version-and-platform-differences]]).
+- `13` (Type mismatch): common when a `Variant` variable holding a string is used in arithmetic,
+  or a cell's value is not the expected type (a cell treated as a string when you thought it was a number, etc.).
+  Check the actual value and type with `IsNumeric`/`TypeName`.
 
-### 「さっきまで動いていたのに急に動かなくなった」
+### "It worked a moment ago but suddenly stopped working"
 
-- 直前にシート名・セル位置・列の並び順を変更していないか確認する
-  （[[excel-tables-listobject]] の「列位置を決め打ちしない」の項参照）。
-- 他のマクロ（`Worksheet_Change`等のイベント）が `Application.EnableEvents`
-  を`False`のまま抜けて、以降イベントが一切発火しなくなっている可能性がある
-  （[[events-and-loops]] 参照）。イミディエイトウィンドウで
-  `?Application.EnableEvents` を実行し `False` になっていないか確認する。
-- 参照設定しているライブラリのバージョンが環境間で異なる
-  （[[version-and-platform-differences]] 参照）。
+- Check whether the sheet names, cell positions or column order were just changed
+  (see the "do not hard-code column positions" item of [[excel-tables-listobject]]).
+- Another macro (an event such as `Worksheet_Change`) may have exited with `Application.EnableEvents`
+  left `False`, so no events fire at all afterwards
+  (see [[events-and-loops]]). Run `?Application.EnableEvents` in the Immediate window
+  and check whether it is `False`.
+- The version of a referenced library differs between environments
+  (see [[version-and-platform-differences]]).
 
-## 実行が固まる・応答なしになる
+## Execution freezes / stops responding
 
-- 無限ループ（[[common-gotchas]]・[[events-and-loops]] 参照）を疑う。
-  `Ctrl+Break`（または `Esc`）でマクロを強制中断できる。中断後、
-  `VBE`側で「デバッグ」を選ぶと停止箇所のコードがハイライトされる。
-- 他プロセス（別インスタンスのExcel、外部COMオブジェクト、ダイアログ表示待ち）
-  で処理待ちになっていないか確認する。`Application.DisplayAlerts = False`や
-  `UpdateLinks:=0`を付け忘れ、隠れた確認ダイアログがモーダルで表示された
-  まま止まっているケースが多い（[[com-automation-and-file-io]] 参照）。
-  タスクバー・タスクマネージャーで非表示のダイアログが無いか確認する。
-- 大量データを1セルずつ処理していないか確認する（体感で「固まった」ように
-  見えるだけで実際は処理が進行中というケースも多い。[[performance-tips]] の
-  配列一括読み書きへの書き換えを検討する）。
+- Suspect an infinite loop (see [[common-gotchas]] and [[events-and-loops]]).
+  You can force-interrupt the macro with `Ctrl+Break` (or `Esc`). After interrupting,
+  choosing "Debug" on the VBE side highlights the code where it stopped.
+- Check whether it is waiting for another process (another Excel instance, an external COM object, a dialog).
+  Often `Application.DisplayAlerts = False` or `UpdateLinks:=0` was forgotten, and a hidden confirmation dialog
+  is shown modally and everything stops (see [[com-automation-and-file-io]]).
+  Check the taskbar and Task Manager for hidden dialogs.
+- Check whether a lot of data is being processed one cell at a time (often it only looks "frozen"
+  while processing is actually progressing; consider rewriting to the bulk array reading/writing of
+  [[performance-tips]]).
 
-## Excelを閉じてもプロセスが残る
+## The process remains after closing Excel
 
-[[com-automation-and-file-io]] のCOMオブジェクト解放の項を参照。
-`CreateObject`で起動した別インスタンスの`Quit`忘れ・`Nothing`への解放漏れが
-典型原因。タスクマネージャーで`EXCEL.EXE`が複数残っている場合、どのマクロが
-インスタンスを生成しているかをコードレビューで洗い出す。
+See the item on releasing COM objects in [[com-automation-and-file-io]].
+Typical causes are forgetting `Quit` on a separate instance started with `CreateObject`, or not releasing to `Nothing`.
+If several `EXCEL.EXE` remain in Task Manager, find through code review which macro creates the instances.
 
-## 文字化けする
+## Garbled characters
 
-- テキストファイルの読み書きで既定エンコーディング（Shift-JIS/ANSI想定）と
-  実際のファイルのエンコーディング（UTF-8等）が食い違っている
-  （[[com-automation-and-file-io]] の`OpenTextFile`の項参照）。
-- CSVを`Workbooks.Open`で直接開くと、区切り文字・エンコーディングの自動判定に
-  失敗して文字化けすることがある。`Workbooks.OpenText`でエンコーディングを
-  明示指定する方が確実な場合がある。
+- When reading/writing text files, the default encoding (assuming the system code page/ANSI, e.g. Shift-JIS) and
+  the actual encoding of the file (UTF-8, etc.) do not match
+  (see the `OpenTextFile` item of [[com-automation-and-file-io]]).
+- Opening a CSV directly with `Workbooks.Open` can fail to detect the delimiter and encoding automatically
+  and garble the text. Specifying the encoding explicitly with `Workbooks.OpenText` can be more reliable.
 
-## デバッグの基本テクニック
+## Basic debugging techniques
 
-- **イミディエイトウィンドウ**（`表示 > イミディエイトウィンドウ`、`Ctrl+G`）:
-  `Debug.Print` の出力先。コード実行中に変数の値を都度出力して追跡する。
-  `? 式` と入力してEnterで即座に式を評価・表示することもできる。
-- **ブレークポイント**（該当行の左端をクリック、または`F9`）: そこで実行を
-  一時停止し、変数の状態を確認できる。
-- **ステップ実行**（`F8`: ステップイン、`Shift+F8`: ステップオーバー）:
-  1行ずつ実行して挙動を追う。他人が書いた既存マクロの動きを把握する際にも有効。
-- **ローカルウィンドウ / ウォッチウィンドウ**: 変数の現在値を一覧表示・監視する。
-  特定の変数が想定外の値になったタイミングを特定したい場合はウォッチ式に
-  条件（`変数 = 特定の値` になったら停止、等）を設定できる。
-- 原因箇所の当たりがつかない場合、**「怪しい処理の前後に`Debug.Print`を
-  仕込んで二分探索的に絞り込む」**のが最も手早いことが多い。
+- **Immediate window** (`View > Immediate Window`, `Ctrl+G`):
+  the output destination of `Debug.Print`. Track values by printing variables as the code runs.
+  You can also type `? expression` and press Enter to evaluate and show an expression immediately.
+- **Breakpoints** (click the left edge of the line, or `F9`): pause execution there
+  and check the state of variables.
+- **Step execution** (`F8`: step into, `Shift+F8`: step over):
+  run line by line to follow the behavior. Also effective for understanding how an existing macro written by someone else works.
+- **Locals window / Watch window**: list and monitor the current values of variables.
+  To identify the moment a specific variable takes an unexpected value, you can set a condition on a watch expression
+  (stop when `variable = specific value`, etc.).
+- When you have no idea where the cause is, **"putting `Debug.Print` before and after the suspicious processing and
+  narrowing down like a binary search"** is often the quickest.
 
-## それでも切り分けられない場合
+## If you still cannot isolate it
 
-- 症状を最小再現できる別ブック（新規ブックに問題のコードだけをコピーし、
-  外部依存を1つずつ削って再現する）を作れないか検討する。再現に必要な
-  最小構成が分かれば、原因が「コード側」か「特定のブック/シートの状態」かの
-  切り分けができる。
-- 索引の他ノート（[[error-handling]]・[[events-and-loops]]・
-  [[version-and-platform-differences]] 等）で近い症状のパターンが無いか
-  確認する。ローカルの索引に無い/一致しない場合は `web-search` スキルでの
-  調査を検討する（エラーメッセージの完全一致文字列で検索すると精度が上がる）。
+- Consider whether you can make a separate workbook that reproduces the symptom minimally (copy only the problematic code
+  into a new workbook and remove external dependencies one by one while reproducing it). Once the minimal configuration
+  needed to reproduce it is known, you can tell whether the cause is "on the code side" or "in the state of a specific workbook/sheet".
+- Check the other notes in the index ([[error-handling]], [[events-and-loops]],
+  [[version-and-platform-differences]], etc.) for patterns with similar symptoms. If there is nothing in the local index or nothing matches,
+  consider investigating with the `web-search` skill (searching for the exact error message string improves accuracy).

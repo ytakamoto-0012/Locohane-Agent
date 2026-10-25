@@ -91,7 +91,7 @@ def write_json_result(result: dict, category: str, source_path) -> dict:
     out_path = out_dir / f"{digest}_{timestamp}.json"
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     info: dict = {"result_path": str(out_path)}
-    pm = register_output_path(out_path, description=f"{category}の読み込み結果全文JSON")
+    pm = register_output_path(out_path, description=f"full JSON of the {category} read result")
     if pm:
         info["path_memory"] = pm
     return info
