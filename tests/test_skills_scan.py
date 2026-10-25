@@ -41,3 +41,10 @@ class TestKnownNonSkillDirLogging:
         assert result == []
         warning_records = [r for r in caplog.records if r.levelname == "WARNING"]
         assert any("typo_skill_dir" in r.getMessage() for r in warning_records)
+
+
+def test_all_bundled_skills_are_loaded() -> None:
+    """同梱スキル（skills/）が1本も読み飛ばされないこと（frontmatter の YAML の誤り・説明の文字数超過で消えるのを防ぐ）。"""
+    root = Path(__file__).resolve().parent.parent / "skills"
+    expected = {p.parent.name for p in root.glob("*/SKILL.md")}
+    assert {s.name for s in skills.scan_skills(root)} == expected
