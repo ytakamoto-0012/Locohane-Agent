@@ -638,7 +638,7 @@ function targetAddForms(state) {
   };
   const post = (payload) => labAction(() => api(themePath(state.name, state.id, "/assets"), { method: "POST", body: payload }), err);
 
-  const draftSel = el("select", {}, [el("option", { value: "", text: _t("（ドラフトを選ぶ）") }), ...src.drafts.map((d) => el("option", { value: d.path, text: `${d.owner}/${d.name}${d.imported_theme ? "（他のテーマに取り込み済み）" : ""}` }))]);
+  const draftSel = el("select", {}, [el("option", { value: "", text: _t("（ドラフトを選ぶ）") }), ...src.drafts.map((d) => el("option", { value: d.path, text: `${d.owner}/${d.name}${d.imported_theme ? _t("（他のテーマに取り込み済み）") : ""}` }))]);
   const officialSel = el("select", {}, [
     el("option", { value: "", text: _t("（正式なスキル・サブエージェントを選ぶ）") }),
     ...src.skills.map((s) => el("option", { value: `skills:${s.name}`, text: _t(`スキル {0}（{1}）`, s.name, originText(s.origin)) })),
@@ -734,14 +734,15 @@ function originText(origin) {
   return { builtin: _t("同梱"), instance: _t("このインスタンス専用"), shared: _t("共有") }[origin] || origin || "";
 }
 
+// 白紙のひな形。LLM が読むファイルのため、表示言語によらず英語で書く（同梱の skills/・agents/ と同じ）。
 function skillTemplate(name, desc) {
-  return `---\nname: ${name}\ndescription: ${(desc || "何をするか。どんな指示のときに使うか。").replace(/\n/g, " ")}\n---\n\n# ${name}\n\n## 手順\n\n1. \n`;
+  return `---\nname: ${name}\ndescription: ${(desc || "What it does, and for which instructions to use it.").replace(/\n/g, " ")}\n---\n\n# ${name}\n\n## Procedure\n\n1. \n`;
 }
 
 function agentTemplate(name, desc) {
   return (
-    `---\nname: ${name}\ndescription: ${(desc || "何を任せるサブエージェントか").replace(/\n/g, " ")}\ntools: read_skill, read_skill_file, run_script, Read, Grep\n---\n\n` +
-    `あなたは、メインのアシスタントから仕事を委譲されたサブエージェントです。\n\n## 手順\n\n1. \n\n## 最終回答\n\n\n---\n\n## スキル\n\n{{skills}}\n\n### run_scriptで実行できるスキル/スクリプト（このエージェント種別限定）\n\n{{run_script_allowlist}}\n`
+    `---\nname: ${name}\ndescription: ${(desc || "What work to delegate to this sub-agent.").replace(/\n/g, " ")}\ntools: read_skill, read_skill_file, run_script, Read, Grep\n---\n\n` +
+    `You are a sub-agent that has been delegated a task by the main assistant.\n\n## Procedure\n\n1. \n\n## Final answer\n\n\n---\n\n## Skills\n\n{{skills}}\n\n### Skills/scripts callable with run_script (limited to this agent type)\n\n{{run_script_allowlist}}\n`
   );
 }
 
@@ -1166,7 +1167,7 @@ function showTrialResult(r) {
   labModal(
     _t(`1回試行: {0}（{1}）`, r.case_id, outcome),
     [
-      r.ai_judge ? el("p", {}, [el("strong", { text: `AI judge: ${r.ai_judge.pass ? "合格" : "不合格"} ` }), r.ai_judge.reason]) : null,
+      r.ai_judge ? el("p", {}, [el("strong", { text: `AI judge: ${r.ai_judge.pass ? _t("合格") : _t("不合格")} ` }), r.ai_judge.reason]) : null,
       r.error ? el("p", { class: "error", text: `${r.error}: ${r.detail || ""}` }) : null,
       el("h4", { text: _t("満たさなかった判定") }),
       el("pre", { class: "lab-pre", text: JSON.stringify(Object.fromEntries(Object.entries(r.rule_results || {}).filter(([, v]) => !v.pass)), null, 2) }),

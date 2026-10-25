@@ -106,7 +106,8 @@ For `runs` of `paragraph`/`callout` (`paragraph` only) and the direct keys, `tex
 `bold`/`italic`/`underline` (booleans), `color` (an RRGGBB hex string such as `"FF0000"`),
 `font` (a font name; Japanese font names such as Yu Mincho are also OK) and `size_pt`
 (font size in pt). The default fonts are Yu Mincho for the body and
-Yu Gothic for headings.
+Yu Gothic for headings. In a document without Japanese text, the Latin letters use
+Times New Roman (body) and Arial (headings) instead, so no font setting is needed for English documents.
 
 Elements with an unknown `type` are skipped without an error, and that is recorded in the
 `warnings` of the result (see below).

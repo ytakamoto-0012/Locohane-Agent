@@ -86,8 +86,9 @@ def _is_encrypted_office(path: Path, data: bytes | None) -> bool:
 
 
 def _decode_text(data: bytes) -> str:
-    """UTF-8（BOM 付き含む）→ CP932 → OS の ANSI コードページ（英語版 Windows なら cp1252 等）の順に読む。"""
-    for encoding in dict.fromkeys(("utf-8-sig", "cp932", locale.getencoding())):
+    """UTF-8（BOM 付き含む）→ OS の ANSI コードページ（日本語版 Windows なら cp932、英語版なら cp1252 等）
+    → CP932 の順に読む（ANSI を先にする理由は src/tools/_file_tools_common.py の read_text_with_fallback）。"""
+    for encoding in dict.fromkeys(("utf-8-sig", locale.getencoding(), "cp932")):
         try:
             return data.decode(encoding)
         except (UnicodeDecodeError, LookupError):

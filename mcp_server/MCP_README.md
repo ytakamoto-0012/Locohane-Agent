@@ -171,7 +171,8 @@ skill://pdf-tools/scripts/render_pdf_pages.py
 - **`read_skill(skill_name)`** — 指定スキルの `SKILL.md` 本文を返す（第2段階＝Read相当）。
 - **`run_skill_script(skill_name, script_filename, script_args)`** — 指定スキルの
   `scripts/` 配下のスクリプトを `subprocess.run` で実際に実行し、
-  `[終了コード] N` / `[標準出力]` / `[標準エラー]` の形式で結果を返す
+  `[exit code] N` / `[stdout]` / `[stderr]` の形式で結果を返す（失敗時は `Error: ...`。
+  ツールの説明文（docstring）と同じく、MCP クライアントの LLM に渡る文言は英語）
   （第3段階＝Execute相当）。Locohane本体の `src/tools/run_script.py` と
   同じ出力フォーマットにしているため、既存SKILL.mdの「出力の解釈方法」の
   説明がClaude Code向けにもそのまま通用する。

@@ -25,8 +25,8 @@ from pathlib import Path
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
 if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
-from docx_common import register_output_path, setup_utf8_stdio  # noqa: E402
-from _blocks import BLOCK_HANDLERS, DEFAULT_FONT, _set_east_asian_font, resolve_theme  # noqa: E402
+from docx_common import read_text_with_fallback, register_output_path, setup_utf8_stdio  # noqa: E402
+from _blocks import BLOCK_HANDLERS, DEFAULT_FONT, _set_east_asian_font, resolve_theme, use_latin_fonts_unless_japanese  # noqa: E402
 
 PAGE_SIZES_CM = {
     "a4": (21.0, 29.7),
@@ -100,6 +100,8 @@ def _build_document(spec: dict):
 
     # 既定フォントを東アジア用に設定しないと日本語が意図しないフォントで
     # 表示されることがあるため、Normalスタイルに明示しておく。
+    # 日本語を含まない文書では、欧文側を游フォントでなく欧文フォントにする（_blocks.LATIN_FONTS）。
+    use_latin_fonts_unless_japanese(json.dumps(spec, ensure_ascii=False))
     normal_style = doc.styles["Normal"]
     _set_east_asian_font(normal_style.font, normal_style.element.get_or_add_rPr(), DEFAULT_FONT)
 
@@ -148,10 +150,7 @@ def main() -> int:
         if not data_path.is_file():
             print(f"Data spec file not found: {args.data_file}", file=sys.stderr)
             return 1
-        try:
-            raw = data_path.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raw = data_path.read_text(encoding="cp932")
+        raw = read_text_with_fallback(data_path)
 
     try:
         spec = json.loads(raw)

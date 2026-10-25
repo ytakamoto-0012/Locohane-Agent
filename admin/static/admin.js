@@ -408,7 +408,7 @@ function contextMiniChart(series, hover) {
   const y = (v) => M.top + ih - (v / top) * ih;
   // 短い時間幅では分までだと両端が同じ表示になるため秒まで出す。
   const timeOpts = tMax - tMin < 10 * 60 * 1000 ? { hour: "2-digit", minute: "2-digit", second: "2-digit" } : { hour: "2-digit", minute: "2-digit" };
-  const axisTime = (t) => new Date(t).toLocaleTimeString("ja-JP", timeOpts);
+  const axisTime = (t) => new Date(t).toLocaleTimeString(I18N_LOCALE, timeOpts);
 
   const svg = svgEl("svg", { viewBox: `0 0 ${W} ${H}`, class: "chart-svg", role: "img", "aria-label": _t("生成中スレッドのLLMリクエストごとの入力トークン") });
   for (const t of ticks) {
@@ -449,7 +449,7 @@ function contextMiniChart(series, hover) {
     cross.setAttribute("x1", x(t));
     cross.setAttribute("x2", x(t));
     cross.setAttribute("visibility", "visible");
-    const rows = [el("div", { class: "hint", text: new Date(t).toLocaleTimeString("ja-JP") })];
+    const rows = [el("div", { class: "hint", text: new Date(t).toLocaleTimeString(I18N_LOCALE) })];
     for (const s of series) {
       // その時刻までの最後のリクエストの値（まだ呼び出しが無ければ出さない）。
       const p = s.pts.filter((q) => q.t <= t).pop();
@@ -1914,8 +1914,8 @@ async function openPreviewModal() {
       const div = document.createElement("div");
       div.className = "diff-item";
       div.innerHTML = `<span class="diff-key">[${c.section}] ${c.key}</span><br/>
-        <span class="diff-old">${c.old === null ? "(既定値)" : escapeHtml(c.old)}</span> →
-        <span class="diff-new">${c.new === null ? "(既定値)" : escapeHtml(c.new)}</span>`;
+        <span class="diff-old">${c.old === null ? _t("(既定値)") : escapeHtml(c.old)}</span> →
+        <span class="diff-new">${c.new === null ? _t("(既定値)") : escapeHtml(c.new)}</span>`;
       diffEl.appendChild(div);
     }
     modal.querySelector("#confirm-save-btn").addEventListener("click", () => {
@@ -2126,7 +2126,7 @@ async function renderBackups(container) {
     const tdName = document.createElement("td");
     tdName.textContent = b.name;
     const tdTime = document.createElement("td");
-    tdTime.textContent = new Date(b.mtime * 1000).toLocaleString("ja-JP");
+    tdTime.textContent = new Date(b.mtime * 1000).toLocaleString(I18N_LOCALE);
     const restoreBtn = document.createElement("button");
     restoreBtn.textContent = _t("復元");
     restoreBtn.addEventListener("click", async () => {
@@ -2381,7 +2381,7 @@ function fmtTime(iso) {
   if (!iso) return "-";
   const d = new Date(iso);
   if (isNaN(d)) return iso;
-  return d.toLocaleString("ja-JP", { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  return d.toLocaleString(I18N_LOCALE, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
 function fmtElapsed(iso) {

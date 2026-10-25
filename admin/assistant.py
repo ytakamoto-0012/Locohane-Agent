@@ -39,7 +39,7 @@ from src.config import Config
 from . import audit
 from .assistant_index import AssistantIndex, EmbeddingProvider, Passage
 from .ini_catalog import KeyInfo
-from admin.i18n import response_language_instruction
+from admin.i18n import current_lang, response_language_instruction
 from admin.i18n import t as _t
 
 logger = logging.getLogger(__name__)
@@ -301,7 +301,7 @@ def build_router(
     list_instances: Callable[[], list[dict[str, str]]],
     instance_kind: Callable[[str], str],
     config_loader: Callable[[str], Config],
-    index: AssistantIndex,
+    index: AssistantIndex | dict[str, AssistantIndex],
     embedding_provider: Callable[[str, str], EmbeddingProvider | None] = lambda _target, _llm: None,
     model_factory: Callable[[Config], Any] | None = None,
     guide_path: Path = GUIDE_PATH,
@@ -315,7 +315,8 @@ def build_router(
         list_instances: インスタンス一覧（name・display_name・kind・state の dict）。
         instance_kind: インスタンス名 → 種類（存在しなければ HTTPException(404)）。
         config_loader: インスタンス名 → そのインスタンスの実効設定（LLM 接続先の取得用）。
-        index: config.ini・ドキュメントの索引（admin/assistant_index.py）。
+        index: config.ini・ドキュメントの索引（admin/assistant_index.py）。言語 → 索引の dict なら、
+            ダッシュボードの表示言語の索引を使う（無ければ "ja"）。
         embedding_provider: (相談対象, 回答に使う LLM のインスタンス) → 検索に使う埋め込み（無ければ None）。
         model_factory: 設定 → チャットモデル（awaitable 可。テスト用の差し替え口。既定は src.llm.build_model）。
         guide_path: 画面ガイドの md（毎回読み直す）。
@@ -366,11 +367,12 @@ def build_router(
         except OSError:
             guide = "(could not load the screen guide)"
         instances = list_instances()
+        lang_index = index.get(current_lang(), index["ja"]) if isinstance(index, dict) else index
 
         def build_context() -> tuple[str, list[Passage], str, int]:
             # 埋め込みの HTTP 呼び出し（初回は全段落の埋め込み）を含むため、スレッドで実行する。
             chosen, docs, mode = choose_context(
-                index,
+                lang_index,
                 keys,
                 question,
                 history=history,

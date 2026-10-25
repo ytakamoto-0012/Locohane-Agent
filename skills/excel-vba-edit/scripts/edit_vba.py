@@ -38,6 +38,7 @@ if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
 from excel_common import (  # noqa: E402
     backup_before_overwrite,
+    read_text_with_fallback,
     record_excel_pid,
     register_output_path,
     release_excel_pid,
@@ -56,10 +57,7 @@ def _load_json_arg(args: argparse.Namespace) -> str:
     data_path = Path(args.ops_file)
     if not data_path.is_file():
         raise FileNotFoundError(f"ops file not found: {args.ops_file}")
-    try:
-        return data_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return data_path.read_text(encoding="cp932")
+    return read_text_with_fallback(data_path)
 
 
 def _trust_center_error_message() -> str:

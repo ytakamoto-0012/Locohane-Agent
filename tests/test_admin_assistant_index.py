@@ -199,3 +199,41 @@ def test_shipped_documents_are_indexed(tmp_path):
         assert expected in index.search(question, max_keys=12, max_docs=0).keys, question
     docs = index.search("管理ツールのログイン", max_keys=0, max_docs=4).docs
     assert docs and all("ライセンス" not in d.title for d in docs)
+
+
+def test_shipped_english_documents_are_indexed():
+    """英語表示の索引（README_DETAIL.en.md・API_REFERENCE.en.md・キーの説明の英訳）で、英語の相談が当たる。"""
+    index = ai.AssistantIndex(
+        config_ini_path=PROJECT_ROOT / "config.ini",
+        readme_path=PROJECT_ROOT / "README_DETAIL.en.md",
+        api_reference_path=PROJECT_ROOT / "admin" / "API_REFERENCE.en.md",
+        language="en",
+    )
+    for question, expected in [
+        ("I want it to search internal documents", ("vector_db", "enabled")),
+        ("Enable sign-in for the chat screen", ("auth", "enabled")),
+        ("How many days are conversation threads kept?", ("thread_store", "retention_days")),
+    ]:
+        assert expected in index.search(question, max_keys=12, max_docs=0).keys, question
+    docs = index.search("sign in to the admin tool", max_keys=0, max_docs=4).docs
+    assert docs and all(d.source in ("README_DETAIL.en.md", "API_REFERENCE.en.md") for d in docs)
+    assert all("License" not in d.title for d in docs)
+
+
+def test_languages_keep_separate_embedding_caches(tmp_path):
+    """日本語と英語の索引が同じ cache_dir を使っても、保存時に互いの段落の埋め込みを消さない。"""
+    _write_sources(tmp_path)
+    cache = tmp_path / "cache"
+    (tmp_path / "README_DETAIL.en.md").write_text("# Detail\n\n## Knowledge\n\nIngest documents.\n", encoding="utf-8")
+    ja = _index(tmp_path, cache_dir=cache)
+    en = ai.AssistantIndex(
+        config_ini_path=tmp_path / "config.ini",
+        readme_path=tmp_path / "README_DETAIL.en.md",
+        api_reference_path=tmp_path / "API_REFERENCE.md",
+        cache_dir=cache,
+        language="en",
+    )
+    ja.search("x", max_keys=1, max_docs=1, embedding=_fake_provider([]))
+    en.search("x", max_keys=1, max_docs=1, embedding=_fake_provider([]))
+    files = sorted(p.name for p in cache.glob("embeddings_*.json"))
+    assert len(files) == 2 and files[1].endswith("_en.json")

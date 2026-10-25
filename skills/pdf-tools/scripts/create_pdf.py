@@ -44,7 +44,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
 
-from _common import register_output_path, setup_utf8_stdio
+from _common import read_text_with_fallback, register_output_path, setup_utf8_stdio
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, LETTER, landscape
@@ -469,10 +469,7 @@ def main() -> int:
         if not html_file.exists():
             print(f"Body HTML file not found: {args.html_file}", file=sys.stderr)
             return 1
-        try:
-            body_html = html_file.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            body_html = html_file.read_text(encoding="cp932")
+        body_html = read_text_with_fallback(html_file)
     else:
         body_html = args.html or ""
 

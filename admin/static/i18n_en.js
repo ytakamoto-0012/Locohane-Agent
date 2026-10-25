@@ -375,6 +375,8 @@ const I18N_EN = {
   "利用者のドラフト（このインスタンス）": "User drafts (this instance)",
   "差し戻し中（{0}）": "Returned ({0})",
   "テーマに取り込み済み": "Already imported into a theme",
+  "（他のテーマに取り込み済み）": " (already imported into another theme)",
+  "(既定値)": "(default)",
   "テーマを作って取り込む": "Create a theme and import",
   "ドラフト": "Draft",
   "このインスタンスにドラフトはありません。": "This instance has no drafts.",

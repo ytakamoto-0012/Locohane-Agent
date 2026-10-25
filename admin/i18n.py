@@ -266,4 +266,6 @@ EN: dict[str, str] = {
     '例: ./.locohane_team': 'e.g. ./.locohane_team',
     '例: ./.locohane_team/.venv/Scripts/python.exe': 'e.g. ./.locohane_team/.venv/Scripts/python.exe',
     '例: E:/shared_output': 'e.g. E:/shared_output',
+    'なし': 'none',
+    '{0}（スキル研究室: {1}）': '{0} (Skill Lab: {1})',
 }

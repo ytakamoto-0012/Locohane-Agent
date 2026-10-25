@@ -20,7 +20,7 @@ from pathlib import Path
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
 if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
-from pptx_common import register_output_path, setup_utf8_stdio  # noqa: E402
+from pptx_common import read_text_with_fallback, register_output_path, setup_utf8_stdio  # noqa: E402
 from office_theme import DEFAULT_THEME, THEMES, resolve_theme  # noqa: E402
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -290,10 +290,7 @@ def main() -> int:
         if not data_file.exists():
             print(f"Data file not found: {args.data_file}", file=sys.stderr)
             return 1
-        try:
-            raw = data_file.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raw = data_file.read_text(encoding="cp932")
+        raw = read_text_with_fallback(data_file)
     else:
         raw = args.data
 

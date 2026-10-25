@@ -1768,7 +1768,7 @@ async def _setup() -> None:
         logging.getLogger(__name__).warning(
             "No endpoint with a model matching [llm].sub_default_model=%r exists in %s, so the default model setting is ignored",
             _config.sub_default_model,
-            "main_url（sub_url 未指定のため継承）" if _config.sub_endpoints_inherit_main else "sub_url",
+            "main_url (inherited because sub_url is not set)" if _config.sub_endpoints_inherit_main else "sub_url",
         )
 
     # 第1段階 Discovery: スキルを走査して name+description をシステムプロンプトへ。
@@ -2193,8 +2193,8 @@ async def on_stop() -> None:
     logging.getLogger(__name__).info(
         "on_stop: force-closed the LLM client of session thread_id=%s and rebuilt the graph%s%s",
         thread_id,
-        "（クローズ処理中にタスクがキャンセルされましたが後始末は完了しました）" if cancelled else "",
-        "（グラフ再構築: 成功）" if rebuild_ok else "（グラフ再構築: 失敗）",
+        " (the task was cancelled during the close, but the cleanup completed)" if cancelled else "",
+        " (graph rebuild: succeeded)" if rebuild_ok else " (graph rebuild: failed)",
     )
     if cancelled is not None:
         raise cancelled

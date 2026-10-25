@@ -266,7 +266,7 @@ def _embed_batch(
             "embeddings: every endpoint returned an error. Retrying in %g seconds (%d/%s): %s",
             interval,
             retries,
-            "無制限" if max_retries is None else max_retries,
+            "unlimited" if max_retries is None else max_retries,
             detail,
         )
         _wait_retry(interval, should_stop)

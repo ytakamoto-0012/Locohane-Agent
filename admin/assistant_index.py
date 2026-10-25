@@ -1,7 +1,8 @@
 """管理アシスタントの検索（簡易 RAG）。
 
 config.ini の全キーと、README_DETAIL.md・admin/API_REFERENCE.md の段落を索引にし、
-相談内容に近いものを選んで AI に渡す（admin/assistant.py）。
+相談内容に近いものを選んで AI に渡す（admin/assistant.py）。英語表示の相談には、英訳
+（README_DETAIL.en.md・API_REFERENCE.en.md・admin/ini_catalog_en.py）で作った別の索引を使う。
 
 類似度は2つを組み合わせる。
 
@@ -28,13 +29,14 @@ import re
 import threading
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 from src.config import Config
 from src.path_memory import bigram_vector, cosine_similarity
 
+from . import ini_catalog_en
 from .ini_catalog import KeyInfo, parse_file
 
 logger = logging.getLogger(__name__)
@@ -55,6 +57,18 @@ README_EXCLUDED_HEADINGS = frozenset(
         "ライセンスと商用利用",
         "免責事項",
         "README_DETAIL.md更新時の注意",
+    }
+)
+# 英語表示の索引（README_DETAIL.en.md）で同じ節を除く見出し。
+README_EXCLUDED_HEADINGS_EN = frozenset(
+    {
+        "File layout",
+        "Development environment",
+        "Settings reference (config.ini)",
+        "Versioning and release procedure",
+        "License and commercial use",
+        "Disclaimer",
+        "Notes when updating this document",
     }
 )
 
@@ -192,6 +206,18 @@ def reference_rows(readme_text: str) -> dict[tuple[str, str], str]:
     return rows
 
 
+def english_keys(keys: list[KeyInfo]) -> list[KeyInfo]:
+    """キーの説明・グループ見出しを英訳カタログ（admin/ini_catalog_en.py）の訳に置き換える（訳が無ければ原文）。"""
+    return [
+        replace(
+            info,
+            description=ini_catalog_en.DESCRIPTIONS.get(f"{info.section}.{info.key}", info.description),
+            group_heading=ini_catalog_en.HEADINGS.get(info.group_heading or "", info.group_heading),
+        )
+        for info in keys
+    ]
+
+
 def config_passages(keys: list[KeyInfo], reference: dict[tuple[str, str], str]) -> list[Passage]:
     """config.ini のキーごとの索引。
 
@@ -268,7 +294,11 @@ class _BigramIndex:
 
 
 class AssistantIndex:
-    """config.ini・README_DETAIL.md・API_REFERENCE.md の索引（元ファイルが変われば作り直す）。"""
+    """config.ini・README_DETAIL.md・API_REFERENCE.md の索引（元ファイルが変われば作り直す）。
+
+    language="en" のときは英語の質問に当たるよう、英訳の文書（readme_path・api_reference_path に
+    README_DETAIL.en.md・API_REFERENCE.en.md を渡す）と、キーの説明の英訳カタログで索引を作る。
+    """
 
     def __init__(
         self,
@@ -277,11 +307,13 @@ class AssistantIndex:
         readme_path: Path,
         api_reference_path: Path,
         cache_dir: Path | None = None,
+        language: Literal["ja", "en"] = "ja",
     ) -> None:
         self._config_ini_path = config_ini_path
         self._readme_path = readme_path
         self._api_reference_path = api_reference_path
         self._cache_dir = cache_dir
+        self._language = language
         self._lock = threading.Lock()
         self._signature: tuple | None = None
         self._passages: list[Passage] = []
@@ -306,14 +338,20 @@ class AssistantIndex:
         if signature == self._signature:
             return
         readme = self._read(self._readme_path)
-        passages = config_passages(parse_file(self._config_ini_path).keys, reference_rows(readme))
-        passages += split_markdown(readme, "README_DETAIL.md", excluded_headings=README_EXCLUDED_HEADINGS)
-        passages += split_markdown(self._read(self._api_reference_path), "API_REFERENCE.md")
+        keys = parse_file(self._config_ini_path).keys
+        english = self._language == "en"
+        passages = config_passages(english_keys(keys) if english else keys, reference_rows(readme))
+        passages += split_markdown(
+            readme,
+            self._readme_path.name,
+            excluded_headings=README_EXCLUDED_HEADINGS_EN if english else README_EXCLUDED_HEADINGS,
+        )
+        passages += split_markdown(self._read(self._api_reference_path), self._api_reference_path.name)
         self._passages = passages
         self._bigram = _BigramIndex([f"{p.title}\n{p.text}" for p in passages])
         self._embedded = {}
         self._signature = signature
-        logger.info("Built the admin assistant index (%d entries).", len(passages))
+        logger.info("Built the admin assistant index (%s, %d entries).", self._language, len(passages))
 
     @staticmethod
     def _read(path: Path) -> str:
@@ -326,7 +364,9 @@ class AssistantIndex:
     def _cache_path(self, cache_id: str) -> Path | None:
         if self._cache_dir is None:
             return None
-        return self._cache_dir / f"embeddings_{_sha1(cache_id)[:16]}.json"
+        # 言語ごとに段落が違うため別ファイルにする（同じファイルだと、保存時に他方の段落の分を捨ててしまう）。
+        suffix = "" if self._language == "ja" else f"_{self._language}"
+        return self._cache_dir / f"embeddings_{_sha1(cache_id)[:16]}{suffix}.json"
 
     def _passage_embeddings(self, provider: EmbeddingProvider) -> list[list[float]]:
         if provider.cache_id in self._embedded:

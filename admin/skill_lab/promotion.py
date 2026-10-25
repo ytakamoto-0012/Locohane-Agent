@@ -364,7 +364,7 @@ def _promote(
                 backup_keep=backup_keep,
                 audit_log_path=instances_root / "admin_changes.log",
                 instance_name=name,
-                actor=f"{actor}（スキル研究室: {data['title']}）",
+                actor=_t("{0}（スキル研究室: {1}）", actor, data['title']),
                 remote_addr=remote_addr,
                 instances_root=instances_root,
             )
@@ -379,7 +379,7 @@ def _promote(
             if backup is not None and backup.exists():
                 shutil.move(str(backup), str(target))
         raise PromotionError(
-            _t("昇格に失敗したため、置いたファイルを元に戻しました（設定を保存済みのインスタンス: {0}）: {1}", saved_instances or 'なし', e)
+            _t("昇格に失敗したため、置いたファイルを元に戻しました（設定を保存済みのインスタンス: {0}）: {1}", saved_instances or _t('なし'), e)
         ) from e
 
     # 取り込み元のドラフトをアーカイブ（配置と設定の登録は済んでいるため、ここで失敗しても昇格は取り消さず、
@@ -510,7 +510,7 @@ def _return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reje
                 _replace_draft_with(draft, work)
             except OSError as e:
                 raise PromotionError(
-                    _t("ドラフト {0}/{1} へ修正を写せませんでした（ドラフトは元のままです。作成者がファイルを開いていないか確かめてください。差し戻し済み: {2}）: {3}", src.get('owner'), name, returned or 'なし', e)
+                    _t("ドラフト {0}/{1} へ修正を写せませんでした（ドラフトは元のままです。作成者がファイルを開いていないか確かめてください。差し戻し済み: {2}）: {3}", src.get('owner'), name, returned or _t('なし'), e)
                 ) from e
         meta_path = draft / DRAFT_META_FILENAME
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}

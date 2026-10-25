@@ -1167,12 +1167,22 @@ def _assistant_instances() -> list[dict[str, str]]:
 
 # config.ini・README_DETAIL.md・API_REFERENCE.md の索引（元ファイルが変われば次の相談で作り直す）。
 # 文書側の埋め込みは instances/_assistant_index/ にキャッシュする。
-_assistant_index = assistant_index.AssistantIndex(
-    config_ini_path=CONFIG_INI_PATH,
-    readme_path=PROJECT_ROOT / "README_DETAIL.md",
-    api_reference_path=api_docs.API_REFERENCE_PATH,
-    cache_dir=INSTANCES_ROOT / "_assistant_index",
-)
+# 英語表示の相談は英訳の文書・説明で作った索引で探す（日本語の索引では英語の質問と文字が重ならない）。
+_assistant_index = {
+    "ja": assistant_index.AssistantIndex(
+        config_ini_path=CONFIG_INI_PATH,
+        readme_path=PROJECT_ROOT / "README_DETAIL.md",
+        api_reference_path=api_docs.API_REFERENCE_PATH,
+        cache_dir=INSTANCES_ROOT / "_assistant_index",
+    ),
+    "en": assistant_index.AssistantIndex(
+        config_ini_path=CONFIG_INI_PATH,
+        readme_path=PROJECT_ROOT / "README_DETAIL.en.md",
+        api_reference_path=api_docs.API_REFERENCE_EN_PATH,
+        cache_dir=INSTANCES_ROOT / "_assistant_index",
+        language="en",
+    ),
+}
 
 
 def _assistant_embedding(target: str, llm_instance: str):

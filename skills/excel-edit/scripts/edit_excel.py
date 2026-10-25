@@ -28,7 +28,7 @@ from pathlib import Path
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
 if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
-from excel_common import backup_before_overwrite, register_output_path, setup_utf8_stdio  # noqa: E402
+from excel_common import backup_before_overwrite, read_text_with_fallback, register_output_path, setup_utf8_stdio  # noqa: E402
 from _ops import apply_op  # noqa: E402
 
 
@@ -38,10 +38,7 @@ def _load_json_arg(args: argparse.Namespace) -> str:
     data_path = Path(args.ops_file)
     if not data_path.is_file():
         raise FileNotFoundError(f"ops file not found: {args.ops_file}")
-    try:
-        return data_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return data_path.read_text(encoding="cp932")
+    return read_text_with_fallback(data_path)
 
 
 def main() -> int:

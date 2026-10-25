@@ -2024,6 +2024,8 @@ What is passed to the AI (rebuilt for every answer):
 The config.ini descriptions and documents total hundreds of thousands of characters, and passing them as is to a fairly small local model would make the input too long,
 so they are narrowed down by searching with the question (a simple RAG, `admin/assistant_index.py`). The index is all keys of config.ini (each key's description also gets
 the description at the start of its section and the description in the "Settings reference" table) and the paragraphs above, and it is rebuilt on the next question when the original files change.
+When the dashboard is shown in English, a separate index built from `README_DETAIL.en.md`, `admin/API_REFERENCE.en.md` and the English key
+descriptions (`admin/ini_catalog_en.py`) is used, so that English questions overlap with it in characters and meaning (the embedding cache is also a separate file per language).
 
 - **Embeddings** (default): measures the closeness in meaning between the question and each key/paragraph with the same embedding server as Knowledge (`[vector_db] embedding_url`),
   adding the character 2-gram similarity (below) multiplied by 0.2. It also hits questions whose wording differs and whose characters do not overlap,

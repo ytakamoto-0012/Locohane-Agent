@@ -29,6 +29,8 @@ const I18N_LANG =
   (i18nNormalize(navigator.language) === "en" ? "en" : "ja");
 
 document.documentElement.lang = I18N_LANG;
+// 日付・時刻の表示形式（toLocaleString 等）に使うロケール。
+const I18N_LOCALE = I18N_LANG === "en" ? "en-US" : "ja-JP";
 
 function _t(text, ...args) {
   const translated = I18N_LANG === "en" && typeof I18N_EN !== "undefined" ? I18N_EN[text] : undefined;

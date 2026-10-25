@@ -15,6 +15,20 @@ from pathlib import Path
 
 DEFAULT_FONT = "游明朝"
 HEADING_FONT = "游ゴシック"
+# 日本語を含まない文書で、既定フォントの欧文（ascii/hAnsi）側に使うフォント（どの Windows にもある）。
+# 游フォントは英語版 Windows に入っていないことがあり、英文まで游明朝で組まれて別フォントへ置き換わるのを避ける。
+# 東アジア側（eastAsia）は游フォントのままにする。利用者が font で指定したフォントは置き換えない。
+LATIN_FONTS = {DEFAULT_FONT: "Times New Roman", HEADING_FONT: "Arial"}
+_use_latin_fonts = False
+
+
+def use_latin_fonts_unless_japanese(text: str) -> None:
+    """text（文書の内容）に日本語（かな・漢字）が無ければ、既定フォントの欧文側を LATIN_FONTS にする。"""
+    global _use_latin_fonts
+    _use_latin_fonts = not any(
+        "\u3040" <= ch <= "\u30ff" or "\u3400" <= ch <= "\u9fff" or "\uf900" <= ch <= "\ufaff" for ch in text
+    )
+
 
 # office_shared/office_theme.py から THEMES / resolve_theme を import する（1-B 相互import方式）
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
@@ -66,7 +80,7 @@ def _set_east_asian_font(font_obj, element, font_name: str) -> None:
     from docx.oxml.ns import qn
     from docx.oxml.shared import OxmlElement
 
-    font_obj.name = font_name
+    font_obj.name = LATIN_FONTS.get(font_name, font_name) if _use_latin_fonts else font_name
     rPr = element.get_or_add_rPr() if hasattr(element, "get_or_add_rPr") else element
     r_fonts = rPr.find(qn("w:rFonts"))
     if r_fonts is None:
