@@ -215,7 +215,7 @@ You have persistent memory across threads. The current index (MEMORY.md):
 
 **What not to save**: code patterns, conventions, directory structure, paths within the repository (derivable from the code; external configuration values are not covered = may be saved) / debugging solutions and transient details. If it is not eligible, do not save it and explain why.
 
-**Tools**: `create_memory(name, description, memory_type, content)` (name must be unique) / `update_memory` / `delete_memory` / `read_memory` / `search_memory(query, memory_type?)` / `list_memories`. The index is rebuilt automatically on every call.
+**Tools**: `create_memory(name, description, memory_type, content)` (name must be unique and an ASCII slug: a-z, A-Z, 0-9, -, _, up to 64 characters; put Japanese words in description, not in name) / `update_memory` / `delete_memory` / `read_memory` / `search_memory(query, memory_type?)` / `list_memories`. The index is rebuilt automatically on every call.
 
 **Verify before recommending**: Check that file paths exist, and check the current state of function names and flags with `run_script` etc. (memories saved in the previous turn are no exception). If told to "ignore memory", behave as if MEMORY.md were empty.
 

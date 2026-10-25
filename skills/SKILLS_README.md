@@ -363,7 +363,9 @@ def register_output_path(path, description: str | None = None) -> dict[str, str]
 - **`run_script(script_args=[...])`**: `src/tools/_script_job.py` の
   `_resolve_run_script_command()` が、サブプロセス起動前に `script_args` の
   各要素を `_resolve_path_memory_token()`（`src/tools/_path_memory_helpers.py`）
-  に通し、`@N` 形式の要素だけを実パスへ置き換える。つまり `scripts/xxx.py`
+  に通し、`@N` 形式の要素だけを実パスへ置き換える（フォルダの `@N` の後ろに子パスを続けた
+  `@N/photo_01.png`・`@N\photo_01.png` も、フォルダ内のそのパスへ解決する。ファイルの `@N` に
+  子パスを続けるとエラー）。つまり `scripts/xxx.py`
   が `sys.argv` で受け取る時点では既に生の絶対パス文字列になっている。
   未登録の `@N` を渡した場合はスクリプトを起動する前にエラー文字列を返す
   （スクリプトは実行されない）。

@@ -33,6 +33,8 @@
 - **パスメモリー機能**（`src/path_memory.py`、`system_prompt.md` の
   Tool Usage Guidelines）: `Glob`/`Grep`/`Read` の結果に短い参照番号 `@N`
   を自動付与し、LLM が長い絶対パスを自分で組み立て直して失敗を繰り返すことを防ぐ。
+  フォルダの `@N` の後ろに子パスを続けた `@N/photo_01.png`（`\` 区切りも可）は、そのフォルダ内のパスとして解決する
+  （ファイルの `@N` に子パスを続けるとエラー）。
 - **ループ検知・ガード・リトライ**（`config.ini` の `[thinking_loop_guard]`、
   `src/llm/chat_model.py` の `ChatLlamaCpp`、`src/llm/loop_guard.py` の
   `ThinkingLoopDetected`）: 応答が反復ループに
@@ -211,7 +213,8 @@ model: Qwen3.6-35B-A3B
   `"enum": [...]` が載り、一覧外の名前はツール本体に届く前に検証エラーとして LLM へ返る。
 - **返す内容**: frontmatter を除いた本文を `<skill_content name="...">` で囲み、`references/` があれば
   ファイル一覧を `@N`（パスメモリー）付きで末尾に添える（中身は読まない）。`read_skill_file` は
-  この `@N` をそのまま受け付ける（skills ルート外を指す `@N` は拒否）。
+  この `@N` をそのまま受け付ける（skills ルート外を指す `@N` は拒否）。フォルダの `@N` に子パスを続けた
+  `@N/xxx.md` も受け付ける。
 - **コンテキスト削減からの保護**: スキル名ごとに最後に読んだ `read_skill` 結果は `[context_trim]` で
   切り詰めない（`src/context_trim.py`）。`[context_compaction]` で要約対象に入った場合も要約させず、
   要約の後ろへ原文のまま再添付する（`src/context_compaction.py` の `_render_reattached_skills`、
@@ -269,7 +272,7 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 | `check_work_dir_status` | 現在の作業ディレクトリの実際のアクセス状況を確認する |
 | `Read` / `Glob` / `Grep` | ローカルファイルシステム上の任意の絶対パスに対する読込・ファイル名検索・全文検索（ClaudeCode の同名ツールに合わせた名前。読み取り専用のため計画未承認でも常に呼べる。ロジックは `src/tools/read_tool.py`/`glob_tool.py`/`grep_tool.py`、共通処理は `_file_tools_common.py`） |
 | `json_query` | JSON/dict に対する JMESPath クエリ（読み取り専用） |
-| `search_path_memory` | 現在の会話のパスメモリー（`@N`）から、ファイル名等に似たパスを類似検索する（文字bigram＋コサイン類似度、読み取り専用） |
+| `search_path_memory` | 現在の会話のパスメモリー（`@N`）から、ファイル名等に似たパスを類似検索する（文字bigram＋コサイン類似度、読み取り専用）。パスを受け取る各ツールは `@N` 単体に加え、フォルダの `@N` に子パスを続けた `@N/ファイル名` も解決する |
 | `provide_download` | 既存のファイルをチャット画面にダウンロードボタンとして提示する |
 | `analyze_image` | 画像ファイルをLLMへ視覚情報として見せ、LLM自身が内容を解析・説明・判断する（Vision対応モデル向け）。`show_in_chat=True` を指定すると、解析と同時にチャット画面へもプレビュー表示する（「表示して」「見せて」にはこちらを使う。表示だけして中身を見ない、という呼び方はできない）。回答本文（Markdownテーブルのセル等）の中に画像を組み込みたい場合は、ツールを使わず回答テキストへ直接 `![説明](絶対パス)` と書けばよい（送信直前に自動でブラウザから取得可能なURLへ変換される。`app.py` の `_embed_local_images_as_session_urls`） |
 | `dispatch_agent` | タスクをサブエージェント（`src/subagent.py`）へ委譲し最終回答のみ受け取る。`agent_type` 引数でサブエージェントの種別を必ず指定する（暗黙の既定値は無い）。種別定義は `agents/*.md`（ClaudeCode の `.claude/agents/*.md` 相当）。`.locohane/agents/*.md` ともマージ走査され、同名は `.locohane/agents` 側が優先される。任意の `orchestrator_skill` 引数（複数SKILLを横断的に使うオーケストレーター役SKILL.mdのスキル名）を指定すると、そのSKILL.md本文全体がtaskの先頭へ機械的に注入され、必須ルール・禁止事項の要約時の脱落を防ぐ（詳細は `skills/SKILLS_README.md` 7節）。任意の `model` 引数で `[llm].sub_url` のモデル名を指定でき、`agents/*.md` の frontmatter `model` より優先される（存在しないモデル名は無視）。完了までの間、進捗（経過時間・反復回数）をチャットへ直接通知しながら待つため、LLM自身がポーリングする必要は無い。設定した安全上限（`[subagent].background_inline_wait_max_seconds`）を超えてもなお完了しない場合のみ `job_id` を返してターンを終える |
@@ -1042,6 +1045,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
 - **4種類の type**: `user`（ユーザーの役割・選好）／`feedback`（訂正・確認済みの
   アプローチ）／`project`（進行中の作業の背景）／`reference`（外部リソースの所在）。
   それぞれ `data/memory/<type>/` 配下に `<name>.md` として1ファイル保存される。
+  `name` はファイル名になるため ASCII のスラッグ（英数字・`-`・`_`、64文字まで）に限る。日本語は `description` に書く。
 - **索引 `MEMORY.md`**: 保存されている全メモリーの `name`+`description` 一覧。
   create/update/delete のたびに全再構築される（差分更新はしない設計）。
   この索引はシステムプロンプトの `{{memory}}` に常時差し込まれ、LLM は起動時から
@@ -1522,7 +1526,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[log]` | `retention_days` | ローテーション済み app_*.log の保持日数 | `LOG_RETENTION_DAYS` |
 | `[log]` | `cleanup_interval_hours` | app_*.log 自動削除チェック間隔（時間） | `LOG_CLEANUP_INTERVAL_HOURS` |
 | `[thinking_loop_guard]` | `enabled` | ループ検知＆ループガード＆リトライ機能の有効/無効 | `THINKING_LOOP_GUARD_ENABLED` |
-| `[thinking_loop_guard]` | `target` | ループ検知の監視対象（`all`: 思考と本文の両方 / `content_only`: 本文だけを監視し、思考のループは`[llm].reasoning_budget`での打ち切りに任せる。`thinking_only`: 思考だけを監視し、本文は対象外。`content_only`で思考予算が無制限なら起動時に警告） | `THINKING_LOOP_GUARD_TARGET` |
+| `[thinking_loop_guard]` | `target` | ループ検知の監視対象（`all`: 思考と本文の両方 / `content_only`: 本文だけを監視し、思考のループは`[llm].reasoning_budget`での打ち切りに任せる。`thinking_only`: 思考だけを監視し、本文は対象外。`content_only`で思考予算が無制限なら起動時に警告）。比較は同じチャネル（思考／本文）の中で行うため、思考の内容を本文へそのまま書き写してもループとは判定しない | `THINKING_LOOP_GUARD_TARGET` |
 | `[thinking_loop_guard]` | `window_chars` | ループ判定対象とする直近テキストのウィンドウ文字数 | `THINKING_LOOP_GUARD_WINDOW_CHARS` |
 | `[thinking_loop_guard]` | `check_interval_chars` | 何文字増えるごとに再チェックするか | `THINKING_LOOP_GUARD_CHECK_INTERVAL_CHARS` |
 | `[thinking_loop_guard]` | `confirm_count` | ループ確定と判定するまでの連続成立回数（誤検知防止） | `THINKING_LOOP_GUARD_CONFIRM_COUNT` |

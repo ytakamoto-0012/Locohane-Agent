@@ -31,7 +31,9 @@ def create_memory(name: str, description: str, memory_type: str, content: str) -
     search_memory / list_memories).
 
     Args:
-        name: A unique name (letters, digits, hyphens and underscores only, up to 64 characters).
+        name: A unique name. ASCII letters (a-z, A-Z), digits, hyphens and underscores only,
+            up to 64 characters. Do not write Japanese letters in the name (put them in
+            description instead).
         description: A one-line description (shown as is in the index MEMORY.md).
         memory_type: One of "user" | "feedback" | "project" | "reference".
         content: The memory body. For the feedback/project types, it is best to include

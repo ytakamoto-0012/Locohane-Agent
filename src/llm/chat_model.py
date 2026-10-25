@@ -25,7 +25,7 @@ from .diagnostics import (
     _RequestEndpointLogger,
     describe_current_task,
 )
-from .loop_guard import ThinkingLoopDetected, _chunk_delta_text, _ThinkingLoopDetector
+from .loop_guard import ThinkingLoopDetected, _ThinkingLoopDetector, feed_chunk
 from .routing import (
     _active_async_clients,
     _CURRENT_SESSION_ID,
@@ -222,11 +222,12 @@ class ChatLlamaCpp(ChatOpenAI):
         first_chunk_seen = False
         try:
             for chunk in inner:
-                if detector.feed(_chunk_delta_text(
+                if feed_chunk(
+                    detector,
                     chunk,
                     include_reasoning=self.loop_guard_include_reasoning,
                     include_content=self.loop_guard_include_content,
-                )):
+                ):
                     snippet = detector.snippet()
                     logger.warning(
                         "Detected an LLM response loop, stopping generation (recent text: %r)",
@@ -292,11 +293,12 @@ class ChatLlamaCpp(ChatOpenAI):
         first_chunk_seen = False
         try:
             async for chunk in agen:
-                if detector.feed(_chunk_delta_text(
+                if feed_chunk(
+                    detector,
                     chunk,
                     include_reasoning=self.loop_guard_include_reasoning,
                     include_content=self.loop_guard_include_content,
-                )):
+                ):
                     snippet = detector.snippet()
                     diag = describe_current_task(diag_start)
                     logger.warning(

@@ -167,6 +167,12 @@ class _ThinkingLoopDetector:
     低いmatch_ratioを維持する（iter25の合成データ・実測暴走テキスト検証で
     真のループ=1.000、JSON生成=0.09〜0.12、自然文=0.02程度と明確に分離
     することを確認済み）。
+
+    比較は同じチャネル（思考 reasoning / 本文 content）の中の過去とだけ行う。
+    思考で書いた内容を本文へそのまま書き写すのは正常な振る舞いのため、
+    思考→本文の逐語コピーはループとして検知しない（思考で列挙した表を回答で
+    再列挙して誤検知した事例への対応）。各チャネル内での反復は従来通り検知する。
+    判定の間隔（check_interval_chars）はチャネル合計の文字数で数える。
     """
 
     def __init__(
@@ -177,34 +183,43 @@ class _ThinkingLoopDetector:
         max_history_chars: int,
         match_ratio_threshold: float,
     ) -> None:
+        # snippet()（診断ログ・例外の snippet）用の全チャネルを流れた順に並べたバッファ。
         self._buffer = ""
+        self._channel_buffers: dict[str, str] = {}
+        self._channel_hits: dict[str, int] = {}
         self._window_chars = window_chars
         self._check_interval_chars = max(check_interval_chars, 1)
         self._confirm_count = max(confirm_count, 1)
         self._max_history_chars = max_history_chars
         self._match_ratio_threshold = match_ratio_threshold
         self._checked_len = 0
-        self._consecutive_hits = 0
 
     def snippet(self, max_chars: int = 400) -> str:
         """検知時点の診断ログ用に、バッファ末尾の直近テキストを返す。"""
         return self._buffer[-max_chars:]
 
-    def feed(self, text: str) -> bool:
-        """新しいテキスト断片を追加し、ループが確定判定されたら True を返す。"""
+    def feed(self, text: str, channel: str = "content") -> bool:
+        """テキスト断片をチャネル別のバッファへ追加し、そのチャネルでループが確定判定されたら True を返す。
+
+        Args:
+            text: 新しいテキスト断片。
+            channel: "content"（本文）か "reasoning"（思考）。同じチャネルの過去とだけ比較する。
+        """
         if not text:
             return False
         self._buffer += text
-        if len(self._buffer) < self._window_chars:
+        buffer = self._channel_buffers.get(channel, "") + text
+        self._channel_buffers[channel] = buffer
+        if len(buffer) < self._window_chars:
             return False
         if len(self._buffer) - self._checked_len < self._check_interval_chars:
             return False
         self._checked_len = len(self._buffer)
 
-        recent = self._buffer[-self._window_chars :]
-        history_end = len(self._buffer) - self._window_chars
+        recent = buffer[-self._window_chars :]
+        history_end = len(buffer) - self._window_chars
         history_start = max(0, history_end - self._max_history_chars)
-        history = self._buffer[history_start:history_end]
+        history = buffer[history_start:history_end]
 
         if history:
             # autojunk=False: 既定Trueだと高反復テキストでマッチ長が0扱いに
@@ -215,11 +230,8 @@ class _ThinkingLoopDetector:
         else:
             match_ratio = 0.0
 
-        hit = match_ratio > self._match_ratio_threshold
-        if hit:
-            self._consecutive_hits += 1
-        else:
-            self._consecutive_hits = 0
+        hits = self._channel_hits.get(channel, 0) + 1 if match_ratio > self._match_ratio_threshold else 0
+        self._channel_hits[channel] = hits
         if logger.isEnabledFor(logging.DEBUG):
             # 生成が長時間停止ボタン等で強制中断された場合、on_llm_end
             # （正常完了時のみ発火）に頼った全文ログは残らない（2026-07-21、
@@ -229,17 +241,23 @@ class _ThinkingLoopDetector:
             # 断片を残しておけば、強制中断されても暴走時に実際どんな内容が
             # 生成されていたか事後に追跡できる。
             logger.debug(
-                "Loop detection check: buffer_len=%d match_ratio=%.3f consecutive_hits=%d recent text=%r",
-                len(self._buffer),
+                "Loop detection check: channel=%s buffer_len=%d match_ratio=%.3f consecutive_hits=%d recent text=%r",
+                channel,
+                len(buffer),
                 match_ratio,
-                self._consecutive_hits,
+                hits,
                 recent[-300:],
             )
-        return self._consecutive_hits >= self._confirm_count
+        return hits >= self._confirm_count
 
 
 def _chunk_delta_text(chunk: Any, *, include_reasoning: bool = True, include_content: bool = True) -> str:
-    """ストリームチャンク（ChatGenerationChunk）から、監視対象のテキストを取り出す。
+    """監視対象のテキストを1つの文字列にまとめて返す（_chunk_delta_parts の content＋reasoning）。"""
+    return "".join(_chunk_delta_parts(chunk, include_reasoning=include_reasoning, include_content=include_content))
+
+
+def _chunk_delta_parts(chunk: Any, *, include_reasoning: bool = True, include_content: bool = True) -> tuple[str, str]:
+    """ストリームチャンク（ChatGenerationChunk）から、監視対象のテキストを (content分, reasoning分) で取り出す。
 
     content と reasoning_content（ChatLlamaCpp._convert_chunk_to_generation_chunk
     が additional_kwargs へ拾い上げたもの）のデルタのみを対象にする。tool_call
@@ -249,16 +267,18 @@ def _chunk_delta_text(chunk: Any, *, include_reasoning: bool = True, include_con
     include_reasoning=False（[thinking_loop_guard].target = content_only）なら
     content だけを対象にする。思考のループは思考予算（reasoning_budget）で
     打ち切る運用向け。include_content=False（target = thinking_only）なら
-    reasoning_content だけを対象にする。
+    reasoning_content だけを対象にする。対象外のチャネルは空文字列になる。
     """
     message = getattr(chunk, "message", None)
     if message is None:
-        return ""
-    parts = []
+        return "", ""
     content = getattr(message, "content", None)
-    if include_content and isinstance(content, str) and content:
-        parts.append(content)
+    content = content if include_content and isinstance(content, str) else ""
     reasoning = (getattr(message, "additional_kwargs", None) or {}).get("reasoning_content") if include_reasoning else None
-    if reasoning:
-        parts.append(reasoning)
-    return "".join(parts)
+    return content, reasoning or ""
+
+
+def feed_chunk(detector: _ThinkingLoopDetector, chunk: Any, *, include_reasoning: bool, include_content: bool) -> bool:
+    """チャンクの content と reasoning をそれぞれのチャネルへ流し、どちらかでループが確定したら True。"""
+    content, reasoning = _chunk_delta_parts(chunk, include_reasoning=include_reasoning, include_content=include_content)
+    return detector.feed(content, "content") or detector.feed(reasoning, "reasoning")

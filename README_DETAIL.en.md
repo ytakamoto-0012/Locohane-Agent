@@ -34,6 +34,8 @@ whether to reflect them in the official procedures is decided through external e
 - **Path memory** (`src/path_memory.py`, the
   Tool Usage Guidelines of `system_prompt.md`): automatically attaches short reference numbers `@N`
   to the results of `Glob`/`Grep`/`Read`, preventing the LLM from repeatedly failing by rebuilding long absolute paths itself.
+  A folder's `@N` followed by a child path, such as `@N/photo_01.png` (`\` also works as the separator), resolves to that path inside the folder
+  (appending a child path to a file's `@N` is an error).
 - **Loop detection, guards and retries** (`[thinking_loop_guard]` in `config.ini`,
   `ChatLlamaCpp` in `src/llm/chat_model.py`, `ThinkingLoopDetected` in
   `src/llm/loop_guard.py`): detects that a response has fallen into a repetition loop,
@@ -210,7 +212,8 @@ Supplements about `read_skill` in stage 2:
   and names not in the list are returned to the LLM as a validation error before reaching the tool itself.
 - **What it returns**: the body without the frontmatter, wrapped in `<skill_content name="...">`, and if there is `references/`,
   the file list with `@N` (path memory) appended at the end (the contents are not read). `read_skill_file`
-  accepts these `@N` as is (an `@N` pointing outside the skills root is refused).
+  accepts these `@N` as is (an `@N` pointing outside the skills root is refused). It also accepts a folder's `@N`
+  followed by a child path, such as `@N/xxx.md`.
 - **Protection from context reduction**: the last `read_skill` result read per skill name is not truncated by `[context_trim]`
   (`src/context_trim.py`). Even when it falls within the summarized part of `[context_compaction]`, it is not summarized but
   reattached verbatim after the summary (`_render_reattached_skills` in `src/context_compaction.py`;
@@ -266,7 +269,7 @@ Tool descriptions and return values are written in English (the LLM relays them 
 | `check_work_dir_status` | Checks the actual access status of the current working directory |
 | `Read` / `Glob` / `Grep` | Reading, file name search and full-text search on any absolute path on the local file system (names matching Claude Code's tools of the same names. Read-only, so they can always be called even without plan approval. Logic in `src/tools/read_tool.py`/`glob_tool.py`/`grep_tool.py`, common processing in `_file_tools_common.py`) |
 | `json_query` | JMESPath queries on JSON/dicts (read-only) |
-| `search_path_memory` | Searches the current conversation's path memory (`@N`) for paths similar to a file name etc. (character bigrams + cosine similarity, read-only) |
+| `search_path_memory` | Searches the current conversation's path memory (`@N`) for paths similar to a file name etc. (character bigrams + cosine similarity, read-only). Tools that take a path resolve not only a bare `@N` but also a folder's `@N` followed by a child path (`@N/file name`) |
 | `provide_download` | Presents an existing file as a download button on the chat screen |
 | `analyze_image` | Shows an image file to the LLM as visual information so the LLM itself analyzes, describes and judges its content (for vision models). With `show_in_chat=True`, it also shows a preview on the chat screen at the same time as analyzing (use this for "show it" / "let me see". It cannot be called to only display without looking at the content). To embed an image within the answer text (a cell of a Markdown table, etc.), just write `![description](absolute path)` directly in the answer text without using the tool (it is automatically converted right before sending into a URL the browser can fetch; `_embed_local_images_as_session_urls` in `app.py`) |
 | `dispatch_agent` | Delegates a task to a sub-agent (`src/subagent.py`) and receives only the final answer. The kind of sub-agent must always be specified with the `agent_type` argument (there is no implicit default). Kind definitions are `agents/*.md` (equivalent to Claude Code's `.claude/agents/*.md`). They are scanned merged with `.locohane/agents/*.md`, and for the same name, the `.locohane/agents` side takes precedence. Specifying the optional `orchestrator_skill` argument (the skill name of an orchestrator SKILL.md that uses several skills across the board) mechanically injects the whole body of that SKILL.md at the start of the task, preventing mandatory rules and prohibitions from dropping out when summarized (details in section 7 of `skills/SKILLS_README.md`). The optional `model` argument can specify a model name from `[llm].sub_url`, taking precedence over the frontmatter `model` of `agents/*.md` (nonexistent model names are ignored). Until completion it waits while notifying progress (elapsed time, number of iterations) directly to the chat, so the LLM itself does not need to poll. Only if it is still not done after the configured safety limit (`[subagent].background_inline_wait_max_seconds`) does it return a `job_id` and end the turn |
@@ -1033,6 +1036,7 @@ The logic is centralized in `src/memory.py`, and the 6 tools in `src/tools/memor
 - **4 types**: `user` (the user's role and preferences) / `feedback` (corrections and confirmed
   approaches) / `project` (background of ongoing work) / `reference` (where external resources are).
   Each is saved as one file `<name>.md` under `data/memory/<type>/`.
+  Because `name` becomes the file name, it is limited to an ASCII slug (letters, digits, `-`, `_`, up to 64 characters). Write Japanese words in `description`.
 - **The index `MEMORY.md`**: a list of `name`+`description` of all saved memories.
   It is fully rebuilt on every create/update/delete (by design, no differential updates).
   This index is always inserted into `{{memory}}` of the system prompt, so the LLM knows the list of
@@ -1509,7 +1513,7 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[log]` | `retention_days` | Retention in days of rotated app_*.log | `LOG_RETENTION_DAYS` |
 | `[log]` | `cleanup_interval_hours` | Interval (hours) of the app_*.log automatic deletion check | `LOG_CLEANUP_INTERVAL_HOURS` |
 | `[thinking_loop_guard]` | `enabled` | Enables/disables loop detection, the loop guard and retries | `THINKING_LOOP_GUARD_ENABLED` |
-| `[thinking_loop_guard]` | `target` | What loop detection monitors (`all`: both thinking and the body / `content_only`: monitors only the body, leaving thinking loops to the cutoff by `[llm].reasoning_budget` / `thinking_only`: monitors only thinking, not the body. A warning at startup with `content_only` if the thinking budget is unlimited) | `THINKING_LOOP_GUARD_TARGET` |
+| `[thinking_loop_guard]` | `target` | What loop detection monitors (`all`: both thinking and the body / `content_only`: monitors only the body, leaving thinking loops to the cutoff by `[llm].reasoning_budget` / `thinking_only`: monitors only thinking, not the body. A warning at startup with `content_only` if the thinking budget is unlimited). Comparison happens within the same channel (thinking / body), so copying the thinking into the body as is is not judged a loop | `THINKING_LOOP_GUARD_TARGET` |
 | `[thinking_loop_guard]` | `window_chars` | Window size in characters of the most recent text checked for loops | `THINKING_LOOP_GUARD_WINDOW_CHARS` |
 | `[thinking_loop_guard]` | `check_interval_chars` | Recheck every time it grows by this many characters | `THINKING_LOOP_GUARD_CHECK_INTERVAL_CHARS` |
 | `[thinking_loop_guard]` | `confirm_count` | Number of consecutive times the condition must hold before a loop is confirmed (prevents false positives) | `THINKING_LOOP_GUARD_CONFIRM_COUNT` |

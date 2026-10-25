@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # 4種類のメモリータイプ（サブディレクトリ名でもある）。
 MEMORY_TYPES = ("user", "feedback", "project", "reference")
 
-# name 検証ルール: 英数字・ハイフン・アンダースコアのみ、1〜64文字。
+# name 検証ルール: ASCII の英数字・ハイフン・アンダースコアのみ、1〜64文字（ファイル名として安全にするため）。
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _NAME_MAX = 64
 
@@ -75,7 +75,8 @@ def _validate_name(name: str) -> None:
     """name がスラッグとして安全かを検証する。不正なら ValueError。"""
     if not name or len(name) > _NAME_MAX or not _NAME_RE.match(name):
         raise ValueError(
-            f"name may contain only letters, digits, hyphens and underscores, up to {_NAME_MAX} characters: {name}"
+            f"name must be an ASCII slug: ASCII letters (a-z, A-Z), digits, hyphens and underscores, "
+            f"up to {_NAME_MAX} characters: {name}"
         )
 
 

@@ -142,7 +142,9 @@ def analyze_image(relative_path: str, show_in_chat: bool = False) -> tuple[str, 
     cfg = _state._LLM_CONFIG
     # 要約等で画像をテキスト化する際の参照（images.IMAGE_REFS_KEY）。`@N` が
     # 無ければパスメモリーへ登録して得る（登録済みなら同じ `@N` が返る）。
-    token = relative_path if _PATH_MEMORY_TOKEN_RE.match(relative_path) else None
+    # `@N/子パス` はフォルダの `@N` なので、画像ファイル自体を登録した `@N` を使う。
+    token_match = _PATH_MEMORY_TOKEN_RE.match(relative_path)
+    token = relative_path if token_match and not token_match.group(2) else None
     if token is None:
         token = next(iter(_register_path_memory([str(path)], description="analyze_image")), None)
     artifact = {
