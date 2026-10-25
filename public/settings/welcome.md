@@ -1,3 +1,3 @@
-Locohaneを起動しました。
+Locohane is ready.
 
-スクリプト実行時の作業ディレクトリは、入力欄の📁アイコンから指定できます。
+You can set the working directory for scripts from the 📁 icon in the input box.

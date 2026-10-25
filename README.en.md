@@ -20,7 +20,7 @@ Excel, Word, PowerPoint and PDF files, checking images, and processing many file
 Name origin: **Lo**cal (local environment) + 小羽 (**cohane**, "small feather": lightweight, with a Japanese touch)
 
 > Design details, the full list of settings and the directory layout are in
-> [README_DETAIL.md](README_DETAIL.md) (for administrators and developers; currently in Japanese only).
+> [README_DETAIL.en.md](README_DETAIL.en.md) (for administrators and developers; English translation of [README_DETAIL.md](README_DETAIL.md)).
 
 ---
 
@@ -54,7 +54,7 @@ So rather than raw AI capability, it puts "**getting the same result every time 
 | Web search | Only when a Tavily API key is set (no external communication by default) |
 | Your own skills | Create your own procedures (draft skills) by consulting with the AI in chat |
 
-For the list of bundled skills, see [README_DETAIL.md "同梱スキル" (bundled skills)](README_DETAIL.md#同梱スキル).
+For the list of bundled skills, see [README_DETAIL.en.md "Bundled skills"](README_DETAIL.en.md#bundled-skills).
 
 ---
 
@@ -75,7 +75,7 @@ For the list of bundled skills, see [README_DETAIL.md "同梱スキル" (bundled
 
 ## Getting started
 
-For detailed steps and options, see [README_DETAIL.md "セットアップと起動" (setup and start)](README_DETAIL.md#セットアップと起動).
+For detailed steps and options, see [README_DETAIL.en.md "Setup and startup"](README_DETAIL.en.md#setup-and-startup).
 If you can use Claude Code, you can also set it up interactively with `/setup-locohane`.
 
 ### 1. Choose the Python environment and install dependencies
@@ -137,7 +137,7 @@ Choose the language from **Display settings (palette icon) → 言語 / Language
 (or at the bottom of the sign-in screen). The choice is saved in your browser.
 
 - Screen text, buttons, system notices and step labels switch to the chosen language.
-- When English is selected, **the AI replies in English** (from your next message).
+- **The AI replies in the chosen language** (from your next message).
 - Users who have not chosen a language get the default in `[ui] default_language` of `config.ini`
   (`auto` = follow the browser's language, `ja`, or `en`).
 - The starter buttons for English can be set in `[chat_starters] prompts_en`.
@@ -159,7 +159,7 @@ The chat screen works in both PC and smartphone browsers. The layout adapts to t
 
 To use it from a smartphone, you need a network from which the phone can reach the Locohane-Agent server
 (office Wi-Fi, VPN, etc.). To encrypt the traffic, you can prepare a server certificate and start it with HTTPS
-(see "5. HTTPS で待ち受ける（任意）" in [README_DETAIL.md](README_DETAIL.md)).
+(see "5. Listening over HTTPS (optional)" in [README_DETAIL.en.md](README_DETAIL.en.md#5-listening-over-https-optional)).
 
 ### Ask in the chat
 
@@ -236,14 +236,14 @@ The admin tool started by `admin.bat` lets you do the following in the browser.
   (research themes are separate for each instance and do not mix with other departments' or roles' instances)
 - **Knowledge**: register folders of internal documents as collections and ingest them so the AI can search them
   (when documents are added or updated, only the differences are re-ingested. For settings, see
-  [README_DETAIL.md "ベクターDB（社内文書の意味検索）"](README_DETAIL.md#ベクターdb社内文書の意味検索))
+  [README_DETAIL.en.md "Vector DB (semantic search of internal documents)"](README_DETAIL.en.md#vector-db-semantic-search-of-internal-documents))
 
 The admin tool also works in smartphone browsers (tabs scroll horizontally and the settings screen uses one column).
 
 ![Dashboad](admin/Dashboad_01.png)
 
-For details, see [README_DETAIL.md "設定ダッシュボード（管理ツール）"](README_DETAIL.md#設定ダッシュボード管理ツール).
-Sign-in, conversation logs, data locations and deletion, adding skills, etc. are also covered in README_DETAIL.md.
+For details, see [README_DETAIL.en.md "Settings dashboard (admin tool)"](README_DETAIL.en.md#settings-dashboard-admin-tool).
+Sign-in, conversation logs, data locations and deletion, adding skills, etc. are also covered in README_DETAIL.en.md.
 
 > The descriptions of each `config.ini` key shown in the admin tool, the bundled skills and the prompts for the AI
 > are in Japanese. Only the screens and messages are translated.
@@ -259,7 +259,7 @@ Sign-in, conversation logs, data locations and deletion, adding skills, etc. are
 - If you enable internal document search (vector DB), the contents of ingested documents are sent to the embedding
   inference server specified by the administrator and (when using Qdrant) the Qdrant server. Specify servers inside your company for both.
 
-For details, see [README_DETAIL.md "外部通信について（完全オフライン保証）"](README_DETAIL.md#外部通信について完全オフライン保証).
+For details, see [README_DETAIL.en.md "About external communication (complete offline guarantee)"](README_DETAIL.en.md#about-external-communication-complete-offline-guarantee).
 
 ---
 
@@ -270,17 +270,17 @@ commercial use ([THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)).
 
 This software is provided "as is", without any express or implied warranty.
 In no event shall the authors or copyright holders be liable for any damages arising from the use of this software.
-For a commercial-use checklist and more, see [README_DETAIL.md "ライセンスと商用利用"](README_DETAIL.md#ライセンスと商用利用).
+For a commercial-use checklist and more, see [README_DETAIL.en.md "License and commercial use"](README_DETAIL.en.md#license-and-commercial-use).
 
 ---
 
 ## Related documents
 
-These documents are currently in Japanese only.
+Except README_DETAIL.en.md, these documents are currently in Japanese only.
 
 | Document | Audience | Contents |
 |-------------|------|------|
-| [README_DETAIL.md](README_DETAIL.md) | Administrators, developers | Design, directory layout, settings reference, operational details |
+| [README_DETAIL.en.md](README_DETAIL.en.md) ([Japanese](README_DETAIL.md)) | Administrators, developers | Design, directory layout, settings reference, operational details |
 | [CHANGELOG.md](CHANGELOG.md) | Everyone | Changes per version and migration steps for updates |
 | [skills/SKILLS_README.md](skills/SKILLS_README.md) | Skill developers | How to write skills, conventions |
 | [agents/README/AGENTS_README.md](agents/README/AGENTS_README.md) | Developers | How to define sub-agent types |

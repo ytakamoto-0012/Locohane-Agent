@@ -1230,20 +1230,6 @@ def _load_settings_text(filename: str, default: str) -> str:
         return default
 
 
-def _load_localized_settings_text(filename: str, default: str) -> str:
-    """表示言語に合わせて表示設定のテキストファイルを読み込む。
-
-    日本語以外のセッションでは、まず言語別のファイル（welcome.md なら welcome.en.md）を
-    探し、無ければ default（言語別の組み込み文言）を返す。日本語の welcome.md へは
-    フォールバックしない（英語画面に日本語の文言が出るのを避けるため）。
-    """
-    lang = i18n.current_lang()
-    if lang == i18n.DEFAULT_LANGUAGE:
-        return _load_settings_text(filename, default)
-    stem, dot, ext = filename.rpartition(".")
-    return _load_settings_text(f"{stem}.{lang}{dot}{ext}", default)
-
-
 def _register_instance_settings_route() -> None:
     """/public/settings/{filename} をインスタンス専用ファイル優先で配信するルートを登録する。
 
@@ -2314,7 +2300,7 @@ async def on_chat_start() -> None:
 
     skills = scan_skills([_config.skills_dir, *_config.locohane_skills_dirs])
     names = i18n.t("list.separator").join(s.name for s in skills) or i18n.t("welcome.no_skills")
-    welcome_template = _load_localized_settings_text("welcome.md", i18n.t("welcome.default"))
+    welcome_template = _load_settings_text("welcome.md", i18n.t("welcome.default"))
     await cl.Message(content=welcome_template.replace("{skills}", names)).send()
 
     await _send_starter_prompts()

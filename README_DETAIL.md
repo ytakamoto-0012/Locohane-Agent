@@ -316,6 +316,7 @@ Locohane/
 │   ├── instances.py          # instances/ の作成・削除・複製・整合性チェック
 │   ├── supervisor.py         # インスタンスごとの子プロセス起動・停止・再起動
 │   ├── ini_catalog.py        # config.ini の読み取り専用パーサー（書き換えない）
+│   ├── ini_catalog_en.py     # config.ini の説明の英訳カタログ（ダッシュボードの英語表示用）
 │   ├── overrides.py          # config_overrides.json の検証・保存・バックアップ・監査記録
 │   ├── env_files.py          # instances/<name>/.env の読み書き
 │   ├── env_overrides.py      # 環境変数で上書き中のキーの検出
@@ -341,6 +342,7 @@ Locohane/
 ├── Locohane.lnk            # 起動用ショートカット（admin.batへリンク）
 ├── chainlit.md             # Chainlit ウェルカム画面
 ├── README.en.md            # README.md の英語版
+├── README_DETAIL.en.md     # README_DETAIL.md（本書）の英語版
 ├── CLAUDE.md               # プロジェクト固有の追加指示（Claude Code 形式）
 ├── QWEN.md                 # プロジェクト固有の追加指示（Qwen Code 形式、内容はCLAUDE.md参照の1行）
 ├── VERSION                 # バージョン番号の正本（1行。「バージョン管理とリリース手順」節）
@@ -379,13 +381,13 @@ Locohane/
 │   └── public/
 ├── public/                  # Chainlit公開ファイル
 │   ├── build/               # フロントエンドビルド成果物
-│   ├── settings/            # ヘッダー・アイコン・ウェルカム文言の設定（英語のセッションは welcome.en.md を優先）
+│   ├── settings/            # ヘッダー・アイコン・ウェルカム文言の設定
 │   ├── icons/                # UIアイコン画像
 │   ├── custom.css           # カスタムCSS
 │   └── UI変更ガイド.md      # UIカスタマイズガイド
 ├── system_prompt/
 │   ├── system_prompt.md     # メインエージェント用システムプロンプト
-│   ├── help.md              # help ツールが返すユーザー向けヘルプ（英語のセッションでは help.en.md）
+│   ├── help.md              # help ツールが返すユーザー向けヘルプ（英語。LLM が利用者の言語で伝える）
 │   ├── compaction_prompt.md # 会話履歴の自動要約指示
 │   ├── subagent_common.md   # サブエージェント共通プロンプト
 │   ├── handoff_prompt.md    # トークン上限接近時にLLMへ注入する打ち切り・引き継ぎ指示
@@ -465,7 +467,7 @@ Locohane/
 │   ├── files.py             # ファイルアップロード処理
 │   ├── images.py            # 画像処理・Data URL変換
 │   ├── tool_labels.py       # ツールの表示名（UIのStepバッジとサブエージェントの進捗表示で共有）
-│   ├── i18n.py              # チャット画面向けの表示言語（システム通知・ボタン等の文言、英語セッションの応答言語の指示）
+│   ├── i18n.py              # チャット画面向けの表示言語（システム通知・ボタン等の文言、応答言語の指示）
 │   ├── log_rotation.py      # app.log の日時ローテーション
 ├── agents/
 │   ├── README/AGENTS_README.md # エージェント種別定義（frontmatter）の書き方ガイド（*.mdスキャン時の警告を避けるためREADME/配下に退避）
@@ -617,6 +619,8 @@ set PYTHON_DIR=C:\DT_Python\Python311\env_local_agent_system
 | 変数 | 設定する値 |
 |---|---|
 | `PYTHON_DIR` | Locohane を実行する Python 仮想環境のディレクトリ。`admin.bat`・`app.bat`・`mcp_server.bat`（`.mcp.json` から起動）はこのファイルを `call` して使う。**管理ツールから起動する各インスタンスも同じ Python（`sys.executable`）で起動され**（`admin/supervisor.py` 参照）、`config.ini` の `[scripts].python` が空欄（既定）なら `run_script`/`execute_python_code` もこの Python を使う |
+
+`python_env.bat` は `PYTHONUTF8=1` も設定し、英語版など日本語以外の Windows でも標準入出力と `open()` の既定を UTF-8 にする。
 
 続けて、その環境に依存パッケージをインストールする（コマンドプロンプトで実行）。
 
@@ -1005,7 +1009,7 @@ Anthropic公式のModel Context Protocol（[仕様](https://modelcontextprotocol
   （64文字以内に正規化）としてLLMに公開する。
 - **エラー時の挙動**: 個別サーバーへの接続失敗・タイムアウトはそのサーバーのみ
   警告ログを出してスキップし、アプリ全体の起動は継続する。ツール呼び出し自体の
-  失敗も例外を送出せず `"エラー: ..."` 形式の文字列として返す。
+  失敗も例外を送出せず `"Error: ..."` 形式の文字列として返す。
 - **既知の限界**: 接続後にサーバープロセスがクラッシュした場合の自動再接続は
   行わない。応答はテキストブロックのみ抽出する（画像等のリソースは未対応）。
 - **`[main_agent_tool_guard]`との関係**: MCP動的ツールは名前が実行時にしか
@@ -1128,7 +1132,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   ファイル全体）ごとに1件にまとめる**。1つの一覧の中では同じ位置のチャンクは最上位の1つだけを数えるため、1ページに
   大量のチャンクがあっても点数はチャンク数で増えず、複数の検索（本文・キーワード・画像）で一致した位置が上に来る。
   埋め込み・索引はチャンク（`chunk_size`）単位のままで、抜粋には最も一致したチャンクを使い、同じ位置で他に一致した
-  チャンクは数だけ添える。各結果にはどの検索で一致したか（`一致: 本文・キーワード` 等）を載せ、出典のファイルパスをパスメモリー（`@N`）付きで添えるため、原文は
+  チャンクは数だけ添える。各結果にはどの検索で一致したか（`matched: text/keyword` 等）を載せ、出典のファイルパスをパスメモリー（`@N`）付きで添えるため、原文は
   `@N` を `Read`（メインエージェントは `explore` への委譲）に渡して確認できる。結果全体は `max_result_chars` 文字で切り詰める。
   結果が小さく抑えられるため、メインエージェント自身も直接呼べる（`[main_agent_tool_guard] allow_entries` に登録済み）。
   サブエージェントは `explore`・`worker`・`verifier` が持つ。
@@ -1142,7 +1146,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   検索ではパスの埋め込み（類似度 `path_min_score` 以上）とパスのキーワード（BM25。型番・品番・日付等の完全一致を拾う。
   語の区切り方は本文のキーワード検索と同じ）を別々に探し、`search_documents` と同じ式で順位を統合して（重みは埋め込みが 1.0、
   キーワードが `rrf_weight_path_keyword`。0 でキーワードを使わない）上位 `top_k` 件を、どちらで一致したか
-  （`一致: 意味・キーワード` 等）・出典のパス（`@N`）・相対パスを添えて返す（`search_documents` の結果には混ぜない）。パスが変わる（ファイル・フォルダの名前の変更・移動）と別のファイルとして
+  （`matched: meaning/keyword` 等）・出典のパス（`@N`）・相対パスを添えて返す（`search_documents` の結果には混ぜない）。パスが変わる（ファイル・フォルダの名前の変更・移動）と別のファイルとして
   取り込み直されるため、パスのベクターも追従する。取り込みの対象は対応形式のファイルで、本文の無い PDF・`image_input = false` の
   画像ファイルもパスだけは入る（読めずに失敗一覧に載ったファイルは入らない）。本文のチャンクが無くてもファイルがあれば
   検索の対象にする（画像ファイルだけのコレクションでも探せる。`search_documents` はそのコレクションを「本文のある文書がありません」として外す）。この機能の導入前に取り込んだコレクションは、次の「取り込み（差分）」で内容を埋め込み直さずに
@@ -1630,7 +1634,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[admin]` | `assistant_embedding_instance` | 埋め込みの接続先を取るインスタンス名。空欄なら自動で探す | `ADMIN_ASSISTANT_EMBEDDING_INSTANCE` |
 | `[admin]` | `assistant_max_history_messages` | AI に渡す直近の会話の最大メッセージ数 | `ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES` |
 | `[admin]` | `instances_dir` | インスタンス別ディレクトリのルート（既定 `./instances`）。app.bat直接起動時のdefaultインスタンスの`.env`・`config_overrides.json`の読み込み先にも使われる。変更時は既存の中身を手動で移動する | `INSTANCES_DIR` |
-| `[ui]` | `default_language` | 表示言語の既定値（`auto`＝ブラウザの言語 / `ja` / `en`）。利用者が画面で言語を選ぶとそちらが優先される。`en` のセッションでは AI も英語で回答する（「言語切り替え（日本語 / 英語）」節） | `UI_DEFAULT_LANGUAGE` |
+| `[ui]` | `default_language` | 表示言語の既定値（`auto`＝ブラウザの言語 / `ja` / `en`）。利用者が画面で言語を選ぶとそちらが優先される。AI も選んだ言語で回答する（「言語切り替え（日本語 / 英語）」節） | `UI_DEFAULT_LANGUAGE` |
 | `[ui]` | `max_display_messages` | チャット画面に描画するメッセージの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_MESSAGES` |
 | `[ui]` | `max_display_side_steps` | サイドパネルに描画するツール呼び出し等のStepの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_SIDE_STEPS` |
 | `[ui]` | `paste_as_attachment_threshold_chars` | 入力欄へこの文字数以上のテキストを貼り付けると、入力欄へ展開せず「貼り付けテキスト」カード（`pasted-text-*.txt` 添付）にする。送信時はパスではなく本文としてLLMへ渡す（`0`以下で無効） | `UI_PASTE_AS_ATTACHMENT_THRESHOLD_CHARS` |
@@ -1685,7 +1689,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - 1つの会話（thread_id）につき1ファイルへ追記し続ける（日をまたいでも
   ファイルは変わらない）。左サイドバーからスレッドを再開した場合も、同じ
   thread_id の既存ファイルへ追記を継続する（新規ファイルには分割しない）。
-  再開したタイミングは `----- 再開 YYYY-MM-DD HH:MM:SS -----` という区切り行で
+  再開したタイミングは `----- resumed YYYY-MM-DD HH:MM:SS -----` という区切り行で
   ファイル内に記録される。
 
 ## 会話スレッド一覧・再開（左サイドバー）
@@ -1763,18 +1767,22 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
   それぞれで選ぶ。
 - **既定値**: まだ選んでいない利用者は `[ui] default_language`（`auto` ならブラウザの言語。英語なら英語、それ以外は日本語）。
   設定ダッシュボードの config.ini 画面では選択式で変更できる。
-- **AI の応答言語**: 英語のセッションでは、`system_prompt.md` の末尾に英語で回答する指示（`src/i18n.py` の
-  `response_language_directive()`）を足してグラフを組み直す。`system_prompt.md`・ツールの docstring・SKILL.md は
-  日本語のまま（evals でチューニングした内容を変えないため。日本語のセッションのプロンプトは従来とまったく同じ）。
-  会話の途中で切り替えた場合は、次の送信から切り替わる（生成中の応答はそのまま）。管理アシスタントも同様に、
-  英語の画面では英語で回答する。
-- **翻訳されないもの**: 送信済みのメッセージ（送った時点の言語のまま残る）、ツールから LLM への戻り値・ログ、
-  設定ダッシュボードに表示する config.ini の各キーの説明（config.ini のコメント）、同梱スキル、
-  ナレッジ（`src/vector_db/`）やスキル研究室の内部処理から出る一部のエラーメッセージ。
-- **言語別の表示設定ファイル**: 英語のセッションでは `welcome.en.md`（`public/settings/`・インスタンス専用の
-  `settings/`）と `system_prompt/help.en.md`（`help` ツール）を優先して読む。`welcome.en.md` が無いときは
-  日本語の `welcome.md` ではなく組み込みの英語文言を出す。設定ダッシュボードの「表示設定」から編集できるのは
-  日本語版だけなので、英語版はファイルを直接置く。英語の定型文ボタンは `[chat_starters] prompts_en`。
+- **LLM 向けの文言は英語ベース**: `system_prompt/` 配下のプロンプト・`agents/*.md`・ツールの docstring と戻り値
+  （エラーの接頭辞は `Error:`、スクリプトの出力は `[exit code]`・`[stdout]`・`[stderr]`）・同梱スキル（SKILL.md・
+  references・スクリプトのメッセージ）・管理アシスタントとスキル研究室のプロンプトは英語で書く。
+- **AI の応答言語**: セッションの表示言語に合わせ、`system_prompt.md` の末尾に応答言語の指示（`src/i18n.py` の
+  `response_language_directive()`。日本語・英語とも付ける）を足してグラフを組み直す。会話の途中で切り替えた場合は、
+  次の送信から切り替わる（生成中の応答はそのまま）。管理アシスタントも同様に、ダッシュボードの表示言語で回答する
+  （`admin/i18n.py` の `response_language_instruction()`）。evals はセッション外で動くため、既定の言語（日本語）の指示が付く。
+- **ログは英語**: アプリログ（`app_*.log`）・管理ツールのログは英語で出す。モニターはローテーション前の日本語のログ形式も読める。
+- **config.ini の説明**: 正本は config.ini の日本語コメント。設定ダッシュボードを英語で表示すると、英訳カタログ
+  （`admin/ini_catalog_en.py`）の説明・グループ見出しを返す。config.ini のキーを追加・説明を変更したら、カタログも
+  合わせて更新する（`tests/test_admin_ini_catalog_en.py` が全キーの英訳の有無を確かめる）。
+- **翻訳されないもの**: 送信済みのメッセージ（送った時点の言語のまま残る）、開発者向けのコードコメントと Python の
+  docstring、`skills/SKILLS_README.md` などの開発者向けドキュメント。
+- **ウェルカムメッセージとヘルプ**: `public/settings/welcome.md`・`system_prompt/help.md` は言語別のファイルを持たず、
+  英語の1本だけ（help は LLM が利用者の言語で伝える）。日本語にしたい場合は設定ダッシュボードの「表示設定」で
+  welcome.md を書き換える。英語の定型文ボタンは `[chat_starters] prompts_en`。
 
 ### 文言の置き場所と翻訳の追加方法
 
@@ -1785,7 +1793,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | 設定ダッシュボード（画面） | `admin/static/i18n_en.js` | 日本語の原文をそのままキーにする。JS では `_t("原文")`（可変部分は `_t("{0} を停止します", name)`）、`index.html` のテンプレートは `clone()` が自動で訳す |
 | 設定ダッシュボード（サーバーのエラー） | `admin/i18n.py` の `EN` | 日本語の原文をキーにし、`_t("インスタンス {0!r} が見つかりません。", name)`。言語は `X-Locohane-Lang` ヘッダー（`admin.js` の `api()` が付ける） |
 
-訳を書き忘れた文言は日本語のまま表示される（落ちはしない）。`tests/test_i18n.py`・`tests/test_admin_i18n.py` が、
+訳を書き忘れた文言は日本語のまま表示される（落ちはしない）。`tests/test_i18n.py`・`tests/test_admin_i18n.py`・`tests/test_admin_ini_catalog_en.py` が、
 キーの英訳の有無とプレースホルダー（`{0}` 等）の一致を確かめる。
 
 `🔢 トークン使用量` などのメッセージの接頭辞（`app.py` の `*_PREFIX` と `frontend/src/utils/messageTree.ts`）や
@@ -2017,7 +2025,7 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 |---|---|
 | 接続中セッション・生成中スレッド | `<common_data_dir>/runtime_status.json`（本体が3秒ごとに変化があれば書き出し、終了時に削除。`src/runtime_status.py`） |
 | スレッド一覧・会話内容 | `[thread_store] db`（`[thread_store] enabled=false` だと閲覧できない） |
-| トークン推移 | `app_*.log` の `トークン使用量 thread_id=...` 行（会話本体の呼び出し）、`圧縮処理トークン使用量` 行（要約・write_thread_note 強制実行。`src/context_compaction.py`）、`コンテキスト圧縮を実行しました` 行（破線の位置）。`[llm] track_token_usage=true` の場合のみ出力され、ログがローテーション・削除された分は表示されない |
+| トークン推移 | `app_*.log` の `token usage thread_id=...` 行（会話本体の呼び出し）、`compaction token usage` 行（要約・write_thread_note 強制実行。`src/context_compaction.py`）、`context compacted` 行（破線の位置）。ローテーション前の日本語の行（`トークン使用量`・`圧縮処理トークン使用量`・`コンテキスト圧縮を実行しました`）も読む。`[llm] track_token_usage=true` の場合のみ出力され、ログがローテーション・削除された分は表示されない |
 
 本体と HTTP で通信せずファイルを読む方式にしているのは、`app.bat` で直接
 起動した（管理ツールが起動に関与しない）インスタンスでも同じように見える
@@ -2033,6 +2041,7 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 - 回答に出てきた設定キーには「`[section] key` を開く」ボタンが付き、押すとそのインスタンスの config.ini 画面を、検索欄にキーを入れた状態で開く。
 - パネル上部の「対象」で相談対象のインスタンスを選ぶ（開いた時点でインスタンス詳細を見ていればそのインスタンス、無ければ前回の選択か `default`）。
 - 会話履歴はブラウザのタブ（sessionStorage）にだけ残り、サーバーには保存しない。変更履歴（監査ログ）にも記録しない。
+- AI へのプロンプトと画面ガイドは英語で書き、末尾の応答言語の指示（`admin/i18n.py` の `response_language_instruction()`）でダッシュボードの表示言語に合わせて回答させる。
 
 AI に渡すもの（回答のたびに組み立て直す）:
 
@@ -2191,7 +2200,7 @@ md を編集すれば管理ツールを再起動せずに反映される）。AP
 | チャット画面 | ヘッダーのタイトルにマウスを乗せたときのツールチップ（`GET /locohane/version`） |
 | 設定ダッシュボード | 上部バーのタイトル横（`GET /api/me`・`POST /api/login` の `version`） |
 | MCP サーバー | `initialize` 応答の `serverInfo.version` |
-| ログ | 本体起動時の `app_*.log` に `Locohane vX.Y.Z を起動しました。` |
+| ログ | 本体起動時の `app_*.log` に `Locohane vX.Y.Z started.` |
 
 ### 番号の上げ方
 
@@ -2341,4 +2350,5 @@ LICENSEファイル・SKILL.mdのfrontmatter（`license`キー）を確認し、
 
 見出し（`##`/`###`）を追加・変更・削除した場合は、`CLAUDE.md`・`QWEN.md` の「ClaudeCode実行時ルール」に記載している README_DETAIL.md 見出し一覧も必ず合わせて更新すること。
 利用者の操作手順や画面の見え方が変わる変更は、利用者向けの [README.md](README.md) にも反映すること（README.md には設定キーやディレクトリ構造の詳細は書かず、本書へのリンクで済ませる）。
+本書を更新したら、英語版の [README_DETAIL.en.md](README_DETAIL.en.md) も合わせて更新すること（日本語版が正本）。README.md を更新したら [README.en.md](README.en.md) も同様に更新する。
 

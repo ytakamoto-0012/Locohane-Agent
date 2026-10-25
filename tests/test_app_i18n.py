@@ -1,5 +1,6 @@
 """app.py の表示言語まわり（接続時の言語・言語別の表示設定ファイル・set_language）のテスト。"""
 
+from pathlib import Path
 import types
 
 import pytest
@@ -30,25 +31,12 @@ def test_init_session_lang_reads_user_env(monkeypatch, env, expected) -> None:
     assert session.get("lang") == expected
 
 
-def test_localized_settings_text_prefers_language_file(tmp_path, monkeypatch) -> None:
-    (tmp_path / "welcome.md").write_text("ようこそ", encoding="utf-8")
-    (tmp_path / "welcome.en.md").write_text("Welcome", encoding="utf-8")
-    monkeypatch.setattr(app, "SETTINGS_DIR", tmp_path)
-    monkeypatch.setattr(app, "INSTANCE_SETTINGS_DIR", tmp_path / "instance")
-
-    monkeypatch.setattr(app.cl, "user_session", _UserSession({"lang": "ja"}))
-    assert app._load_localized_settings_text("welcome.md", "default") == "ようこそ"
-    monkeypatch.setattr(app.cl, "user_session", _UserSession({"lang": "en"}))
-    assert app._load_localized_settings_text("welcome.md", "default") == "Welcome"
-
-
-def test_localized_settings_text_does_not_fall_back_to_japanese_file(tmp_path, monkeypatch) -> None:
-    # 英語画面に日本語の welcome.md を出さず、組み込みの英語文言を使う。
-    (tmp_path / "welcome.md").write_text("ようこそ", encoding="utf-8")
-    monkeypatch.setattr(app, "SETTINGS_DIR", tmp_path)
-    monkeypatch.setattr(app, "INSTANCE_SETTINGS_DIR", tmp_path / "instance")
-    monkeypatch.setattr(app.cl, "user_session", _UserSession({"lang": "en"}))
-    assert app._load_localized_settings_text("welcome.md", i18n.t("welcome.default")).startswith("Locohane is ready.")
+def test_bundled_welcome_and_help_are_single_english_files() -> None:
+    # welcome.md・help.md は言語別のファイルを持たず、英語の1本だけにする（help は LLM が利用者の言語で伝える）。
+    root = Path(app.__file__).resolve().parent
+    assert not (root / "public" / "settings" / "welcome.en.md").exists()
+    assert not (root / "system_prompt" / "help.en.md").exists()
+    assert (root / "public" / "settings" / "welcome.md").read_text(encoding="utf-8").startswith("Locohane is ready.")
 
 
 @pytest.mark.asyncio

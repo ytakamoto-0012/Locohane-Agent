@@ -16,10 +16,9 @@
 
 - チャット画面・設定ダッシュボード・AI の回答を、利用者ごとに日本語と英語で切り替えられるようにしました。
   チャット画面は右上の表示設定（パレットアイコン）またはログイン画面、設定ダッシュボードは右上の選択欄で選び、
-  ブラウザに保存されます。英語を選ぶと AI も英語で回答します（`system_prompt.md` 自体は日本語のまま、末尾に指示を足す方式。
-  日本語のときのプロンプトは従来と同じ）。まだ選んでいない利用者の既定は `[ui] default_language`（`auto`＝ブラウザの言語・
-  `ja`・`en`）。英語の定型文ボタンは `[chat_starters] prompts_en`、英語のウェルカム・ヘルプは `public/settings/welcome.en.md`・
-  `system_prompt/help.en.md`。英語版の README（`README.en.md`）も追加しました。
+  ブラウザに保存されます。AI は選んだ言語で回答します。まだ選んでいない利用者の既定は `[ui] default_language`（`auto`＝ブラウザの言語・
+  `ja`・`en`）。英語の定型文ボタンは `[chat_starters] prompts_en`。設定ダッシュボードの config.ini の説明も英語で表示できます。
+  英語版の README（`README.en.md`・`README_DETAIL.en.md`）も追加しました。
 - 設定ダッシュボードの右上に「AIに相談」（管理アシスタント）を追加しました。困りごとを書くと、どの画面のどこを開き、
   どの設定キーをどう変えればよいかを AI が助言します。AI は設定を読むだけで、変更・保存・起動停止は管理者が行います。
   回答中の設定キーには、そのキーを config.ini 画面で開くボタンが付きます。AI に渡す画面ガイドは `admin/ASSISTANT_GUIDE.md`
@@ -27,6 +26,25 @@
   AI に渡します（ナレッジと同じ埋め込みサーバーがあれば意味の近さで、無ければ文字の重なりで検索）。設定は `[admin]` の
   `assistant_enabled`・`assistant_llm_instance`・`assistant_max_keys`・`assistant_max_docs`・`assistant_use_embedding`・
   `assistant_embedding_instance`・`assistant_max_history_messages`。
+
+### 変更
+
+- LLM 向けの文言を英語ベースにしました。システムプロンプト・サブエージェント定義・ツールの説明と戻り値・同梱スキル
+  （SKILL.md・references・スクリプトのメッセージ）・管理アシスタントとスキル研究室のプロンプトが英語になり、応答言語は
+  末尾の指示で切り替えます。ツールのエラーの接頭辞は `Error:`、スクリプトの出力の見出しは `[exit code]`・`[stdout]`・`[stderr]` です。
+- アプリログ・管理ツールのログを英語にしました（モニターは以前の日本語のログも読めます）。
+- ウェルカムメッセージ（`public/settings/welcome.md`）とヘルプ（`system_prompt/help.md`）の同梱版を英語にしました。
+  言語別のファイル（`*.en.md`）は使いません。日本語にしたい場合は設定ダッシュボードの「表示設定」で書き換えてください。
+- 英語版などの日本語以外の Windows でも動くようにしました。`python_env.bat` で `PYTHONUTF8=1` を設定し、テキストの読み込みは
+  UTF-8・cp932 に加えて OS の既定の文字コードも試します。pdf-tools の PDF 生成は、日本語フォントが無い環境では
+  日本語を含まない文書に限り欧文フォントで作ります。
+
+### 移行時の注意
+
+- ツールの戻り値の「エラー:」「[標準出力]」等を前提にした独自のスキル・評価ケースは、英語の表記（`Error:`・`[stdout]` 等）に
+  合わせて直してください。
+- `public/settings/welcome.en.md`・`system_prompt/help.en.md` を置いていた場合、それらは読まれなくなります。内容を `welcome.md`・
+  `help.md` に移してください。
 
 ## [0.3.1] - 2026-10-24
 

@@ -1,70 +1,71 @@
-# 使い方ヘルプ
+# Help
 
-このアシスタントは、あらかじめ用意された「スキル」と各種ツールを使って、
-複数ステップの作業を自律的に実行する**ローカルAIエージェント**です。
+This assistant is a **local AI agent** that carries out multi-step work on its own,
+using prepared "skills" and a set of tools.
 
 ---
 
-## 🛠 できること
+## 🛠 What it can do
 
-### 1. スキルの実行
-用意されたスキルを使って専門的な作業を行います。
-> ファイルを直接編集するスキルでは、上書き前に**自動でバックアップ**を作成してから保存します。
+### 1. Run skills
+It uses the prepared skills to do specialized work.
+> Skills that edit files directly **make a backup automatically** before overwriting and saving.
 
-### 2. Office文書の作成・編集・読み取り
-**対応形式**: `.docx`（Word）/ `.xlsx`・`.xlsm`・`.xls`（Excel、xlsは読み込みのみ）/ `.pptx`（PowerPoint）
+### 2. Create, edit and read Office documents
+**Supported formats**: `.docx` (Word) / `.xlsx`, `.xlsm`, `.xls` (Excel; xls is read-only) / `.pptx` (PowerPoint)
 
-| 機能 | 詳細 |
+| Feature | Details |
 |------|------|
-| **基本操作** | 検索・置換、書式変更、グラフ・画像の追加など |
-| **Excelマクロ（VBA）** | コードの読み込み・追加・上書き・削除・実行（※セキュリティガード付き） |
+| **Basic operations** | Find and replace, formatting, adding charts and images, etc. |
+| **Excel macros (VBA)** | Read, add, overwrite, delete and run code (with security guards) |
 
-### 3. 実行計画の提示・承認
-複数ステップの作業では、**着手前にチェックリスト形式の計画**が提示されます。
-1. 計画内容を確認
-2. 承認してから実行が開始されます
+### 3. Propose and approve a plan
+For multi-step work, a **checklist-style plan is shown before starting**.
+1. Review the plan
+2. Work starts after you approve it
 
-### 4. スクリプト・コードの実行
-- スキルに含まれるスクリプトや、その場で生成した Python コードを実行できます
-- 原則として**実行前に確認メッセージ**が表示されます（計画承認後はまとめて進みます）
-- 時間のかかる処理は**バックグラウンド**で実行し、完了を待たずに他のやり取りを続けられます
+### 4. Run scripts and code
+- It can run scripts included in skills and Python code generated on the spot
+- As a rule, a **confirmation message is shown before running** (after a plan is approved, the steps proceed together)
+- Long-running work runs **in the background**, so you can keep talking without waiting for it to finish
 
-### 5. 画像・ファイルの読み込みと提示
-- 画像ファイルの内容を確認・説明できます
-- 作成・加工したファイルを**ダウンロードボタン**として提示
-- 画像をその場で**プレビュー表示**できます
+### 5. Read and present images and files
+- It can check and describe the contents of image files
+- Files it creates or processes are offered as **download buttons**
+- Images can be **previewed** right away
 
-### 6. 永続メモリー
-会話をまたいで引き継ぎたい情報を記憶し、次回以降の会話に活用します。
+### 6. Persistent memory
+It remembers information you want to carry over between conversations and uses it in later conversations.
 
-| 記憶タイプ | 内容 |
+| Memory type | Contents |
 |-----------|------|
-| ユーザー情報 | 役割・目的・担当者情報など |
-| フィードバック | 作業中の修正・確認されたアプローチ |
-| プロジェクト情報 | 進行中の作業・バグ・課題など |
-| 参考情報 | 外部システムへのポインター |
+| User information | Role, goals, contact people, etc. |
+| Feedback | Corrections and confirmed approaches during work |
+| Project information | Ongoing work, bugs, issues, etc. |
+| References | Pointers to external systems |
 
-> 「**覚えておいて**」と言えば自動的に保存されます。
+> Say "**remember this**" and it is saved automatically.
 
-### 7. タスクの委譲
-独立した調査や下調べは、**別のエージェントへ委譲**して効率的に処理します。
+### 7. Delegate tasks
+Independent investigation and research are **delegated to another agent** for efficiency.
 
-### 8. 外部ツールとの連携
-設定されている場合、**MCPサーバー**経由で外部の追加ツールを利用できます。
+### 8. Work with external tools
+If configured, additional external tools are available through **MCP servers**.
 
 ---
 
-## 💡 使い方のコツ
+## 💡 Tips
 
-| ポイント | 説明 |
+| Point | Description |
 |----------|------|
-| **作業ディレクトリの指定** | メッセージ入力欄にある📁**フォルダアイコン**から指定できます（未指定の場合は既定値が使われます） |
-| **定型文ボタン** | チャット開始時に表示されるボタンをクリックすると、内容がそのまま送信されて作業が始まります |
-| **確認の質問** | 要求が曖昧な場合は、こちらから確認の質問をすることがあります |
-| **実行確認** | スクリプトやコードの実行前に表示される確認メッセージは、内容を確認した上で**許可 / 拒否**を選んでください |
+| **Set the working directory** | Use the 📁 **folder icon** in the message box (the default is used if not set) |
+| **Starter buttons** | Clicking a button shown at the start of a chat sends its text as is and starts the work |
+| **Clarifying questions** | If a request is ambiguous, the assistant may ask you a question first |
+| **Run confirmations** | Check the confirmation message shown before running scripts or code, then choose **Allow / Deny** |
+| **Display language** | Switch between 日本語 and English from the display settings (palette icon) at the top right |
 
 ---
 
-## 📬 フィードバック
+## 📬 Feedback
 
-フィードバックの窓口は**運用側の案内**に従ってください。
+For feedback, follow the **instructions from your administrator**.
