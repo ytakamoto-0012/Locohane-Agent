@@ -12,6 +12,7 @@ import chainlit as cl
 import logging
 
 from .. import skill_drafts
+from ..tool_errors import looks_like_error
 from ..tool_loop_guard import find_leaked_tool_markup, leaked_tool_markup_error
 from . import _state
 from ._safe_path import _is_guard_exempt_script, _safe_path
@@ -52,22 +53,12 @@ def _log_tool_calls_debug(input) -> None:  # noqa: A002
     logger.debug("tool_call: name=%s args=%r id=%s", call.get("name"), call.get("args"), call.get("id"))
 
 
-def _contains_error(content: str) -> bool:
-    """文字列にエラーを示すキーワードが含まれるかを判定する。
-
-    日本語「エラー」、英語「error」(大文字小文字区別なし)、全角カタカナ
-    「ｴﾗｰ」に対応する。
-    """
-    content_lower = content.lower()
-    return "エラー" in content or "error" in content_lower or "ｴﾗｰ" in content
-
-
 def _log_tool_results_debug(result: dict, call_args: dict | None = None) -> None:
     """メイングラフのツール呼び出し結果を DEBUG レベルで記録する（全文、未省略）。
 
     execute_python_* 系ツールは成功時も WARNING（スキル開発アイデアの
     シグナルとして記録。代替スキルが作られれば LLM は呼ばなくなる）。
-    エラーキーワードを含むメッセージも WARNING。
+    エラーを示す戻り値（src/tool_errors.py の looks_like_error）も WARNING。
     execute_python_code の場合は call_args に code が含まれるため、
     WARNINGログにも含める（monitor-app-log スキルでissue起票可能にする）。
     """
@@ -75,7 +66,7 @@ def _log_tool_results_debug(result: dict, call_args: dict | None = None) -> None
         name = getattr(msg, "name", None) or ""
         content = msg.content or ""
         is_execute_python = name.startswith("execute_python_")
-        has_error = _contains_error(content)
+        has_error = looks_like_error(content)
 
         if is_execute_python or has_error:
             if is_execute_python and call_args and "code" in call_args:

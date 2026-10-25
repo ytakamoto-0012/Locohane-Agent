@@ -33,16 +33,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import BaseTool
 
 
-def _contains_error(content: str) -> bool:
-    """文字列にエラーを示すキーワードが含まれるかを判定する。
-
-    日本語「エラー」、英語「error」(大文字小文字区別なし)、全角カタカナ
-    「ｴﾗｰ」に対応する。
-    """
-    content_lower = content.lower()
-    return "エラー" in content or "error" in content_lower or "ｴﾗｰ" in content
-
-
 from .config import Config
 from .context_compaction import (
     force_write_thread_note,
@@ -54,6 +44,7 @@ from .context_compaction import (
 )
 from .context_trim import is_trigger_reached, trim_old_ai_messages, trim_old_tool_messages
 from .images import image_followup_message
+from .tool_errors import looks_like_error
 from .tool_loop_guard import detect_tool_call_loop, find_leaked_tool_markup, leaked_tool_markup_error
 from .llm import (
     LLM_CONNECTION_ERRORS,
@@ -135,10 +126,10 @@ async def _run_one_tool_call(call: dict, tools_by_name: dict[str, BaseTool]) -> 
                 tool_call_id=call["id"],
             )
     # execute_python_*系ツールは成功時もWARNING（スキル開発アイデアのシグナルとして記録）
-    # それ以外でエラーメッセージが含まれる場合もWARNING
+    # それ以外でも戻り値がエラーを示す場合はWARNING（src/tool_errors.py）
     content = str(tool_message.content)
     is_execute_python = call["name"].startswith("execute_python_")
-    has_error = _contains_error(content)
+    has_error = looks_like_error(content)
 
     if is_execute_python or has_error:
         logger.warning(

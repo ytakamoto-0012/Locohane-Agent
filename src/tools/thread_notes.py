@@ -7,10 +7,17 @@ from datetime import datetime
 from langchain_core.tools import tool
 from pathlib import Path
 import re
+import threading
 
 from ._script_job import _JOB_OUTPUT_TAIL_CHARS
 from ._state import _IN_SUBAGENT, _SUBAGENT_AGENT_TYPE
 from ._workdir import _resolve_exec_workdir
+
+
+# ノートへの追記と読み直しを直列にするロック（write_scratch_note も使う）。
+# 同じ応答で並列に呼ばれたツールは別スレッドで同時に追記するため、Windows では
+# 追記どうしが同じ位置に書かれて片方が消えることがある。
+NOTE_FILE_LOCK = threading.Lock()
 
 
 def _thread_notes_path() -> Path:
@@ -104,9 +111,10 @@ def write_thread_note(topic: str, content: str) -> str:
     author = _thread_note_author()
     block = f"## {topic_clean}\n<!-- {timestamp} by {author} -->\n{content.rstrip()}\n\n"
     try:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(block)
-        full_text = path.read_text(encoding="utf-8", errors="replace")
+        with NOTE_FILE_LOCK:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(block)
+            full_text = path.read_text(encoding="utf-8", errors="replace")
     except OSError as e:
         return f"Error: failed to write to the thread note: {e}"
     topic_chars = sum(b.content.__len__() for b in _parse_thread_notes(full_text) if b.topic == topic_clean)

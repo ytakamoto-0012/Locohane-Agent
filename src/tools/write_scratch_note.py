@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 from pathlib import Path
 
 from ._state import _SUBAGENT_RUN_ID
+from .thread_notes import NOTE_FILE_LOCK
 from ._workdir import _resolve_exec_workdir
 
 _UNSAFE_RUN_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
@@ -82,11 +83,12 @@ def write_scratch_note(content: str) -> str:
         return "Error: content is empty."
     path = _scratch_notes_path()
     try:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(content)
-            if not content.endswith("\n"):
-                f.write("\n")
-        total_chars = len(path.read_text(encoding="utf-8"))
+        with NOTE_FILE_LOCK:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(content)
+                if not content.endswith("\n"):
+                    f.write("\n")
+            total_chars = len(path.read_text(encoding="utf-8"))
     except OSError as e:
         return f"Error: failed to write to the scratch file: {e}"
     return f"Written: {path} ({total_chars} chars in total)"
