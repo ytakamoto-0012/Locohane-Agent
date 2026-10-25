@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-25
+
 ### 追加
 
 - チャット画面・設定ダッシュボード・AI の回答を、利用者ごとに日本語と英語で切り替えられるようにしました。
@@ -62,6 +64,10 @@
 - パスメモリーの `@N` の後ろにファイル名を続けた `@N/photo_01.png`（`\` 区切りも可）を、フォルダの `@N` の中のパスとして
   解決するようにしました。以前は `analyze_image`・`run_script` などで「ファイルが見つからない」エラーになっていました。
   ファイルの `@N` に続けた場合は、`@N` を単体で渡すよう促すエラーを返します。
+- サブエージェントを並列に動かしたときに、スレッド共有ノート（thread notes）・スクラッチノートへの同時の追記の一部が
+  消えることがある不具合を直しました。
+- ツールの結果に "error" という語が含まれるだけ（SKILL.md の説明・調査結果の要約など）で、ログを WARNING にしていた誤判定を
+  直しました。エラーの接頭辞・0 以外の終了コード・Traceback があるときだけ WARNING にします。
 
 ### 移行時の注意
 
@@ -286,7 +292,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.0...v0.2.1
