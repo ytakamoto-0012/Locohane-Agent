@@ -8,7 +8,7 @@
 
 # --- エージェント基盤 ---
 langgraph==1.2.9
-langgraph-checkpoint-sqlite==3.1.1   # AsyncSqliteSaver（会話状態の永続化）
+langgraph-checkpoint-sqlite==3.1.2   # AsyncSqliteSaver（会話状態の永続化）
 aiosqlite==0.22.1                    # AsyncSqliteSaver用のsqlite3非同期接続（app.py/evals/run_case.pyが直接importするため明記）
 langchain-core==1.4.9
 langchain-openai==1.3.5              # ChatOpenAI 経由で llama-server の OpenAI 互換APIへ接続
@@ -19,7 +19,7 @@ openai>=2.45.0                       # src/llm.py: LLM_CONNECTION_ERRORS で直�
 mcp==1.30.0                           # 公式Python SDK。chainlitの推移的依存として環境には既に導入済みだが、直接importするため明記
 
 # --- skills/ をMCPサーバーとして配布（mcp_server/、mcp_server/MCP_README.md参照） ---
-fastmcp==3.4.7                        # 非公式サードパーティ製ラッパー（Anthropic公式ではない）。SkillsDirectoryProviderを使用
+fastmcp==3.4.10                        # 非公式サードパーティ製ラッパー（Anthropic公式ではない）。SkillsDirectoryProviderを使用
 
 # --- UI ---
 chainlit==2.12.0
