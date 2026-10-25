@@ -743,7 +743,7 @@ def _patch_chainlit_ignore_ui_action_first_interaction() -> None:
     _cl_emitter.ChainlitEmitter.flush_thread_queues = _flush_thread_queues_ignoring_ui_actions
     logging.getLogger(__name__).info(
         "Applied the patch preventing UI button (%s) clicks from wrongly triggering conversation naming and early persistence.",
-        "、".join(sorted(_NON_CHAT_ACTION_NAMES)),
+        ", ".join(sorted(_NON_CHAT_ACTION_NAMES)),
     )
 
 

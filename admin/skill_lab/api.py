@@ -21,7 +21,7 @@ from evals.config_patch import ConfigPatchError
 from .. import audit
 from .. import instances as inst
 from . import promotion, sources, themes
-from admin.i18n import t as _t
+from admin.i18n import current_lang, t as _t
 
 # アップロードできる入力ファイル1つの上限（バイト）。
 _MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -532,7 +532,7 @@ def build_router(
             raise HTTPException(status_code=400, detail=_t("mode は loop か tryout にしてください。"))
         missing = themes.start_missing(directory)
         if missing:
-            raise HTTPException(status_code=400, detail=_t("開始するには次を入れてください: {0}", "、".join(missing)))
+            raise HTTPException(status_code=400, detail=_t("開始するには次を入れてください: {0}", (", " if current_lang() == "en" else "、").join(missing)))
         labs = _labs()
         lab = data.get("lab")
         if lab and lab not in {x["name"] for x in labs}:
