@@ -79,12 +79,12 @@ def _cmd_start(args: argparse.Namespace) -> int:
     cases_dir = ref.dir / DRAFT_EVALS_DIRNAME
     available = sorted(p.stem for p in cases_dir.glob("*.yaml"))
     if not available:
-        raise SkillCreatorError(f"ケースがありません。make_eval_case.py で {ref.full_name} のケースを作ってください。")
+        raise SkillCreatorError(f"There are no cases. Create cases for {ref.full_name} with make_eval_case.py.")
     missing = [c for c in args.case if c not in available]
     if missing:
-        raise SkillCreatorError(f"ケースが見つかりません: {missing}（ある: {available}）")
+        raise SkillCreatorError(f"Cases not found: {missing} (available: {available})")
     if args.repeat < 1:
-        raise SkillCreatorError("--repeat は1以上にしてください。")
+        raise SkillCreatorError("Make --repeat 1 or more.")
 
     ws = workspace_dir(ctx, ref)
     results_root = ws / "results" / args.mode
@@ -126,7 +126,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
     ws = workspace_dir(ctx, ref)
     job = load_job(ws, args.job_id)
     if is_process_alive(job["pid"]):
-        done = log_tail(job, 10_000).count("実行中:")
+        done = log_tail(job, 10_000).count("Running:")
         print_json({"job_id": args.job_id, "status": "running", "started_runs": done, "total_runs": len(job["cases"]) * job["repeat"]})
         return 0
 
@@ -135,7 +135,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
         p for p in (results_root.iterdir() if results_root.is_dir() else []) if p.is_dir() and p.name not in job["existing_results"]
     )
     if not new_dirs or not (new_dirs[-1] / "results.json").is_file():
-        print_json({"job_id": args.job_id, "status": "finished", "error": "結果が生成されていません", "log_tail": log_tail(job)})
+        print_json({"job_id": args.job_id, "status": "finished", "error": "No results were generated", "log_tail": log_tail(job)})
         return 1
     out_dir = new_dirs[-1]
     results = json.loads((out_dir / "results.json").read_text(encoding="utf-8"))
@@ -189,7 +189,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             "verdict": verdict,
             "stale": stale,
             **(
-                {"note": "評価中または評価後にドラフト（SKILL.md・scripts 等・ケース）が変更されたため、この結果は記録しません。今の内容でもう一度評価してください。"}
+                {"note": "The draft (SKILL.md, scripts, etc., cases) was changed during or after the evaluation, so this result is not recorded. Evaluate again with the current contents."}
                 if stale
                 else {}
             ),
@@ -220,10 +220,10 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_start = sub.add_parser("start")
-    p_start.add_argument("--name", required=True, help="ドラフト名（自分のドラフトはスキル名だけでよい）")
+    p_start.add_argument("--name", required=True, help="draft name (for your own drafts, just the skill name)")
     p_start.add_argument("--mode", choices=["with_skill", "without_skill"], default="with_skill")
-    p_start.add_argument("--repeat", type=int, default=1, help="各ケースの繰り返し回数（スキル安定化トライアウト）")
-    p_start.add_argument("--case", action="append", default=[], help="実行するケースID（複数可。省略時は全ケース）")
+    p_start.add_argument("--repeat", type=int, default=1, help="number of repetitions of each case (skill stabilization tryout)")
+    p_start.add_argument("--case", action="append", default=[], help="case IDs to run (several allowed; all cases if omitted)")
 
     p_status = sub.add_parser("status")
     p_status.add_argument("--name", required=True)

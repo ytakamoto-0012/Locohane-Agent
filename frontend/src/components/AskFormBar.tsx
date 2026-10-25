@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useChatData } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 
 interface IMultiTextFormProps {
   question?: string;
@@ -17,6 +18,7 @@ interface IMultiTextFormProps {
  */
 export function AskFormBar() {
   const { askUser, elements } = useChatData();
+  const { t } = useI18n();
 
   const element =
     askUser?.spec.type === 'element'
@@ -65,10 +67,10 @@ export function AskFormBar() {
       </div>
       <div className="ask-form-actions">
         <button type="button" className="ask-form-cancel" onClick={handleCancel}>
-          ❌ キャンセル
+          {t('common.cancelWithIcon')}
         </button>
         <button type="submit" className="ask-form-submit">
-          送信
+          {t('common.send')}
         </button>
       </div>
     </form>

@@ -53,10 +53,9 @@ logger = logging.getLogger(__name__)
 
 # 空応答（無言終了）を検知した際に注入する、最終回答を促す短いリマインダー。
 EMPTY_RESPONSE_NUDGE = (
-    "（自動リマインダー: 直前の応答が空でした。これ以上ツールを呼ぶ必要が"
-    "無ければ、ここまでの作業内容を踏まえてユーザーへの最終回答を今すぐ"
-    "テキストで書いてください。まだ作業が終わっていなければ、続きのツール"
-    "呼び出しを行ってください。）"
+    "(Automatic reminder: your last response was empty. If no more tool calls are needed, "
+    "write your final answer to the user as text now, based on the work so far. "
+    "If the work is not finished, continue with the next tool call.)"
 )
 
 
@@ -427,7 +426,7 @@ async def ainvoke_ensuring_final_text(
                 await _remove_message_ids_if_present(graph, run_config, remove_ids)
                 raise
             logger.warning(
-                "LLM応答のループを検知（%d回目の再試行）: 直近テキスト=%r",
+                "Detected an LLM response loop (retry %d): recent text=%r",
                 loop_attempt + 1,
                 exc.snippet,
             )

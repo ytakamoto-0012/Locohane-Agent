@@ -79,7 +79,7 @@ def _read_vba(path: Path, module_arg: str | None) -> dict:
             if e["name"] == module_arg:
                 return {"path": str(path), "module": e["name"], "type": e["type"], "code": e["code"]}
         names = [e["name"] for e in entries]
-        raise ValueError(f"モジュールが見つかりません: {module_arg!r}（存在するモジュール: {names}）")
+        raise ValueError(f"Module not found: {module_arg!r} (existing modules: {names})")
     finally:
         vba.close()
 
@@ -88,24 +88,24 @@ def main() -> int:
     setup_utf8_stdio()
     parser = argparse.ArgumentParser()
     parser.add_argument("file_path")
-    parser.add_argument("--module", default=None, help="ソースコードを取得したいモジュール名（省略時は一覧のみ返す）")
+    parser.add_argument("--module", default=None, help="name of the module whose source code to get (if omitted, only the list is returned)")
     args = parser.parse_args()
 
     path = Path(args.file_path)
     if not path.is_file():
-        print(f"ファイルが見つかりません: {args.file_path}", file=sys.stderr)
+        print(f"File not found: {args.file_path}", file=sys.stderr)
         return 1
 
     ext = path.suffix.lower()
     if ext == ".xlsx":
         print(
-            "VBAコードを含まない拡張子です（.xlsxにはマクロを保存できません）。"
-            ".xlsm または .xls を指定してください。",
+            "This extension does not contain VBA code (.xlsx cannot store macros). "
+            "Specify .xlsm or .xls.",
             file=sys.stderr,
         )
         return 1
     if ext not in (".xlsm", ".xls"):
-        print(f"対応拡張子は .xlsm/.xls のみです: {ext}", file=sys.stderr)
+        print(f"Only the .xlsm/.xls extensions are supported: {ext}", file=sys.stderr)
         return 1
 
     try:
@@ -114,10 +114,10 @@ def main() -> int:
         print(str(e), file=sys.stderr)
         return 1
     except ImportError as e:
-        print(f"必要なライブラリが見つかりません（oletoolsが必要です）: {e}", file=sys.stderr)
+        print(f"A required library was not found (oletools is required): {e}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - 破損ファイル等、oletoolsが送出する多様な例外を丸めて報告する
-        print(f"VBAコードの読み込みに失敗しました: {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"Failed to read the VBA code: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return 1
 
     summary = summarize_result(result, ["modules", "code"])

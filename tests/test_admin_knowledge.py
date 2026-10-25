@@ -99,7 +99,7 @@ def test_ingest_error_is_reported_on_job(env):
     docs.rename(docs_renamed)
     client.post("/api/instances/org_a/knowledge/collections/docs/ingest", json={})
     job = _wait_job(client, "docs")
-    assert job["state"] == "error" and "フォルダ" in job["error"]
+    assert job["state"] == "error" and "folder" in job["error"]
 
 
 def test_run_ingest_job_marks_stop(tmp_path):
@@ -124,7 +124,7 @@ def test_schedule_is_saved_validated_and_shown(env):
     client, docs = env["client"], env["docs"]
     base = "/api/instances/org_a/knowledge/collections"
     bad = client.post(base, json={"name": "docs", "source_folder": str(docs), "schedule_enabled": True, "schedule_times": ["25:00"]})
-    assert bad.status_code == 400 and "時刻" in bad.json()["detail"]
+    assert bad.status_code == 400 and "times" in bad.json()["detail"]
     assert client.post(base, json={"name": "docs", "source_folder": str(docs), "schedule_enabled": True}).status_code == 400
     assert client.get("/api/instances/org_a/knowledge").json()["collections"] == []
 

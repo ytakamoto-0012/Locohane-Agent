@@ -43,9 +43,9 @@ def _parse_domain_list(value: str) -> list[str]:
         try:
             parsed = ast.literal_eval(text)
         except (ValueError, SyntaxError) as e:
-            raise ValueError(f"ドメイン指定はJSON/Pythonのリスト形式で指定してください: {text!r}") from e
+            raise ValueError(f"Specify domains as a JSON/Python list: {text!r}") from e
         if not isinstance(parsed, list):
-            raise ValueError(f"ドメイン指定はリスト形式で指定してください: {text!r}")
+            raise ValueError(f"Specify domains as a list: {text!r}")
         return [str(item).strip() for item in parsed if str(item).strip()]
     return [d.strip() for d in text.split(",") if d.strip()]
 
@@ -70,22 +70,22 @@ def main() -> int:
     parser.add_argument(
         "--exclude-domains",
         default="",
-        help="検索結果から除外するドメイン（カンマ区切り）。.envのWEB_SEARCH_BLOCKED_DOMAINSと合算される。",
+        help="domains to exclude from search results (comma-separated). Combined with WEB_SEARCH_BLOCKED_DOMAINS in .env.",
     )
     parser.add_argument(
         "--include-domains",
         default="",
-        help="検索結果をこのドメインのみに限定する（カンマ区切り）。"
-        "指定時は.envのWEB_SEARCH_ALLOWED_DOMAINSより優先される。",
+        help="limit search results to these domains only (comma-separated). "
+        "When given, takes precedence over WEB_SEARCH_ALLOWED_DOMAINS in .env.",
     )
     args = parser.parse_args()
 
     api_key = os.environ.get("TAVILY_API_KEY", "").strip()
     if not api_key:
         print(
-            "TAVILY_API_KEYが設定されていません。"
-            "skills/web-search/scripts/.env.example を同じ場所に .env としてコピーし、"
-            "TAVILY_API_KEYにAPIキーを設定してください（https://app.tavily.com で取得可能）。",
+            "TAVILY_API_KEY is not set. "
+            "Copy skills/web-search/scripts/.env.example to .env in the same place, "
+            "and set your API key in TAVILY_API_KEY (you can get one at https://app.tavily.com).",
             file=sys.stderr,
         )
         return 1
@@ -127,21 +127,21 @@ def main() -> int:
             timeout=timeout_seconds,
         )
     except httpx.TimeoutException:
-        print(f"Tavily APIへの接続が{timeout_seconds:.0f}秒でタイムアウトしました。", file=sys.stderr)
+        print(f"The connection to the Tavily API timed out after {timeout_seconds:.0f} seconds.", file=sys.stderr)
         return 1
     except httpx.HTTPError as e:
-        print(f"Tavily APIへの接続に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to connect to the Tavily API: {e}", file=sys.stderr)
         return 1
 
     if response.status_code != 200:
         messages = {
-            401: "APIキーが無効です。TAVILY_API_KEYの値を確認してください。",
-            429: "レート制限に達しました。しばらく待ってから再試行してください。",
-            432: "Tavilyプランの利用上限に達しました。",
-            433: "Tavilyの従量課金上限に達しました。",
+            401: "The API key is invalid. Check the value of TAVILY_API_KEY.",
+            429: "Rate limit reached. Wait a while and try again.",
+            432: "The usage limit of the Tavily plan has been reached.",
+            433: "The pay-as-you-go limit of Tavily has been reached.",
         }
         detail = messages.get(response.status_code, f"HTTP {response.status_code}")
-        print(f"Tavily APIがエラーを返しました: {detail}\n{response.text}", file=sys.stderr)
+        print(f"The Tavily API returned an error: {detail}\n{response.text}", file=sys.stderr)
         return 1
 
     data = response.json()

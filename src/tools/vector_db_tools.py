@@ -15,11 +15,11 @@ from ._path_memory_helpers import _register_path_memory
 
 logger = logging.getLogger(__name__)
 
-_DISABLED_MESSAGE = "ベクターDB機能は無効です（config.ini の [vector_db] enabled = false）。社内文書の検索はできません。"
+_DISABLED_MESSAGE = "The vector DB feature is disabled ([vector_db] enabled = false in config.ini). Internal documents cannot be searched."
 # Hit.matched（一致した埋め込み）の表示名。
-_MATCHED_LABELS = {"text": "本文", "keyword": "キーワード", "image": "画像"}
+_MATCHED_LABELS = {"text": "text", "keyword": "keyword", "image": "image"}
 # search_document_paths の Hit.matched の表示名。
-_PATH_MATCHED_LABELS = {"path": "意味", "path_keyword": "キーワード"}
+_PATH_MATCHED_LABELS = {"path": "meaning", "path_keyword": "keyword"}
 
 
 def _unexpected_error(tool_name: str, e: Exception) -> str:
@@ -28,8 +28,8 @@ def _unexpected_error(tool_name: str, e: Exception) -> str:
     langgraph の ToolNode は既定で ToolInvocationError 以外の例外を投げ直し、会話のターンごと止めるため、
     ベクターDB の一時的な不具合（取り込みの「再構築」と同時の検索で表が消えた等）は文字列で返す。
     """
-    logger.exception("%s: 想定外のエラー", tool_name)
-    return f"エラー: 社内文書の検索で想定外のエラーが起きました（{type(e).__name__}: {e}）。時間を置いて試し直してください。"
+    logger.exception("%s: unexpected error", tool_name)
+    return f"Error: an unexpected error occurred while searching internal documents ({type(e).__name__}: {e}). Try again later."
 
 
 def _enabled_config():
@@ -41,14 +41,15 @@ def _enabled_config():
 
 @tool
 def list_document_collections() -> str:
-    """検索できる社内文書のコレクション（文書群）の一覧を返す。
+    """Return the list of searchable collections (groups of documents) of internal documents.
 
-    search_documents・search_document_paths の collection 引数に渡す名前を調べるときに使う。
-    読み取り専用のため、計画の有無に関わらずいつでも呼んでよい。
+    Use it to look up the names to pass to the collection argument of search_documents and
+    search_document_paths. It is read-only, so you may call it any time regardless of the plan.
 
     Returns:
-        コレクションごとの名前・説明・文書数・チャンク数・最終取り込み日時のテキスト。
-        機能が無効、またはコレクションが無い場合はその旨のテキスト。
+        A text with, for each collection, its name, description, number of documents, number of
+        chunks and last ingestion time. If the feature is disabled or there are no collections,
+        a text saying so.
     """
     cfg = _enabled_config()
     if cfg is None:
@@ -56,47 +57,49 @@ def list_document_collections() -> str:
     try:
         collections = vector_search.list_collections(cfg)
     except (CatalogError, OSError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     except Exception as e:  # noqa: BLE001 - sqlite3.Error 等。ツールの例外は会話のターンごと止めるため文字列で返す
         return _unexpected_error("list_document_collections", e)
     if not collections:
-        return "コレクションはまだありません（管理者が設定ダッシュボードの「ナレッジ」タブで文書を取り込む必要があります）。"
-    lines = [f"{len(collections)}件のコレクションがあります。"]
+        return "There are no collections yet (an administrator needs to ingest documents in the \"Knowledge\" tab of the settings dashboard)."
+    lines = [f"There are {len(collections)} collections."]
     for c in collections:
         description = f" - {c.description}" if c.description else ""
-        ingested = c.last_ingested_at or "未取り込み"
-        lines.append(f"- {c.name}{description}（文書 {c.file_count} 件 / チャンク {c.chunk_count} 件 / 最終取り込み {ingested}）")
+        ingested = c.last_ingested_at or "not ingested"
+        lines.append(f"- {c.name}{description} ({c.file_count} documents / {c.chunk_count} chunks / last ingested {ingested})")
     return "\n".join(lines)
 
 
 @tool
 def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
-    """取り込み済みの社内文書から、query と意味の近い箇所を探す。
+    """Search ingested internal documents for passages close in meaning to query.
 
-    社内の規程・手順書・仕様書等の内容を問われたときに使う。キーワードの完全一致
-    ではなく意味で探すため、query は質問文や要点を短い文で書けばよい。
-    結果は抜粋なので、詳しく確かめる必要があれば出典の `@N` を Read に渡して
-    原文を読むこと（Read を持たないメインエージェントは explore へ委譲する）。
-    「一致: 画像」を含む結果は、ページの見た目（図・表・写真等）が一致している。
-    中身を確かめるには、出典が画像ファイルならその `@N` を analyze_image に渡し、
-    PDF・Office なら render 系スキル（pdf-tools / docx-render / pptx-render /
-    excel-render）でそのページを画像にしてから analyze_image で見る。
-    写真・図面のように中身の文字から見つからないファイルは、search_document_paths で
-    ファイル名・フォルダ名から探せる。
-    回答には出典（ファイル名とページ等）を添えること。
-    読み取り専用のため、計画の有無に関わらずいつでも呼んでよい。
+    Use it when asked about the contents of internal rules, procedures, specifications, etc. It
+    searches by meaning rather than exact keywords, so write query as a question or a short
+    sentence with the key points.
+    Results are excerpts, so if you need to check details, pass the `@N` of the source to Read and
+    read the original (a main agent without Read delegates to explore).
+    Results that include "matched: image" match the look of the page (figures, tables, photos,
+    etc.). To check the content, pass the `@N` to analyze_image if the source is an image file; for
+    PDF/Office, render that page as an image with a render skill (pdf-tools / docx-render /
+    pptx-render / excel-render) and then look at it with analyze_image.
+    Files that cannot be found from their text, such as photos and drawings, can be found by file
+    and folder name with search_document_paths.
+    Include the sources (file name, page, etc.) in your answer.
+    It is read-only, so you may call it any time regardless of the plan.
 
     Args:
-        query: 探したい内容（例: "溶接ビード幅の検査基準"）。
-        collection: 検索するコレクション名。空なら全コレクションを横断して探す。
-            名前は list_document_collections で確認できる。
-        top_k: 返す最大件数。0 なら既定値（config.ini の [vector_db] top_k）。
+        query: What to look for (e.g. "inspection criteria for weld bead width").
+        collection: The collection to search. If empty, all collections are searched.
+            The names can be checked with list_document_collections.
+        top_k: The maximum number of results. 0 means the default ([vector_db] top_k in config.ini).
 
     Returns:
-        関連の高い順に「類似度・一致（本文 / キーワード / 画像）・出典（@N とファイルパス・ページ等）・本文抜粋」を
-        並べたテキスト。同じファイル・同じページのチャンクは1件にまとめ、最も一致したチャンクを抜粋にする。
-        全体の文字数は上限で切り詰める。該当が無い・機能が無効・エラーの場合はその旨のテキスト
-        （エラーは「エラー: ...」形式）。
+        A text listing, most relevant first, "similarity, match (text / keyword / image), source
+        (@N and file path, page, etc.), excerpt". Chunks of the same file and page are merged into
+        one, with the best-matching chunk as the excerpt. The total length is truncated at a limit.
+        If there are no matches, the feature is disabled, or an error occurs, a text saying so
+        (errors as "Error: ...").
     """
     cfg = _enabled_config()
     if cfg is None:
@@ -104,35 +107,35 @@ def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
     try:
         result = vector_search.search(cfg, query, collection=collection.strip() or None, top_k=top_k or None)
     except (vector_search.SearchError, EmbeddingError, StoreError, CatalogError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     except Exception as e:  # noqa: BLE001 - sqlite3.Error（再構築中の検索等）・応答の JSON の不正等
         return _unexpected_error("search", e)
     logger.info("search_documents: query=%r collection=%r hits=%d", query, collection, len(result.hits))
-    notes = [f"（{name} は検索対象外: {reason}）" for name, reason in result.skipped]
+    notes = [f"({name} is not searched: {reason})" for name, reason in result.skipped]
     if not result.hits:
-        return "\n".join(["一致する箇所は見つかりませんでした。言い換えた query で探し直すか、collection を確認してください。", *notes])
+        return "\n".join(["No matching passages found. Search again with a rephrased query, or check the collection.", *notes])
 
-    path_refs = _register_path_memory(sorted({h.source_path for h in result.hits}), description="search_documents の出典")
+    path_refs = _register_path_memory(sorted({h.source_path for h in result.hits}), description="sources of search_documents")
     ref_of = {path: ref for ref, path in path_refs.items()}
     budget = cfg.vector_db_max_result_chars
-    lines = [f"{len(result.hits)}件見つかりました。"]
+    lines = [f"{len(result.hits)} found."]
     for i, hit in enumerate(result.hits, start=1):
         ref = ref_of.get(hit.source_path)
         source = f"{ref} {hit.source_path}" if ref else hit.source_path
         locator = f" {hit.locator}" if hit.locator else ""
-        matched = "・".join(_MATCHED_LABELS[m] for m in hit.matched) or _MATCHED_LABELS["text"]
+        matched = "/".join(_MATCHED_LABELS[m] for m in hit.matched) or _MATCHED_LABELS["text"]
         # キーワードだけの一致には類似度が無い（BM25 の値はコサイン類似度と比べられない）。
-        score = f"類似度 {hit.score:.2f}" if set(hit.matched) - {"keyword"} else "類似度 -"
-        header = f"[{i}] {score}（一致: {matched}）/ {hit.collection} / {source}{locator}"
+        score = f"similarity {hit.score:.2f}" if set(hit.matched) - {"keyword"} else "similarity -"
+        header = f"[{i}] {score} (matched: {matched}) / {hit.collection} / {source}{locator}"
         if hit.other_chunks:
-            header += f"（同じ位置で他 {hit.other_chunks} チャンクも一致）"
+            header += f" ({hit.other_chunks} more chunks matched at the same location)"
         text = hit.text.strip()
         remaining = budget - len(header)
         if remaining <= 0:
-            lines.append(f"（残り {len(result.hits) - i + 1} 件は文字数の上限のため省略しました）")
+            lines.append(f"(the remaining {len(result.hits) - i + 1} were omitted because of the character limit)")
             break
         if len(text) > remaining:
-            text = text[:remaining] + "…（以下省略。全文は Read で確認）"
+            text = text[:remaining] + "... (rest omitted; check the full text with Read)"
         lines.append(f"{header}\n{text}")
         budget -= len(header) + len(text)
     lines.extend(notes)
@@ -141,28 +144,28 @@ def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
 
 @tool
 def search_document_paths(query: str, collection: str = "", top_k: int = 0) -> str:
-    """取り込み済みの社内文書から、ファイル名・フォルダ名（パス）が query と意味の近いファイルを探す。
+    """Search ingested internal documents for files whose file/folder name (path) is close in meaning to query.
 
-    写真・図面・スキャン画像のように中身の文字から探せないファイルは、ファイル名や
-    フォルダ名に内容が書かれていることが多い。search_documents で見つからないとき、
-    または「〜の写真」「〜の図面」のようにファイルそのものを探すときに使う。
-    パスの文字列を意味とキーワード（型番・日付等の完全一致）の両方で比べるため、
-    query は探したいものを短い語句で書けばよい。
-    見つかった画像ファイルの中身は、その `@N` を analyze_image に渡して確かめる。
-    PDF・Office ファイルの中身は Read（メインエージェントは explore へ委譲）で読む。
-    読み取り専用のため、計画の有無に関わらずいつでも呼んでよい。
+    Files that cannot be found from their text, such as photos, drawings and scanned images, often
+    have their content described in the file or folder name. Use it when search_documents finds
+    nothing, or when looking for the files themselves, such as "photos of ..." or "drawings of ...".
+    It compares the path strings both by meaning and by keywords (exact match of model numbers,
+    dates, etc.), so write query as a short phrase describing what you are looking for.
+    Check the content of image files found by passing their `@N` to analyze_image.
+    Read the content of PDF/Office files with Read (a main agent delegates to explore).
+    It is read-only, so you may call it any time regardless of the plan.
 
     Args:
-        query: 探したい内容（例: "溶接部の外観写真"）。
-        collection: 検索するコレクション名。空なら全コレクションを横断して探す。
-            名前は list_document_collections で確認できる。
-        top_k: 返す最大件数。0 なら既定値（config.ini の [vector_db] top_k）。
+        query: What to look for (e.g. "exterior photos of the weld").
+        collection: The collection to search. If empty, all collections are searched.
+            The names can be checked with list_document_collections.
+        top_k: The maximum number of results. 0 means the default ([vector_db] top_k in config.ini).
 
     Returns:
-        関連の高い順に「類似度・一致（意味 / キーワード）・コレクション・出典（@N とファイルパス）・
-        取り込み元フォルダからの相対パス」を
-        並べたテキスト（1ファイル1件）。全体の文字数は上限で切り詰める。該当が無い・機能が無効・
-        エラーの場合はその旨のテキスト（エラーは「エラー: ...」形式）。
+        A text listing, most relevant first, "similarity, match (meaning / keyword), collection,
+        source (@N and file path), path relative to the source folder" (one entry per file). The
+        total length is truncated at a limit. If there are no matches, the feature is disabled, or
+        an error occurs, a text saying so (errors as "Error: ...").
     """
     cfg = _enabled_config()
     if cfg is None:
@@ -170,33 +173,33 @@ def search_document_paths(query: str, collection: str = "", top_k: int = 0) -> s
     try:
         result = vector_search.search_paths(cfg, query, collection=collection.strip() or None, top_k=top_k or None)
     except (vector_search.SearchError, EmbeddingError, StoreError, CatalogError) as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
     except Exception as e:  # noqa: BLE001 - sqlite3.Error（再構築中の検索等）・応答の JSON の不正等
         return _unexpected_error("search", e)
     logger.info("search_document_paths: query=%r collection=%r hits=%d", query, collection, len(result.hits))
-    notes = [f"（{name} は検索対象外: {reason}）" for name, reason in result.skipped]
+    notes = [f"({name} is not searched: {reason})" for name, reason in result.skipped]
     if not result.hits:
         return "\n".join(
             [
-                "名前の一致するファイルは見つかりませんでした。言い換えた query で探し直すか、"
-                "search_documents で文書の中身から探してください。",
+                "No files with a matching name were found. Search again with a rephrased query, or "
+                "search the document contents with search_documents.",
                 *notes,
             ]
         )
 
-    path_refs = _register_path_memory(sorted({h.source_path for h in result.hits}), description="search_document_paths の出典")
+    path_refs = _register_path_memory(sorted({h.source_path for h in result.hits}), description="sources of search_document_paths")
     ref_of = {path: ref for ref, path in path_refs.items()}
     budget = cfg.vector_db_max_result_chars
-    lines = [f"{len(result.hits)}件見つかりました。"]
+    lines = [f"{len(result.hits)} found."]
     for i, hit in enumerate(result.hits, start=1):
         ref = ref_of.get(hit.source_path)
         source = f"{ref} {hit.source_path}" if ref else hit.source_path
-        matched = "・".join(_PATH_MATCHED_LABELS[m] for m in hit.matched)
+        matched = "/".join(_PATH_MATCHED_LABELS[m] for m in hit.matched)
         # キーワードだけの一致には類似度が無い（BM25 の値はコサイン類似度と比べられない）。
-        score = f"類似度 {hit.score:.2f}" if "path" in hit.matched else "類似度 -"
-        line = f"[{i}] {score}（一致: {matched}）/ {hit.collection} / {source}\n相対パス: {hit.text}"
+        score = f"similarity {hit.score:.2f}" if "path" in hit.matched else "similarity -"
+        line = f"[{i}] {score} (matched: {matched}) / {hit.collection} / {source}\nrelative path: {hit.text}"
         if len(line) > budget:
-            lines.append(f"（残り {len(result.hits) - i + 1} 件は文字数の上限のため省略しました）")
+            lines.append(f"(the remaining {len(result.hits) - i + 1} were omitted because of the character limit)")
             break
         lines.append(line)
         budget -= len(line)

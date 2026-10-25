@@ -83,20 +83,20 @@ class IngestResult:
 def _over_limit_hint(result: IngestResult) -> str:
     """ファイル数の上限を超えたときの説明（CLI の表示用。画面は admin/static/knowledge.js が同じ内容を出す）。"""
     return (
-        f"取り込み元に {result.found_files} 件のファイルがあり、1コレクションの上限（config.ini [vector_db] "
-        f"max_files_per_collection = {result.max_files}）を超えたため、{result.over_limit} 件は取り込んでいません"
-        "（取り込み済みのファイルを優先し、残りはパス順の先頭から選んでいます）。"
-        "config.ini [vector_db] max_files_per_collection を大きくしてから取り込み（差分）を実行し直すと取り込めます"
-        "（取り込み中は対象のファイルの一覧をメモリーに持つため、メモリーに注意してください）。"
-        "コレクションを取り込み元のフォルダごとに分けることもできます。"
+        f"The source has {result.found_files} files, which exceeds the per-collection limit (config.ini [vector_db] "
+        f"max_files_per_collection = {result.max_files}), so {result.over_limit} files were not ingested "
+        "(already ingested files take priority, and the rest are chosen from the start in path order). "
+        "Increase config.ini [vector_db] max_files_per_collection and run the ingestion (diff) again to ingest them "
+        "(while ingesting, the list of target files is kept in memory, so watch the memory). "
+        "You can also split collections by source folder."
     )
 
 
 def _too_large_hint(cfg: Config, count: int) -> str:
     """上限サイズを超えたファイルへの対処方法（CLI の表示用。画面は admin/static/knowledge.js が同じ内容を出す）。"""
     return (
-        f"{count} 件は上限サイズ（config.ini [vector_db] max_file_mb = {cfg.vector_db_max_file_mb}MB、Locohane 側の制限）を"
-        "超えたため取り込んでいません。max_file_mb を大きくしてから取り込み（差分）を実行し直すと取り込めます。"
+        f"{count} files exceeded the size limit (config.ini [vector_db] max_file_mb = {cfg.vector_db_max_file_mb}MB, a Locohane limit) "
+        "and were not ingested. Increase max_file_mb and run the ingestion (diff) again to ingest them."
     )
 
 
@@ -188,7 +188,7 @@ def _read_directory(directory: Path, recursive: bool, allowed: set[str]) -> tupl
     try:
         entries = list(os.scandir(directory))
     except OSError as e:
-        logger.warning("vector_db ingest: フォルダを読めません: %s: %s", directory, e)
+        logger.warning("vector_db ingest: cannot read folder: %s: %s", directory, e)
         return [], []
     files: list[tuple[Path, os.stat_result]] = []
     subdirectories: list[_Subdirectory] = []
@@ -231,13 +231,13 @@ class _LinkGuard:
             return True
         target = target.rstrip("\\/")
         if self._root is not None and _is_same_or_inside(target, self._root):
-            logger.info("vector_db ingest: 取り込み元フォルダの中を指すリンクのためたどりません: %s", subdirectory.path)
+            logger.info("vector_db ingest: not following a link that points inside the source folder: %s", subdirectory.path)
             return False
         if self._root is not None and _is_same_or_inside(self._root, target):
-            logger.info("vector_db ingest: 取り込み元フォルダを含むフォルダを指すリンクのためたどりません: %s", subdirectory.path)
+            logger.info("vector_db ingest: not following a link that points to a folder containing the source folder: %s", subdirectory.path)
             return False
         if target in self._visited:
-            logger.info("vector_db ingest: 既にたどったフォルダを指すリンクのためたどりません: %s", subdirectory.path)
+            logger.info("vector_db ingest: not following a link to an already visited folder: %s", subdirectory.path)
             return False
         self._visited.add(target)
         return True
@@ -342,8 +342,8 @@ def _page_chunk_text(cfg: Config, path: Path, page: PageImage) -> str:
     text = page.text.strip()
     if not text:
         if path.suffix.lower() in IMAGE_FILE_EXTENSIONS:
-            return "（画像ファイルです。内容は出典の画像で確認してください）"
-        return "（文字情報の無いページです。内容は出典のページを画像にして確認してください）"
+            return "(This is an image file. Check its content in the source image)"
+        return "(This page has no text. Check its content by rendering the source page as an image)"
     return text if len(text) <= cfg.vector_db_chunk_size else text[: cfg.vector_db_chunk_size] + "…"
 
 
@@ -399,17 +399,17 @@ def ingest_collection(
             raise IngestError(str(e)) from e
         folder = Path(collection.source_folder)
         if not folder.is_dir():
-            raise IngestError(f"取り込み元フォルダがありません: {folder}")
+            raise IngestError(f"Source folder does not exist: {folder}")
         if collection.model and collection.model != model and not rebuild:
             raise IngestError(
-                f"コレクション {name} は埋め込みモデル {collection.model} で作られています（今の設定は {model}）。"
-                "モデルが違うと検索できないため、再構築してください。"
+                f"Collection {name} was built with embedding model {collection.model} (current setting: {model}). "
+                "Search does not work with a different model, so rebuild it."
             )
         prefix = cfg.vector_db_document_prefix
         if collection.model and collection.document_prefix is not None and collection.document_prefix != prefix and not rebuild:
             raise IngestError(
-                f"コレクション {name} は document_prefix {collection.document_prefix!r} で取り込まれています（今の設定は {prefix!r}）。"
-                "接頭辞が混ざると検索の精度が落ちるため、再構築してください。"
+                f"Collection {name} was ingested with document_prefix {collection.document_prefix!r} (current setting: {prefix!r}). "
+                "Mixing prefixes lowers search accuracy, so rebuild it."
             )
         store = open_store(cfg, transport=store_transport)
         keywords = open_keyword_index(cfg.vector_db_dir)
@@ -572,9 +572,9 @@ def _load(
         return _Prepared(path, record, mode, "unchanged", keyword_chunks=_keyword_chunks(options, path, needs_keywords), path_text=path_text)
     if mode == "path":
         # image_input = false の画像ファイルは中身を読まず、ファイル名・フォルダ名で探せるようパスだけを登録する。
-        return _Prepared(path, record, mode, "path_only", stat=st, path_text=path_text, reason="画像ファイル（image_input = false）")
+        return _Prepared(path, record, mode, "path_only", stat=st, path_text=path_text, reason="image file (image_input = false)")
     if st.st_size > options.max_bytes:
-        reason = f"ファイルサイズが上限（{options.max_file_mb}MB）を超えています"
+        reason = f"The file size exceeds the limit ({options.max_file_mb}MB)"
         return _Prepared(path, record, mode, "failed", reason=reason, too_large=True)
     page_dir: Path | None = None
     try:
@@ -601,9 +601,9 @@ def _load(
     if not chunks and not pages:
         # 画像だけの PDF 等でも、ファイル名・フォルダ名で探せるようパスだけを登録する。
         if mode == "text+image":
-            reason = "本文も画像にできるページもありませんでした"
+            reason = "There was neither text nor a page that could be rendered as an image"
         else:
-            reason = "本文を取り出せませんでした（画像だけの PDF 等。[vector_db] image_input = true なら画像として取り込めます）"
+            reason = "Could not extract text (e.g. a PDF of images only; with [vector_db] image_input = true it can be ingested as images)"
         return _Prepared(path, record, mode, "path_only", stat=st, sha=sha, path_text=path_text, reason=reason)
     return _Prepared(path, record, mode, "embed", stat=st, sha=sha, chunks=chunks, pages=pages, path_text=path_text, page_dir=page_dir)
 
@@ -684,7 +684,7 @@ class _Writer:
             try:
                 part.rollback()
             except Exception:  # noqa: BLE001 - 元のエラーを優先する
-                logger.exception("vector_db ingest: ロールバックに失敗しました")
+                logger.exception("vector_db ingest: rollback failed")
             part._batching = False
 
     def _maybe_commit(self) -> None:
@@ -826,7 +826,7 @@ class _Writer:
         self._write_path_keywords(source, prepared, only_missing=False)
         st = prepared.stat
         self.catalog.upsert_file(self.name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, 0, prepared.mode, True))
-        logger.info("vector_db ingest: パスだけを登録しました（%s）: %s", prepared.reason, source)
+        logger.info("vector_db ingest: registered the path only (%s): %s", prepared.reason, source)
         self.result.path_only += 1
         if prepared.record is None:
             self.result.added += 1
@@ -963,8 +963,8 @@ class _Pipeline:
         """
         path, record = args[2], args[4]
         if isolated:
-            logger.warning("vector_db ingest: 子プロセスが異常終了したファイルを飛ばします: %s", path)
-            reason = "本文の抽出・画像化の子プロセスが異常終了しました（壊れたファイル等）"
+            logger.warning("vector_db ingest: skipping a file whose child process crashed: %s", path)
+            reason = "The child process for text extraction/rendering crashed (broken file, etc.)"
             self._loaded(_Prepared(path, record, _file_mode(self.options, path), "failed", reason=reason))
         else:
             self.isolate.append(args)
@@ -1106,10 +1106,10 @@ def _ingest(
 def main(argv: list[str] | None = None) -> int:
     from ..config import DEFAULT_INSTANCE_NAME, load_config, resolve_instances_root
 
-    parser = argparse.ArgumentParser(description="ベクターDBのコレクションへ文書を取り込む")
-    parser.add_argument("--instance", default=os.getenv("LOCOHANE_INSTANCE") or None, help="インスタンス名（省略時は default）")
-    parser.add_argument("--collection", required=True, help="コレクション名（設定ダッシュボードの「ナレッジ」タブで作成したもの）")
-    parser.add_argument("--rebuild", action="store_true", help="既存のベクターを消して全ファイルを取り込み直す")
+    parser = argparse.ArgumentParser(description="Ingest documents into a vector DB collection")
+    parser.add_argument("--instance", default=os.getenv("LOCOHANE_INSTANCE") or None, help="Instance name (default if omitted)")
+    parser.add_argument("--collection", required=True, help="Collection name (one created in the \"Knowledge\" tab of the settings dashboard)")
+    parser.add_argument("--rebuild", action="store_true", help="Delete the existing vectors and ingest every file again")
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -1117,7 +1117,7 @@ def main(argv: list[str] | None = None) -> int:
     # 管理ツールと同じく instances/<名前>/config_overrides.json の上書きを重ねて読む。
     cfg = load_config(overrides_path=resolve_instances_root() / instance / "config_overrides.json", instance_name=instance)
     if not cfg.vector_db_enabled:
-        print("[vector_db] enabled = false です。設定を有効にしてから実行してください。")
+        print("[vector_db] enabled = false. Enable it before running this.")
         return 1
 
     def _progress(done: int, total: int, path: str) -> None:
@@ -1127,13 +1127,13 @@ def main(argv: list[str] | None = None) -> int:
     result = ingest_collection(cfg, args.collection, rebuild=args.rebuild, progress=_progress)
     summary = result.to_dict()
     print(
-        f"追加 {summary['added']} / 更新 {summary['updated']} / 変更なし {summary['unchanged']} / "
-        f"削除 {summary['removed']} / チャンク {summary['chunks']} / 失敗 {len(summary['failed'])}"
+        f"Added {summary['added']} / Updated {summary['updated']} / Unchanged {summary['unchanged']} / "
+        f"Removed {summary['removed']} / Chunks {summary['chunks']} / Failed {len(summary['failed'])}"
     )
     if summary["path_only"]:
-        print(f"  うち {summary['path_only']} 件は中身を取り出せないため、ファイル名・フォルダ名だけを登録しました。")
+        print(f"  {summary['path_only']} of them had no extractable content, so only their file and folder names were registered.")
     for item in summary["failed"]:
-        print(f"  失敗: {item['path']}: {item['reason']}")
+        print(f"  Failed: {item['path']}: {item['reason']}")
     if summary["too_large"]:
         print(f"  {_too_large_hint(cfg, summary['too_large'])}")
     if result.over_limit:

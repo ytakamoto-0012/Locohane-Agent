@@ -1,69 +1,65 @@
-# edit_excel.pyの基本契約（ops必須・--newの挙動）
+# The basic contract of edit_excel.py (ops required, the behavior of --new)
 
-`excel-edit`（`edit_excel.py`）の呼び出しでハマった事例の多くは、opsベースの
-APIであること自体を見失い、単純なファイル操作ツールとして誤用したことが原因。
+Most cases of getting stuck calling `excel-edit` (`edit_excel.py`) were caused by losing sight of the fact
+that it is an ops-based API and misusing it as a simple file operation tool.
 
-## `--ops-json`/`--ops-file`はどんな用途でも必須
+## `--ops-json`/`--ops-file` are required for any use
 
-`--ops-json`と`--ops-file`は`argparse`の`mutually_exclusive_group(required=True)`
-で定義されており、**どちらか一方を必ず渡さないと即エラーになる**
-（`--new`だけを指定して空ブックを作る、既存ファイルを別名にコピーする、
-といった「opsを使わない」呼び出し方は存在しない）。
+`--ops-json` and `--ops-file` are defined with `argparse`'s `mutually_exclusive_group(required=True)`,
+so **it errors immediately unless one of them is passed**
+(there is no way to call it "without ops", such as creating an empty workbook with only `--new`,
+or copying an existing file under another name).
 
-実際に、バックアップファイルを本番ファイルへ復元しようとして
+In fact, there is a case where, trying to restore a backup file to the production file, it was called as
 
 ```
-run_script(excel-edit, edit_excel.py, ["収支計算表.bak_....xlsm", "--output", "収支計算表.xlsm"])
+run_script(excel-edit, edit_excel.py, ["budget.bak_....xlsm", "--output", "budget.xlsm"])
 ```
 
-と`--ops-json`/`--ops-file`を省略して呼び出し、
+omitting `--ops-json`/`--ops-file`, and failed with
 
 ```
 one of the arguments --ops-json --ops-file is required
 ```
 
-で失敗した事例がある。さらに深刻なのは、この直後に**`--overwrite`を
-追加しただけの同じコマンドをもう一度実行し、まったく同じエラーで再度失敗**
-したこと。`--overwrite`は「`--new`時の上書き許可」フラグであり、
-「ops必須」エラーとは無関係なため当然直らない
-（再試行前にエラー原因と変更点が対応しているか確認する一般原則は
-[[error-message-first-retry]]参照）。
+What is more serious is that right after this, **the same command with only `--overwrite` added was run again,
+and failed again with exactly the same error**. `--overwrite` is the flag "allow overwriting with `--new`",
+unrelated to the "ops required" error, so of course it did not fix it
+(for the general principle of checking that your change corresponds to the cause of the error before retrying,
+see [[error-message-first-retry]]).
 
-**ファイルのコピー・バックアップ復元自体は`execute_python_code`の
-`shutil.copy2`等で行い、その後に`excel-edit`で`--ops-json`のopsを適用する、
-という2段階に分けること。** `edit_excel.py`はファイルコピーツールではない。
+**Do the file copy / backup restore itself with `shutil.copy2` etc. in `execute_python_code`, and then
+apply the ops with `--ops-json` in `excel-edit` — split it into these 2 steps.** `edit_excel.py` is not a file copy tool.
 
-## `--new`は0シートの空ブックから始まる
+## `--new` starts from an empty workbook with 0 sheets
 
-`--new`指定時の実装は次の通り：
+The implementation with `--new` is:
 
 ```python
 wb = openpyxl.Workbook()
 wb.remove(wb.active)
 ```
 
-つまり**既定の「Sheet1」は最初から存在しない**（openpyxlの一般知識として
-「新規ブックには既定シートがある」と思い込みがちだが、`edit_excel.py`の
-`--new`は生成直後にそれを削除している）。この思い込みから、新規作成タスクの
-最初のopに
+In other words, **the default "Sheet1" does not exist from the start** (general openpyxl knowledge tends to make you assume
+"a new workbook has a default sheet", but `--new` of `edit_excel.py` deletes it right after creating it). Because of
+this assumption, there is a case where the first op of a new-creation task included
 
 ```json
 {"op": "delete_sheet", "name": "Sheet1"}
 ```
 
-を含めて
+and failed with
 
 ```
-ops[0]（op='delete_sheet'）の適用に失敗しました: シートが見つかりません: Sheet1（存在するシート: []）
+Failed to apply ops[0] (op='delete_sheet'): Sheet not found: Sheet1 (existing sheets: [])
 ```
 
-に失敗した事例がある。**`--new`直後の最初のopは必ず`add_sheet`にする**
-（delete/rename等をいきなり最初のopに置かない）。
+**Always make the first op right after `--new` an `add_sheet`**
+(do not put delete/rename etc. as the very first op).
 
-## `--query`と`--query-json`は別物（`excel-read`側の話だが混同しやすい）
+## `--query` and `--query-json` are different (about `excel-read`, but easy to confuse)
 
-`excel-read`のフラグは`--query-json`であって`--query`ではない。フラグ名自体の
-打ち間違いはエラーメッセージから気づきにくく（`unrecognized arguments`にしか
-ならない）、SKILL.mdを再読して初めて気づく形になりやすいので、`--ops-json`
-（excel-edit）と`--query-json`（excel-read）のどちらを呼んでいるかを含め、
-フラグ名は都度SKILL.mdの表記をそのままコピーする意識を持つこと。
+The flag of `excel-read` is `--query-json`, not `--query`. A typo in the flag name itself is hard to notice
+from the error message (it only becomes `unrecognized arguments`), and tends to be noticed only after rereading
+SKILL.md, so be conscious of copying the flag name as written in SKILL.md each time, including which of
+`--ops-json` (excel-edit) and `--query-json` (excel-read) you are calling.

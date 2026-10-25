@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useChatData } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 
 interface IMultiChoiceFormProps {
   question?: string;
@@ -20,6 +21,7 @@ interface IMultiChoiceFormProps {
  */
 export function AskChoiceFormBar() {
   const { askUser, elements } = useChatData();
+  const { t } = useI18n();
 
   const element =
     askUser?.spec.type === 'element'
@@ -68,7 +70,7 @@ export function AskChoiceFormBar() {
           </label>
         ))}
         <label className="ask-form-field">
-          <span className="ask-form-label">その他（自由記述）</span>
+          <span className="ask-form-label">{t('ask.otherFreeText')}</span>
           <input
             type="text"
             className="ask-form-input"
@@ -79,10 +81,10 @@ export function AskChoiceFormBar() {
       </div>
       <div className="ask-form-actions">
         <button type="button" className="ask-form-cancel" onClick={handleCancel}>
-          ❌ キャンセル
+          {t('common.cancelWithIcon')}
         </button>
         <button type="submit" className="ask-form-submit">
-          送信
+          {t('common.send')}
         </button>
       </div>
     </form>

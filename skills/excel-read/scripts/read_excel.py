@@ -96,7 +96,7 @@ def _formula_self_references(formula: str, own_col: int, own_row: int) -> bool:
 
 def _query_group_by(ws, query: dict, max_row: int) -> dict:
     if "column" not in query:
-        raise ValueError("group_byクエリには'column'が必須です")
+        raise ValueError("'column' is required for a group_by query")
     return {
         "op": "group_by",
         "column": query["column"],
@@ -207,7 +207,7 @@ def _run_queries(ws, queries: list[dict], max_row: int) -> list[dict]:
         op_name = query.get("op")
         handler = _QUERY_HANDLERS.get(op_name)
         if handler is None:
-            raise ValueError(f"未対応のqueryです: {op_name!r}（対応op: {sorted(_QUERY_HANDLERS)}）")
+            raise ValueError(f"Unsupported query: {op_name!r} (supported ops: {sorted(_QUERY_HANDLERS)})")
         results.append(handler(ws, query, max_row))
     return results
 
@@ -235,9 +235,9 @@ def _read_xlsx(
     from openpyxl.utils import get_column_letter
 
     if queries and sheet_arg is None:
-        raise ValueError("--query-json は --sheet 指定時のみ使えます")
+        raise ValueError("--query-json can be used only with --sheet")
     if columns and sheet_arg is None:
-        raise ValueError("--columns は --sheet 指定時のみ使えます")
+        raise ValueError("--columns can be used only with --sheet")
 
     wb = openpyxl.load_workbook(str(path), data_only=data_only, read_only=False)
     try:
@@ -326,8 +326,8 @@ def _read_xlsx(
                         if display_width > target_width:
                             cell_ref = f"{resolved}!{col_letter}{row_num}"
                             msg = (
-                                f"'{cell_ref}' の文字列(推定幅{display_width:.1f})が"
-                                f"列幅({cell_width:.1f})を超えており、表示が切れる可能性があります"
+                                f"The string in '{cell_ref}' (estimated width {display_width:.1f}) "
+                                f"exceeds the column width ({cell_width:.1f}), so it may be cut off when displayed"
                             )
                             warnings.append(msg)
                 # 循環参照の警告を生成（数式が自身の座標を範囲に含む場合。
@@ -337,8 +337,8 @@ def _read_xlsx(
                     if _formula_self_references(cell_value, col_idx_actual, row_num):
                         cell_ref = f"{resolved}!{col_letter}{row_num}"
                         warnings.append(
-                            f"'{cell_ref}' の数式（{cell_value}）が自身のセルを範囲に含んでおり、"
-                            "Excelで循環参照エラーになる可能性があります"
+                            f"The formula in '{cell_ref}' ({cell_value}) includes its own cell in its range, "
+                            "which may cause a circular reference error in Excel"
                         )
         if warnings:
             result["warnings"] = warnings
@@ -360,7 +360,7 @@ def _read_xls(
     from openpyxl.utils import get_column_letter
 
     if columns and sheet_arg is None:
-        raise ValueError("--columns は --sheet 指定時のみ使えます")
+        raise ValueError("--columns can be used only with --sheet")
 
     book = xlrd.open_workbook(str(path))
     names = book.sheet_names()
@@ -409,47 +409,47 @@ def main() -> int:
     setup_utf8_stdio()
     parser = argparse.ArgumentParser(allow_abbrev=False)
     parser.add_argument("file_path")
-    parser.add_argument("--sheet", default=None, help="シート名または0始まりインデックス（省略時はシート一覧のみ返す）")
-    parser.add_argument("--offset", type=int, default=0, help="読み飛ばす行数（0始まり、既定0）")
-    parser.add_argument("--limit", type=int, default=200, help="読み込む最大行数（既定200）")
+    parser.add_argument("--sheet", default=None, help="sheet name or 0-based index (if omitted, only the sheet list is returned)")
+    parser.add_argument("--offset", type=int, default=0, help="number of rows to skip (0-based, default 0)")
+    parser.add_argument("--limit", type=int, default=200, help="maximum number of rows to read (default 200)")
     parser.add_argument(
         "--data-only",
         action="store_true",
-        help="xlsx/xlsmで数式ではなく最後にExcelが計算したキャッシュ値を返す（xlsのみ影響なし）",
+        help="for xlsx/xlsm, return the cached values last calculated by Excel instead of formulas (no effect for xls)",
     )
     parser.add_argument(
         "--style",
         action="store_true",
         help=(
-            "xlsx/xlsmで太字・背景色・罫線等のフルstyle情報とcolumn_widths/row_heights/warningsも返す"
-            "（既定は軽量モードでvalue/number_format/tables/merged_cellsのみ）"
+            "for xlsx/xlsm, also return full style information such as bold, background color and borders, plus column_widths/row_heights/warnings"
+            " (the default lightweight mode returns only value/number_format/tables/merged_cells)"
         ),
     )
     parser.add_argument(
         "--query-json",
         default=None,
         help=(
-            "構造化クエリの配列を1行JSON化した文字列（.xlsx/.xlsmのみ、--sheet必須）。"
-            '例: \'[{"op": "group_by", "column": "A"}]\' '
-            "→ 指定列を値ごとに連続する行範囲へグルーピングして{value,start_row,end_row,row_count}の"
-            "配列で返す。insert_rows/merge_cells後の検証や、結合予定の列（月・区分等）の範囲確認を"
-            "生のrowsを目で数えて手計算する代わりに使う。"
+            "a string of an array of structured queries as one-line JSON (.xlsx/.xlsm only, --sheet required). "
+            'Example: \'[{"op": "group_by", "column": "A"}]\' '
+            "-> groups the specified column into ranges of consecutive rows per value and returns an array of {value,start_row,end_row,row_count}. "
+            "Use it to verify after insert_rows/merge_cells, or to check the ranges of columns to be merged (month, category, etc.), "
+            "instead of counting the raw rows by eye and calculating by hand."
         ),
     )
     parser.add_argument(
         "--columns",
         default=None,
         help=(
-            "読み込む列をカンマ区切りで指定（列アルファベットまたは1始まりの列番号、例 'A,C,E'。"
-            "--sheet必須）。省略時は全列。列が多い表は必要な列だけに絞って読むとトークン消費を抑えられる。"
-            "結果のcolumnsキーにrowsの各要素が対応する列アルファベットの配列が入る。"
+            "columns to read, comma-separated (column letters or 1-based column numbers, e.g. 'A,C,E'; "
+            "--sheet required). All columns if omitted. For tables with many columns, reading only the columns you need saves tokens. "
+            "The columns key of the result holds the array of column letters that each element of rows corresponds to."
         ),
     )
     args = parser.parse_args()
 
     path = Path(args.file_path)
     if not path.is_file():
-        print(f"ファイルが見つかりません: {args.file_path}", file=sys.stderr)
+        print(f"File not found: {args.file_path}", file=sys.stderr)
         return 1
 
     ext = path.suffix.lower()
@@ -457,11 +457,11 @@ def main() -> int:
     limit = max(args.limit, 0)
 
     if ext == ".xls" and args.query_json:
-        print("--query-json は .xlsx/.xlsm のみ対応です", file=sys.stderr)
+        print("--query-json supports only .xlsx/.xlsm", file=sys.stderr)
         return 1
 
     if ext == ".xls" and args.style:
-        print("--style は .xlsx/.xlsm のみ対応です（.xlsは元々styleを取得しません）", file=sys.stderr)
+        print("--style supports only .xlsx/.xlsm (.xls never returns styles)", file=sys.stderr)
         return 1
 
     queries: list[dict] | None = None
@@ -469,10 +469,10 @@ def main() -> int:
         try:
             queries = json.loads(args.query_json)
         except json.JSONDecodeError as e:
-            print(f"--query-jsonのJSON解析に失敗しました: {e}", file=sys.stderr)
+            print(f"Failed to parse the --query-json JSON: {e}", file=sys.stderr)
             return 1
         if not isinstance(queries, list):
-            print("--query-jsonはJSON配列で指定してください", file=sys.stderr)
+            print("Specify --query-json as a JSON array", file=sys.stderr)
             return 1
 
     try:
@@ -484,16 +484,16 @@ def main() -> int:
         elif ext == ".xls":
             result = _read_xls(path, args.sheet, offset, limit, columns=args.columns)
         else:
-            print(f"未対応の拡張子です（.xlsx/.xlsm/.xls のみ対応）: {ext}", file=sys.stderr)
+            print(f"Unsupported extension (only .xlsx/.xlsm/.xls are supported): {ext}", file=sys.stderr)
             return 1
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 1
     except ImportError as e:
-        print(f"必要なライブラリが見つかりません: {e}", file=sys.stderr)
+        print(f"A required library was not found: {e}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - 破損ファイル等、openpyxl/xlrdが送出する多様な例外を丸めて報告する
-        print(f"読み込みに失敗しました: {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"Failed to read: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return 1
 
     summary = summarize_result(result, ["rows", "sheets"])

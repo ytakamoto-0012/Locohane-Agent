@@ -51,7 +51,7 @@ class TestParseColumnSelection:
         assert parse_column_selection("J", total_columns=10) == [10]
 
     def test_index_beyond_total_columns_raises(self):
-        with pytest.raises(ValueError, match="範囲外"):
+        with pytest.raises(ValueError, match="out of range"):
             parse_column_selection("Z", total_columns=10)
 
     def test_empty_string_raises(self):
@@ -113,7 +113,7 @@ class TestReadXlsxColumnsFilter:
 
         assert result["columns"] == ["N"]
         assert "warnings" in result
-        assert any("循環参照" in w and "N8" in w for w in result["warnings"])
+        assert any("circular reference" in w and "N8" in w for w in result["warnings"])
 
 
 class TestReadXlsColumnsWithoutSheetRaises:

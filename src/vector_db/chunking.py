@@ -22,7 +22,7 @@ def split_text(text: str, chunk_size: int, overlap: int) -> list[str]:
         空白だけのチャンクを除いたチャンクのリスト。
     """
     if not (0 <= overlap < chunk_size):
-        raise ValueError(f"overlap は 0 以上 chunk_size 未満にしてください: chunk_size={chunk_size}, overlap={overlap}")
+        raise ValueError(f"overlap must be at least 0 and less than chunk_size: chunk_size={chunk_size}, overlap={overlap}")
     body_size = chunk_size - overlap
     pieces: list[str] = []
     for paragraph in _BLANK_LINES_RE.split(text.replace("\r\n", "\n")):

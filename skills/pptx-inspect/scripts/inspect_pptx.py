@@ -56,19 +56,19 @@ def main() -> int:
 
     path = Path(args.pptx_path)
     if not path.exists():
-        print(f"ファイルが見つかりません: {args.pptx_path}", file=sys.stderr)
+        print(f"File not found: {args.pptx_path}", file=sys.stderr)
         return 1
     if path.is_dir():
-        print(f"指定パスはディレクトリです（ファイル専用）: {args.pptx_path}", file=sys.stderr)
+        print(f"The specified path is a directory (files only): {args.pptx_path}", file=sys.stderr)
         return 1
 
     try:
         prs = Presentation(str(path))
     except PackageNotFoundError:
-        print(f"pptxとして読み込めませんでした（壊れているか非対応形式の可能性）: {args.pptx_path}", file=sys.stderr)
+        print(f"Could not load it as pptx (it may be broken or an unsupported format): {args.pptx_path}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - python-pptx側の想定外エラーもエラー終了に統一する
-        print(f"pptxの読み込みに失敗しました: {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"Failed to read the pptx: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return 1
 
     total_slides = len(prs.slides)
@@ -93,7 +93,7 @@ def main() -> int:
         for shape_info in info.get("shapes", []):
             overflow_msg = check_shape_overflow(shape_info, slide_width_cm, slide_height_cm)
             if overflow_msg:
-                warnings.append(f"スライド{i + 1}の{overflow_msg}")
+                warnings.append(f"slide {i + 1}: {overflow_msg}")
 
     result = {
         "path": str(path),

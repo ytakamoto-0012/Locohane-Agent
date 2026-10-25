@@ -57,9 +57,9 @@ def test_edit_excel_missing_required_key_gives_clear_message(tmp_path, monkeypat
 
     assert exit_code == 1
     err = capsys.readouterr().err
-    assert "必須キー" in err
+    assert "required key" in err
     assert "'cell'" in err
-    assert "の適用に失敗しました" not in err
+    assert "Failed to apply" not in err
 
 
 def test_edit_vba_missing_required_key_gives_clear_message(tmp_path, monkeypatch):
@@ -114,9 +114,9 @@ def test_edit_vba_missing_required_key_gives_clear_message(tmp_path, monkeypatch
         raised = str(e)
 
     assert raised is not None
-    assert "必須キー" in raised
+    assert "required key" in raised
     assert "'name'" in raised
-    assert "の適用に失敗しました" not in raised
+    assert "Failed to apply" not in raised
 
 
 def test_edit_docx_missing_required_key_gives_clear_message(tmp_path, monkeypatch, capsys):
@@ -137,6 +137,6 @@ def test_edit_docx_missing_required_key_gives_clear_message(tmp_path, monkeypatc
 
     assert exit_code == 1
     err = capsys.readouterr().err
-    assert "必須キー" in err
+    assert "required key" in err
     assert "'old_text'" in err
-    assert "の適用に失敗しました" not in err
+    assert "Failed to apply" not in err

@@ -138,7 +138,7 @@ class QdrantStore:
         preset は [vector_db].qdrant_preset（QDRANT_PRESETS のキー。"none" なら Qdrant の既定のまま）。
         """
         if not url:
-            raise StoreError("[vector_db].qdrant_url が設定されていません。")
+            raise StoreError("[vector_db].qdrant_url is not set.")
         self._owns_client = not shared
         self._client = shared_client(url, api_key, timeout) if shared else _new_client(url, api_key, timeout, transport)
         self._prefix = prefix
@@ -162,11 +162,11 @@ class QdrantStore:
         try:
             response = self._client.request(method, path, **kwargs)
         except httpx.TransportError as e:
-            raise StoreError(f"Qdrant（{self._client.base_url}）に接続できません: {e}") from e
+            raise StoreError(f"Cannot connect to Qdrant ({self._client.base_url}): {e}") from e
         if allow_404 and response.status_code == 404:
             return None
         if response.status_code >= 400:
-            raise StoreError(f"Qdrant がエラーを返しました（{method} {path}、HTTP {response.status_code}）: {response.text[:300]}")
+            raise StoreError(f"Qdrant returned an error ({method} {path}, HTTP {response.status_code}): {response.text[:300]}")
         return response.json()
 
     def ensure_collection(self, name: str, dim: int) -> None:
@@ -176,11 +176,11 @@ class QdrantStore:
             vectors = info.get("result", {}).get("config", {}).get("params", {}).get("vectors", {})
             size = vectors.get("size") if isinstance(vectors, dict) else None
             if size is not None and size != dim:
-                raise StoreError(f"Qdrant のコレクション {qname} のベクターの次元（{size}）と埋め込みの次元（{dim}）が違います。再構築してください。")
+                raise StoreError(f"The vector dimension ({size}) of Qdrant collection {qname} differs from the embedding dimension ({dim}). Rebuild it.")
             distance = _collection_distance(info)
             if distance is not None and distance != self._distance:
                 raise StoreError(
-                    f"Qdrant のコレクション {qname} の距離関数（{distance}）と [vector_db].distance（{self._distance}）が違います。再構築してください。"
+                    f"The distance ({distance}) of Qdrant collection {qname} differs from [vector_db].distance ({self._distance}). Rebuild it."
                 )
             self._apply_preset(qname, info)
             return

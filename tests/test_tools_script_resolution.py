@@ -73,7 +73,7 @@ def test_missing_file_raises_value_error(skills_root) -> None:
     scripts_dir = skills_root / "demo-skill" / "scripts"
     scripts_dir.mkdir(parents=True)
 
-    with pytest.raises(ValueError, match="見つかりません"):
+    with pytest.raises(ValueError, match="not found"):
         tools._safe_path._resolve_script_filename("demo-skill", "nope.py")
 
 

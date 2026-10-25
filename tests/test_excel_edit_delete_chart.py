@@ -54,7 +54,7 @@ class TestDeleteChartByIndex:
 
     def test_out_of_range_index_raises(self):
         wb, ws = _make_wb_with_two_charts()
-        with pytest.raises(ValueError, match="存在しないchart_indexです"):
+        with pytest.raises(ValueError, match="chart_index does not exist"):
             apply_op(wb, {"op": "delete_chart", "sheet": "Sheet1", "chart_index": 5})
 
 
@@ -67,7 +67,7 @@ class TestDeleteChartByTitle:
 
     def test_no_match_raises(self):
         wb, ws = _make_wb_with_two_charts()
-        with pytest.raises(ValueError, match="titleが一致するグラフが見つかりません"):
+        with pytest.raises(ValueError, match="No chart with a matching title"):
             apply_op(wb, {"op": "delete_chart", "sheet": "Sheet1", "title": "存在しないタイトル"})
 
     def test_ambiguous_title_raises(self):
@@ -76,11 +76,11 @@ class TestDeleteChartByTitle:
             wb,
             {"op": "add_chart", "sheet": "Sheet1", "type": "bar", "data_range": "A1:B3", "anchor": "D40", "title": "Chart Two"},
         )
-        with pytest.raises(ValueError, match="複数あります"):
+        with pytest.raises(ValueError, match="Several charts"):
             apply_op(wb, {"op": "delete_chart", "sheet": "Sheet1", "title": "Chart Two"})
 
 
 def test_neither_chart_index_nor_title_raises():
     wb, ws = _make_wb_with_two_charts()
-    with pytest.raises(ValueError, match="'chart_index' または 'title'"):
+    with pytest.raises(ValueError, match="Either 'chart_index' or 'title'"):
         apply_op(wb, {"op": "delete_chart", "sheet": "Sheet1"})

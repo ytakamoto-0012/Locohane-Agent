@@ -19,12 +19,12 @@ import re
 # 一律禁止する（フォールバックのバックアップ保存では救えない種類の危険な
 # 操作のため）。FileCopy はバックアップ作成に必要なため意図的に除外している。
 _DANGEROUS_CODE_PATTERNS = [
-    (re.compile(r"\bKill\b\s*\S", re.IGNORECASE), "Kill（ファイル削除）"),
-    (re.compile(r"\bRmDir\b", re.IGNORECASE), "RmDir（フォルダ削除）"),
-    (re.compile(r"\bShell\b\s*\S", re.IGNORECASE), "Shell（外部プロセス実行）"),
-    (re.compile(r"wscript\.shell", re.IGNORECASE), "WScript.Shell（外部コマンド実行）"),
-    (re.compile(r"\.DeleteFile\b", re.IGNORECASE), "DeleteFile（ファイル削除）"),
-    (re.compile(r"\.DeleteFolder\b", re.IGNORECASE), "DeleteFolder（フォルダ削除）"),
+    (re.compile(r"\bKill\b\s*\S", re.IGNORECASE), "Kill (deleting files)"),
+    (re.compile(r"\bRmDir\b", re.IGNORECASE), "RmDir (deleting folders)"),
+    (re.compile(r"\bShell\b\s*\S", re.IGNORECASE), "Shell (running external processes)"),
+    (re.compile(r"wscript\.shell", re.IGNORECASE), "WScript.Shell (running external commands)"),
+    (re.compile(r"\.DeleteFile\b", re.IGNORECASE), "DeleteFile (deleting files)"),
+    (re.compile(r"\.DeleteFolder\b", re.IGNORECASE), "DeleteFolder (deleting folders)"),
 ]
 
 # run_macro実行前チェック用: 対話セッションの無い自動化実行下でダイアログを
@@ -54,10 +54,9 @@ def _check_dangerous_code(code: str) -> None:
     for pattern, label in _DANGEROUS_CODE_PATTERNS:
         if pattern.search(code):
             raise ValueError(
-                f"危険なVBA API（{label}）が含まれているため、このコードは書き込めません。"
-                "ファイル・フォルダの削除や外部コマンド実行を伴うコードはこのスキルでは"
-                "生成できません。ユーザーから明確な許可と目的を確認した上で、Excel上で"
-                "手動により対応するようユーザーに伝えてください。"
+                f"This code cannot be written because it contains a dangerous VBA API ({label}). "
+                "This skill cannot generate code that deletes files/folders or runs external commands. "
+                "Tell the user to handle it manually in Excel after confirming explicit permission and the purpose with them."
             )
 
 
@@ -141,12 +140,12 @@ def _iter_logical_lines(code: str):
 
 def _syntax_error_message(detail: str) -> str:
     return (
-        f"VBAコードの構文が不正な可能性があります（{detail}）。"
-        "Sub/End Sub、If/End If、For/Next等のブロックの対応が崩れていないか、"
-        "read_vba.pyで書き込み予定のコード全体を見直してから再送してください。"
-        "なお、このチェックはブロック構文の対応関係のみを見る簡易的なものです"
-        "（#If等の条件付きコンパイル、1行に複数ステートメントをコロンで並べる"
-        "書き方は対象外です）。"
+        f"The VBA code may have invalid syntax ({detail}). "
+        "Check that blocks such as Sub/End Sub, If/End If and For/Next still match up, "
+        "review the whole code you plan to write with read_vba.py, and send it again. "
+        "Note that this check is a simple one that looks only at matching block syntax "
+        "(conditional compilation such as #If, and several statements on one line separated by colons, "
+        "are not covered)."
     )
 
 
@@ -167,22 +166,22 @@ def _lint_vba_syntax(code: str) -> None:
             continue
         if _INVALID_CONTINUE_RE.search(text):
             raise ValueError(
-                f"{line_no}行目: 'Continue Do/For/While'はVBAに存在しない構文です"
-                "（VB.NET等との混同）。ループの残りをスキップするには、Ifで残り処理を"
-                "条件反転して囲むか、GoToとラベルを使ってください。"
+                f"Line {line_no}: 'Continue Do/For/While' is not VBA syntax "
+                "(confused with VB.NET etc.). To skip the rest of a loop, wrap the rest of the processing in an If "
+                "with the condition inverted, or use GoTo and a label."
             )
         closer = next((c for c in _BLOCK_CLOSERS if c[0].search(text)), None)
         if closer is not None:
             _, expected_tag, closer_label = closer
             if not stack:
                 raise ValueError(_syntax_error_message(
-                    f"{line_no}行目付近に対応する開始ブロックのない'{closer_label}'があります"
+                    f"There is a '{closer_label}' with no matching opening block near line {line_no}"
                 ))
             top_tag, _, top_line = stack[-1]
             if top_tag != expected_tag:
                 raise ValueError(_syntax_error_message(
-                    f"{top_line}行目付近で開始した'{_TAG_DISPLAY_NAMES[top_tag]}'ブロックが"
-                    f"閉じられないまま、{line_no}行目付近に'{closer_label}'が現れました"
+                    f"The '{_TAG_DISPLAY_NAMES[top_tag]}' block started near line {top_line} "
+                    f"was not closed before '{closer_label}' appeared near line {line_no}"
                 ))
             stack.pop()
             continue
@@ -194,8 +193,7 @@ def _lint_vba_syntax(code: str) -> None:
     if stack:
         top_tag, _, top_line = stack[-1]
         raise ValueError(_syntax_error_message(
-            f"{top_line}行目付近で開始した'{_TAG_DISPLAY_NAMES[top_tag]}'ブロックに対応する"
-            "終了キーワードが見つかりません"
+            f"No closing keyword matches the '{_TAG_DISPLAY_NAMES[top_tag]}' block started near line {top_line}"
         ))
 
 
@@ -229,7 +227,7 @@ def _find_component(vb_project, name: str):
         if comp.Name == name:
             return comp
     names = [comp.Name for comp in vb_project.VBComponents]
-    raise KeyError(f"モジュールが見つかりません: {name!r}（存在するモジュール: {names}）")
+    raise KeyError(f"Module not found: {name!r} (existing modules: {names})")
 
 
 _LEADING_ATTRIBUTE_RE = re.compile(r"^(?:Attribute\s+\S+\s*=.*\r?\n)+")
@@ -274,11 +272,11 @@ def op_add_module(workbook, vb_project, op: dict):
     mtype = op.get("type", "standard")
     if mtype not in _ADD_MODULE_TYPES:
         raise ValueError(
-            f"typeはstandard/classのみ対応です（documentは既存モジュールへのset_codeを、"
-            f"formはこのスキルの対象外です）: {mtype!r}"
+            f"type supports only standard/class (use set_code on an existing module for document; "
+            f"form is out of scope for this skill): {mtype!r}"
         )
     if any(comp.Name == name for comp in vb_project.VBComponents):
-        raise ValueError(f"モジュール'{name}'は既に存在します（set_codeで上書きするかdelete_moduleで削除してください）")
+        raise ValueError(f"Module '{name}' already exists (overwrite it with set_code or delete it with delete_module)")
     code = op.get("code", "")
     _check_dangerous_code(code)
     _lint_vba_syntax(code)
@@ -291,7 +289,7 @@ def op_add_module(workbook, vb_project, op: dict):
 def op_set_code(workbook, vb_project, op: dict):
     comp = _find_component(vb_project, op["name"])
     if comp.Type == _VBEXT_CT_MSFORM:
-        raise ValueError(f"'{op['name']}'はUserForm（フォームモジュール）のためこのスキルでは編集できません")
+        raise ValueError(f"'{op['name']}' is a UserForm (form module), so this skill cannot edit it")
     _check_dangerous_code(op["code"])
     _lint_vba_syntax(op["code"])
     _replace_code(comp.CodeModule, op["code"])
@@ -309,23 +307,23 @@ def op_find_replace(workbook, vb_project, op: dict):
     """
     comp = _find_component(vb_project, op["name"])
     if comp.Type == _VBEXT_CT_MSFORM:
-        raise ValueError(f"'{op['name']}'はUserForm（フォームモジュール）のためこのスキルでは編集できません")
+        raise ValueError(f"'{op['name']}' is a UserForm (form module), so this skill cannot edit it")
     code_module = comp.CodeModule
     full_code = code_module.Lines(1, code_module.CountOfLines) if code_module.CountOfLines else ""
     full_normalized = full_code.replace("\r\n", "\n")
     old_normalized = str(op["old_code"]).replace("\r\n", "\n")
     if not old_normalized:
-        raise ValueError("old_codeは空文字列にできません")
+        raise ValueError("old_code cannot be an empty string")
     count = full_normalized.count(old_normalized)
     if count == 0:
         raise ValueError(
-            f"old_codeがモジュール'{op['name']}'内に見つかりません"
-            "（read_vba.pyで取得した実際のコードから、インデントや改行も含めて正確にコピーしてください）"
+            f"old_code not found in module '{op['name']}'"
+            " (copy it exactly, including indentation and line breaks, from the actual code obtained with read_vba.py)"
         )
     if count > 1:
         raise ValueError(
-            f"old_codeがモジュール'{op['name']}'内に{count}箇所一致しました。"
-            "一意に特定できるまで前後の行を含めて範囲を広げて指定してください"
+            f"old_code matched {count} places in module '{op['name']}'. "
+            "Widen the range to include the surrounding lines until it identifies a single place"
         )
     new_normalized = str(op["new_code"]).replace("\r\n", "\n")
     _check_dangerous_code(new_normalized)
@@ -354,14 +352,14 @@ def op_replace_procedure(workbook, vb_project, op: dict):
     """
     comp = _find_component(vb_project, op["name"])
     if comp.Type == _VBEXT_CT_MSFORM:
-        raise ValueError(f"'{op['name']}'はUserForm（フォームモジュール）のためこのスキルでは編集できません")
+        raise ValueError(f"'{op['name']}' is a UserForm (form module), so this skill cannot edit it")
     code_module = comp.CodeModule
     proc_name = op["procedure"]
 
     kind_arg = op.get("kind")
     if kind_arg is not None:
         if kind_arg not in _PROC_KIND_MAP:
-            raise ValueError(f"kindはsub/property_get/property_let/property_setのみ対応です: {kind_arg!r}")
+            raise ValueError(f"kind supports only sub/property_get/property_let/property_set: {kind_arg!r}")
         kinds_to_try = (_PROC_KIND_MAP[kind_arg],)
     else:
         kinds_to_try = _PROC_KIND_AUTO_ORDER
@@ -377,8 +375,8 @@ def op_replace_procedure(workbook, vb_project, op: dict):
             continue
     if start_line is None:
         raise ValueError(
-            f"プロシージャ'{proc_name}'がモジュール'{op['name']}'内に見つかりません"
-            "（Property Get/Let/Setの場合はkindで明示的に指定してください）"
+            f"Procedure '{proc_name}' not found in module '{op['name']}'"
+            " (for Property Get/Let/Set, specify it explicitly with kind)"
         )
     _check_dangerous_code(op["code"])
     assembled = _project_replacement(code_module, start_line, count_lines, op["code"])
@@ -396,7 +394,7 @@ def op_insert_code(workbook, vb_project, op: dict):
     """
     comp = _find_component(vb_project, op["name"])
     if comp.Type == _VBEXT_CT_MSFORM:
-        raise ValueError(f"'{op['name']}'はUserForm（フォームモジュール）のためこのスキルでは編集できません")
+        raise ValueError(f"'{op['name']}' is a UserForm (form module), so this skill cannot edit it")
     code_module = comp.CodeModule
     position = op.get("position", "end")
     if position == "end":
@@ -406,7 +404,7 @@ def op_insert_code(workbook, vb_project, op: dict):
     elif isinstance(position, int) and position >= 1:
         line = position
     else:
-        raise ValueError(f"positionは'end'/'start'または1以上の行番号（整数）である必要があります: {position!r}")
+        raise ValueError(f"position must be 'end'/'start' or a line number (integer) of 1 or more: {position!r}")
     _check_dangerous_code(op["code"])
     assembled = _project_replacement(code_module, line, 0, op["code"])
     _lint_vba_syntax(assembled)
@@ -418,8 +416,8 @@ def op_delete_module(workbook, vb_project, op: dict):
     comp = _find_component(vb_project, op["name"])
     if comp.Type == _VBEXT_CT_DOCUMENT:
         raise ValueError(
-            f"'{op['name']}'はドキュメントモジュール（ThisWorkbook/シートモジュール）のため削除できません"
-            "（コードを空にしたい場合はset_codeで空文字列を渡してください）"
+            f"'{op['name']}' is a document module (ThisWorkbook/sheet module), so it cannot be deleted"
+            " (to empty its code, pass an empty string with set_code)"
         )
     vb_project.VBComponents.Remove(comp)
     return None
@@ -467,11 +465,10 @@ def _check_blocking_ui(code: str, macro_name: str) -> None:
     for pattern, label in _BLOCKING_UI_PATTERNS:
         if pattern.search(code):
             raise ValueError(
-                f"マクロ'{macro_name}'に{label}が含まれているため実行を中止しました。"
-                "対話セッションの無い自動化実行ではダイアログを誰も閉じられず、"
-                "run_scriptのタイムアウト（既定300秒）までハングしExcelプロセスが"
-                "残留する原因になります。MsgBox/InputBoxを削除するか、"
-                "Debug.Printか戻り値（Functionの場合）に置き換えてから再実行してください。"
+                f"Running was aborted because macro '{macro_name}' contains {label}. "
+                "In automated runs without an interactive session nobody can close the dialog, "
+                "so it would hang until the run_script timeout (default 300 seconds) and leave the Excel process behind. "
+                "Remove MsgBox/InputBox, or replace them with Debug.Print or a return value (for a Function), and run it again."
             )
 
 
@@ -485,7 +482,7 @@ def op_run_macro(workbook, vb_project, op: dict):
     try:
         result = excel.Run(f"'{workbook.Name}'!{name}", *call_args)
     except Exception as e:  # noqa: BLE001 - COMエラーはマクロ側のエラー内容により多様なため丸めて報告する
-        raise ValueError(f"マクロ'{name}'の実行に失敗しました: {e}")
+        raise ValueError(f"Failed to run macro '{name}': {e}")
     return _to_json_safe(result)
 
 
@@ -504,5 +501,5 @@ def apply_op(workbook, vb_project, op: dict):
     op_name = op.get("op")
     handler = OP_HANDLERS.get(op_name)
     if handler is None:
-        raise ValueError(f"未対応のopです: {op_name!r}（対応op: {sorted(OP_HANDLERS)}）")
+        raise ValueError(f"Unsupported op: {op_name!r} (supported ops: {sorted(OP_HANDLERS)})")
     return handler(workbook, vb_project, op)

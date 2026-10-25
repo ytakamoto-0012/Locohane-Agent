@@ -313,6 +313,7 @@ async def _run(
     #  意図を明確にするためここでインポートする）。
     from dataclasses import replace
 
+    from src import i18n
     from src.agent_types import render_agent_types_block, scan_agent_types
     from src.config import expand_config_vars, load_config, render_agent_type_run_script_allowlist_block
     from src.graph import ainvoke_ensuring_final_text, build_graph
@@ -402,7 +403,7 @@ async def _run(
             # 目的を埋もれさせるため、これらのロガーだけWARNING以上に抑制する。
             for _noisy_logger in ("aiosqlite", "openai", "httpx", "httpcore"):
                 logging.getLogger(_noisy_logger).setLevel(logging.WARNING)
-            logging.getLogger(__name__).info("=== eval case 開始: %s ===", case.id)
+            logging.getLogger(__name__).info("=== eval case start: %s ===", case.id)
 
         # main_endpoints の先頭エントリを使って疎通確認する（config.ini の main_url 相当）
         main_url = config.main_endpoints[0].base_url if config.main_endpoints else "http://localhost:8080/v1"
@@ -450,6 +451,9 @@ async def _run(
         # config.ini の値を ${変数名} として埋め込めるよう展開する（app.py の
         # _setup() と同じ手順、{{...}}置換完了後に行う）。
         system_prompt = expand_config_vars(system_prompt, config)
+        # 本番（app.py の _rebuild_graph）と同じく応答言語の指示を末尾に足す。セッションが
+        # 無いため [ui].default_language（auto なら日本語）の言語になる。
+        system_prompt += i18n.response_language_directive()
 
         # サブエージェント共通の注意事項を各 agent_type の system_prompt 末尾に
         # 連結する（app.py の _setup() と同じ手順）。
@@ -673,10 +677,10 @@ def main() -> int:
     args = parser.parse_args()
     for skill_dir in args.skill_overlay:
         if not (skill_dir / "SKILL.md").is_file():
-            parser.error(f"--skill-overlay には SKILL.md を持つフォルダを指定してください: {skill_dir}")
+            parser.error(f"--skill-overlay must be a folder containing SKILL.md: {skill_dir}")
     for agent_file in args.agent_overlay:
         if not (agent_file.is_file() and agent_file.suffix == ".md"):
-            parser.error(f"--agent-overlay にはエージェント定義の .md ファイルを指定してください: {agent_file}")
+            parser.error(f"--agent-overlay must be an agent definition .md file: {agent_file}")
 
     instance_name = resolve_instance_name(args.instance)
     # _run() 内で MEMORY_DIR 等の隔離用環境変数・ケースの env: を設定するより

@@ -10,15 +10,31 @@ src/memory.py と同じ契約: Chainlit・パスメモリー・作業ディレ�
 from __future__ import annotations
 
 import difflib
+import locale
 from pathlib import Path
 
 
 def read_text_with_fallback(path: Path) -> str:
-    """UTF-8 で読めなければ CP932（Shift-JIS系）にフォールバックして読む。"""
-    try:
-        return path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return path.read_text(encoding="cp932")
+    """UTF-8 で読めなければ OS の ANSI コードページ（日本語版 Windows なら cp932、英語版なら cp1252 等）、
+    CP932（Shift-JIS系）の順にフォールバックして読む。どれでも読めなければ UnicodeDecodeError を送出する。
+
+    ANSI コードページを CP932 より先に試すのは、cp1252 の文書（"Größe" 等）の多くが CP932 としても
+    エラーなく読めてしまい、文字化けに気付けないため。逆に Shift-JIS の日本語は句読点・括弧の先頭
+    バイト 0x81 が cp1252 に無いため、英語版 Windows でも多くは CP932 へ進んで正しく読める。"""
+    data = path.read_bytes()
+    error: UnicodeDecodeError | None = None
+    for encoding in dict.fromkeys(("utf-8", locale.getencoding(), "cp932")):
+        try:
+            text = data.decode(encoding)
+            break
+        except UnicodeDecodeError as e:
+            error = error or e
+        except LookupError:
+            continue
+    else:
+        raise error or UnicodeDecodeError("utf-8", data, 0, len(data), "undecodable")
+    # Path.read_text と同じく改行を \n にそろえる（universal newlines）。
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def looks_binary(path: Path) -> bool:
@@ -69,7 +85,7 @@ def suggest_similar_dir(path: Path) -> str:
 
     suggested = ancestor / close[0]
     return (
-        f" もしかして {suggested} ではありませんか？"
-        " パスは記憶や推測で再構築せず、直前のツール結果に含まれる文字列や"
-        " path_memory の @N をそのままコピーして使ってください。"
+        f" Did you mean {suggested}?"
+        " Do not rebuild paths from memory or guesswork; copy the string in the previous tool result "
+        " or the path_memory @N as is."
     )

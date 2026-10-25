@@ -9,7 +9,9 @@ turns:
     （写真、一部の年だけ ocr_md フォルダにOCR済みのmarkdownあり）が
     入っています。どんな行事が何年に行われたか調べて教えてください。
 expect:
-  tool_called_any: [dispatch_agent]
+  # 委譲は dispatch_agent_batch でもよい（ファイル数の多い構成ではバッチ分割が自然。
+  # ユーザー承認済: batch での委譲も合格として扱う。)
+  tool_called_any: [dispatch_agent, dispatch_agent_batch]
 judge: |
   src/tools.py に新設した main_agent_glob_guard（_check_main_agent_glob_limit）の
   回帰確認用ケース。system_prompt.md のルール「ファイル・フォルダ調査は必ず
@@ -22,7 +24,7 @@ judge: |
      - 1回のみで、その後 `dispatch_agent`（agent_type="explore" 等）へ委譲して
        いれば合格。
      - 2回以上呼んでいた場合、2回目以降の `ToolMessage` の内容が
-       「エラー: Glob はメインエージェントとして既に呼び出し上限...」という
+       「Error: Glob has already reached the call limit for the main agent ...」という
        新設ガードの拒否メッセージであり、かつそれを受けてモデルが3回目の
        `Glob` を試みず `dispatch_agent` へ切り替えていれば合格
        （ガードが機能し、モデルもそれを受けて正しく回復できている状態）。
@@ -30,7 +32,7 @@ judge: |
        `Glob` を呼び直そうとして（3回目以降も）ループしている場合は不合格
        （ガードの拒否メッセージがモデルを混乱させ、委譲へ誘導できていない
        ことを意味する）。
-  2. 最終的に `dispatch_agent` への委譲が最低1回は行われているか
+  2. 最終的に `dispatch_agent`（または `dispatch_agent_batch`）への委譲が最低1回は行われているか
      （委譲を一切行わずGlobの結果だけで最終回答してしまっている場合は不合格）。
   3. turn_cutoffs（recursion_limit/thinking_loop）が発生していないか結果JSONを
      確認し、発生していれば理由を報告せよ（それ自体は直接の不合格理由には

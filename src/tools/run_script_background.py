@@ -20,40 +20,38 @@ logger = logging.getLogger(__name__)
 
 @tool
 async def run_script_background(skill_name: str, script_filename: str, script_args: list[str] | None = None) -> str:
-    """スキルの scripts/ 配下のスクリプトをバックグラウンドで起動する。
+    """Start a script under the skill's scripts/ folder in the background.
 
-    処理時間が長くなることが見込まれるスクリプト向け。run_script と異なり、
-    このターン自体は（下記の安全上限に達しない限り）完了までブロックされる
-    （Chainlit UI上は「実行中」表示が続く）。待っている間、人間向けに
-    チャットへ直接進捗（経過秒数・標準出力/標準エラー末尾）が自動で通知
-    されるため、自分から check_script_job を繰り返し呼んでポーリングする
-    必要は無い（進捗はコード側が直接チャットへ送るため、LLMの呼び出し回数・
-    トークン消費は増えない）。1回の呼び出しで run_script と同じ形式の
-    最終結果がそのまま返る。
+    For scripts expected to take a long time. Unlike run_script, this turn itself blocks until
+    completion (unless the safety limit below is reached) (the Chainlit UI keeps showing
+    "running"). While waiting, progress (elapsed seconds, the tail of stdout/stderr) is
+    automatically posted to the chat for humans, so you do not need to poll by calling
+    check_script_job repeatedly (the code posts progress to the chat directly, so the number of
+    LLM calls and token usage do not increase). One call returns the final result in the same form
+    as run_script.
 
-    設定した安全上限（[scripts].background_inline_wait_max_seconds）を
-    超えてもなお完了しない場合に限り、job_id を含む案内文を返してこのターンを
-    終える（ジョブ自体は裏側で動き続ける）。この場合のみ、後続ターンで
-    check_script_job（結果取得）・stop_script_job（明示的な中断指示があった
-    場合のみ）を使う。
+    Only if it still has not finished after the configured safety limit
+    ([scripts].background_inline_wait_max_seconds), it returns a notice including the job_id and
+    ends this turn (the job itself keeps running in the background). Only in that case, use
+    check_script_job (to get the result) and stop_script_job (only when explicitly told to
+    interrupt) in later turns.
 
-    引数解決・作業ディレクトリ解決・計画承認チェック（例外の扱いも含む）、
-    および書き込みサンドボックスガード（出力先は作業ディレクトリ/
-    default_workdir配下限定、詳細は run_script のdocstring参照）は
-    run_script と同じ。バックグラウンドジョブを強制終了するまでの上限は
-    既定3600秒。
+    Argument resolution, working directory resolution, the plan approval check (including the
+    exceptions) and the write sandbox guard (output limited to the working directory /
+    default_workdir; see the docstring of run_script for details) are the same as run_script.
+    The limit before a background job is forcibly stopped is 3600 seconds by default.
 
     Args:
-        skill_name: スクリプトを持つスキルのフォルダ名。
-        script_filename: 実行したいスクリプトのファイル名（例: "count.py"）。
-        script_args: スクリプトへ渡す追加引数のリスト（省略可）。オプションと
-            値は別要素にする（例: ["--file", "C:\\aaa.png"]）。
+        skill_name: The folder name of the skill that has the script.
+        script_filename: The file name of the script to run (e.g. "count.py").
+        script_args: A list of extra arguments for the script (optional). Put each option and its
+            value in separate elements (e.g. ["--file", "C:\\aaa.png"]).
 
     Returns:
-        通常は run_script と同じ形式の最終結果文字列。安全上限に達した
-        場合のみ job_id を含む案内文字列。引数不正・スクリプトが見つからない・
-        計画未承認・起動自体に失敗した場合は run_script 同様「エラー: ...」
-        形式の文字列を返す（この場合 job は作られない）。
+        Normally the final result string in the same form as run_script. Only when the safety limit
+        is reached, a notice string including the job_id. If the arguments are invalid, the script
+        is not found, the plan is not approved, or starting it failed, it returns an "Error: ..."
+        string like run_script (no job is created in that case).
     """
     prepared = _script_job._prepare_script_execution(skill_name, script_filename, script_args)
     if isinstance(prepared, str):
@@ -75,7 +73,7 @@ async def run_script_background(skill_name: str, script_filename: str, script_ar
     except OSError as e:
         if guard_dir is not None:
             shutil.rmtree(guard_dir, ignore_errors=True)
-        return f"エラー: スクリプトを起動できませんでした: {e}"
+        return f"Error: could not start the script: {e}"
 
     job_id = uuid.uuid4().hex[:12]
     job = _BackgroundJob(
@@ -103,7 +101,7 @@ async def run_script_background(skill_name: str, script_filename: str, script_ar
         await asyncio.wait_for(asyncio.shield(job.runner_task), timeout=wait_timeout)
     except asyncio.TimeoutError:
         logger.warning(
-            "run_script_background: 安全上限(%s秒)に達したため job_id を返してターンを終えます: job_id=%s",
+            "run_script_background: reached the safety limit (%s seconds), returning job_id and ending the turn: job_id=%s",
             wait_timeout,
             job_id,
         )

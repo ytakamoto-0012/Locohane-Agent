@@ -117,7 +117,7 @@ def subagent_tool_names() -> tuple[str, ...]:
         [sys.executable, "-c", code], cwd=str(PROJECT_ROOT), capture_output=True, text=True, encoding="utf-8", timeout=120
     )
     if out.returncode != 0:
-        raise RuntimeError(f"ツール名の一覧を取得できません: {out.stderr.strip()[-500:]}")
+        raise RuntimeError(f"Cannot get the list of tool names: {out.stderr.strip()[-500:]}")
     return tuple(json.loads(out.stdout.strip().splitlines()[-1]))
 
 

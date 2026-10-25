@@ -13,23 +13,23 @@ from . import _state
 
 @tool
 def search_path_memory(query: str = "", top_k: int = 5) -> str:
-    """現在の会話のパスメモリー（`@N`）から、query に似たパスを探す。
+    """Search the path memory (`@N`) of the current conversation for paths similar to query.
 
-    ファイル名・フォルダ名の一部を渡せばよい（全角半角・大文字小文字・
-    `\\` と `/` の違いや多少の誤字は吸収する）。`@N` が分からないとき、
-    または「パスメモリー @N は登録されていません」と返されたときに使う。
-    読み取り専用のため、計画の有無に関わらずいつでも呼んでよい。
+    Pass part of a file or folder name (full-/half-width differences, case, `\\` vs `/` and
+    small typos are tolerated). Use it when you do not know the `@N`, or when told
+    "Path memory @N is not registered". It is read-only, so you may call it any time regardless of
+    the plan.
 
     Args:
-        query: 探したいファイル名・フォルダ名の一部、またはパス。
-            空なら直近に登録された top_k 件を返す。
-        top_k: 返す最大件数（既定5）。
+        query: Part of the file/folder name to look for, or a path.
+            If empty, returns the top_k most recently registered entries.
+        top_k: The maximum number of entries to return (default 5).
 
     Returns:
-        `{"entries": [{"index", "path", "valid", "description", "score"}, ...]}`
-        のJSON文字列（query ありは類似度順、空なら新しい順。空の場合 score は無い）。
-        登録後に削除・移動されて現在存在しないパスは含まない。
-        該当が無ければ `hint` を添える。
+        A JSON string `{"entries": [{"index", "path", "valid", "description", "score"}, ...]}`
+        (by similarity when query is given, newest first when empty; no score when empty).
+        Paths deleted or moved after registration that no longer exist are not included.
+        If there are no matches, a `hint` is added.
     """
     if _state._PATH_MEMORY_DIR is None:
         return json.dumps({"entries": []}, ensure_ascii=False)
@@ -47,5 +47,5 @@ def search_path_memory(query: str = "", top_k: int = 5) -> str:
         entries = path_memory.recent_entries(thread_id, _state._PATH_MEMORY_DIR, top_k=top_k)
     result: dict = {"entries": entries}
     if not entries:
-        result["hint"] = "該当する登録はありません。Glob で探し直してください。"
+        result["hint"] = "No matching entries. Search again with Glob."
     return json.dumps(result, ensure_ascii=False)

@@ -31,6 +31,7 @@ from src.vector_db.store import StoreError, open_store, path_collection_name, st
 
 from . import audit
 from . import instances as inst
+from admin.i18n import t as _t
 
 CONFIG_INI_PATH = Path(__file__).resolve().parent.parent / "config.ini"
 SCHEDULER_ACTOR = "scheduler"
@@ -216,7 +217,7 @@ class IngestScheduler:
             try:
                 self.tick(datetime.now())
             except Exception:  # noqa: BLE001 - 1回の失敗でスケジューラーを止めない
-                logger.exception("ナレッジの自動取り込みの確認に失敗しました。")
+                logger.exception("Failed to check scheduled knowledge ingestion.")
 
     def tick(self, now: datetime) -> list[tuple[str, str]]:
         """前回から now までに来た時刻の取り込みを始め、始めた (インスタンス名, コレクション名) を返す。"""
@@ -238,7 +239,7 @@ class IngestScheduler:
                     continue
                 cfg = self._loader(name)
             except Exception as exc:  # noqa: BLE001 - 設定の読めないインスタンスは飛ばして他を続ける
-                logger.warning("自動取り込み: インスタンス %r の設定を読めません: %s", name, exc)
+                logger.warning("Scheduled ingestion: cannot read the settings of instance %r: %s", name, exc)
                 continue
             if not cfg.vector_db_enabled or not vcat.catalog_exists(cfg.vector_db_dir):
                 continue
@@ -249,7 +250,7 @@ class IngestScheduler:
                     continue
                 job = IngestJob(collection=c.name, rebuild=False, actor=SCHEDULER_ACTOR, trigger="schedule")
                 if not self._jobs.start(name, job):
-                    logger.info("自動取り込み: %s/%s は取り込み中のため、今回は実行しません。", name, c.name)
+                    logger.info("Scheduled ingestion: %s/%s is already ingesting, skipping this run.", name, c.name)
                     continue
                 threading.Thread(
                     target=run_ingest_job,
@@ -270,7 +271,7 @@ class IngestScheduler:
                         "trigger": "schedule",
                     },
                 )
-                logger.info("自動取り込み: %s/%s の差分取り込みを始めました。", name, c.name)
+                logger.info("Scheduled ingestion: started diff ingestion of %s/%s.", name, c.name)
                 started.append((name, c.name))
         return started
 
@@ -320,11 +321,11 @@ def build_router(
         except inst.InstanceError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if meta.is_skill_lab:
-            raise HTTPException(status_code=400, detail="スキル研究室のインスタンスにはナレッジを置けません。")
+            raise HTTPException(status_code=400, detail=_t("スキル研究室のインスタンスにはナレッジを置けません。"))
         try:
             return loader(name)
         except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=400, detail=f"インスタンス {name} の設定を読めません: {exc}") from exc
+            raise HTTPException(status_code=400, detail=_t("インスタンス {0} の設定を読めません: {1}", name, exc)) from exc
 
     def _collection_dict(c: vcat.Collection, job: IngestJob | None) -> dict:
         next_run = next_scheduled_run(c, datetime.now())
@@ -368,7 +369,7 @@ def build_router(
             times = vcat.normalize_schedule_times(body.schedule_times)
             weekdays = vcat.normalize_schedule_weekdays(body.schedule_weekdays)
             if body.schedule_enabled and not times:
-                raise vcat.CatalogError("自動取り込みを有効にするときは時刻を1つ以上指定してください。")
+                raise vcat.CatalogError(_t("自動取り込みを有効にするときは時刻を1つ以上指定してください。"))
             with vcat.open_catalog(cfg.vector_db_dir) as catalog:
                 catalog.create(body.name, str(folder), body.description, body.recursive)
                 created = catalog.update(body.name, schedule_enabled=body.schedule_enabled, schedule_times=times, schedule_weekdays=weekdays)
@@ -418,7 +419,7 @@ def build_router(
         cfg = _cfg(name)
         job = jobs.get(name, collection)
         if job is not None and job.state == "running":
-            raise HTTPException(status_code=409, detail="取り込み中のコレクションは削除できません。先に停止してください。")
+            raise HTTPException(status_code=409, detail=_t("取り込み中のコレクションは削除できません。先に停止してください。"))
         with vcat.open_catalog(cfg.vector_db_dir) as catalog:
             try:
                 catalog.get(collection)
@@ -432,7 +433,7 @@ def build_router(
                 finally:
                     store.close()
             except StoreError as exc:
-                raise HTTPException(status_code=502, detail=f"ベクターを削除できませんでした: {exc}") from exc
+                raise HTTPException(status_code=502, detail=_t("ベクターを削除できませんでした: {0}", exc)) from exc
             with open_keyword_index(cfg.vector_db_dir) as keywords:
                 keywords.drop_collection(collection)
                 keywords.drop_collection(path_collection_name(collection))
@@ -447,7 +448,7 @@ def build_router(
     ):
         cfg = _cfg(name)
         if not cfg.vector_db_enabled:
-            raise HTTPException(status_code=400, detail="このインスタンスの [vector_db] enabled が false です。config.ini タブで有効にしてください。")
+            raise HTTPException(status_code=400, detail=_t("このインスタンスの [vector_db] enabled が false です。config.ini タブで有効にしてください。"))
         with vcat.open_catalog(cfg.vector_db_dir) as catalog:
             try:
                 catalog.get(collection)
@@ -455,7 +456,7 @@ def build_router(
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
         job = IngestJob(collection=collection, rebuild=body.rebuild, actor=user)
         if not jobs.start(name, job):
-            raise HTTPException(status_code=409, detail="このコレクションは取り込み中です。")
+            raise HTTPException(status_code=409, detail=_t("このコレクションは取り込み中です。"))
         threading.Thread(
             target=run_ingest_job, args=(cfg, job), kwargs=extra_ingest_kwargs, name=f"knowledge-ingest-{name}-{collection}", daemon=True
         ).start()
@@ -473,7 +474,7 @@ def build_router(
         _cfg(name)
         job = jobs.get(name, collection)
         if job is None or job.state != "running":
-            raise HTTPException(status_code=409, detail="取り込み中ではありません。")
+            raise HTTPException(status_code=409, detail=_t("取り込み中ではありません。"))
         job.stop_requested = True
         _audit(request, user, name, "knowledge_ingest_stop", collection=collection)
         return job.to_dict()
@@ -484,7 +485,7 @@ def build_router(
 def _check_folder(value: str) -> Path:
     folder = Path(value.strip())
     if not value.strip() or not folder.is_absolute():
-        raise HTTPException(status_code=400, detail="取り込み元フォルダは絶対パスで指定してください。")
+        raise HTTPException(status_code=400, detail=_t("取り込み元フォルダは絶対パスで指定してください。"))
     if not folder.is_dir():
-        raise HTTPException(status_code=400, detail=f"取り込み元フォルダがありません（管理ツールのPCから見えるパスを指定してください）: {folder}")
+        raise HTTPException(status_code=400, detail=_t("取り込み元フォルダがありません（管理ツールのPCから見えるパスを指定してください）: {0}", folder))
     return folder

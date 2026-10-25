@@ -58,19 +58,19 @@ def env(tmp_path, monkeypatch):
 
 def test_tools_report_disabled(monkeypatch, tmp_path):
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", make_config(tmp_path, vector_db_enabled=False))
-    assert "無効" in tools.search_documents.func(query="溶接")
-    assert "無効" in tools.list_document_collections.func()
-    assert "無効" in tools.search_document_paths.func(query="溶接")
+    assert "disabled" in tools.search_documents.func(query="溶接")
+    assert "disabled" in tools.list_document_collections.func()
+    assert "disabled" in tools.search_document_paths.func(query="溶接")
 
 
 def test_list_document_collections(env):
     text = tools.list_document_collections.func()
-    assert "docs - 品質文書" in text and "文書 2 件" in text
+    assert "docs - 品質文書" in text and "2 documents" in text
 
 
 def test_search_documents_returns_sources_with_path_memory_refs(env):
     text = tools.search_documents.func(query="溶接ビードの幅", top_k=1)
-    assert text.startswith("1件見つかりました。")
+    assert text.startswith("1 found.")
     assert "@1 " + str(env["docs"] / "weld.md") in text
     assert "溶接ビードの幅は5mm以上とする。" in text
 
@@ -78,12 +78,12 @@ def test_search_documents_returns_sources_with_path_memory_refs(env):
 def test_search_documents_truncates_to_max_result_chars(env, monkeypatch):
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", dataclasses.replace(env["cfg"], vector_db_max_result_chars=150))
     text = tools.search_documents.func(query="会議室の予約")
-    assert "以下省略" in text or "省略しました" in text
+    assert "omitted" in text
     assert len(text) < 400
 
 
 def test_search_documents_returns_error_text(env):
-    assert tools.search_documents.func(query="x", collection="missing").startswith("エラー: ")
+    assert tools.search_documents.func(query="x", collection="missing").startswith("Error: ")
 
 
 def test_tools_are_registered_for_main_and_subagents():
@@ -115,7 +115,7 @@ def test_search_documents_shows_image_matches(env, monkeypatch, tmp_path):
     ingest.ingest_collection(cfg, "docs", embedding_transport=embed.transport)
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", cfg)
     text = tools.search_documents.func(query="配管の図面", top_k=1)
-    assert "（一致: 画像）" in text and str(env["docs"] / "drawing.pdf") + " p.1" in text
+    assert "(matched: image)" in text and str(env["docs"] / "drawing.pdf") + " p.1" in text
     assert ".png" not in text  # ページ画像のファイルは作らず、元のファイルを出典にする
 
 
@@ -125,27 +125,27 @@ def test_search_documents_shows_keyword_matches_and_merged_chunks(env, monkeypat
     ingest.ingest_collection(env["cfg"], "docs", embedding_transport=FakeEmbeddingServer().transport)
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", dataclasses.replace(env["cfg"], vector_db_min_score=0.99))
     text = tools.search_documents.func(query="XR-7741", top_k=1)
-    assert "類似度 -（一致: キーワード）" in text and "parts.md" in text
+    assert "similarity - (matched: keyword)" in text and "parts.md" in text
     # room.md の2チャンクは1件にまとめて、他のチャンク数を添える
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", env["cfg"])
     text = tools.search_documents.func(query="会議室の予約はポータルから行う。", top_k=1)
-    assert "room.md" in text and "（同じ位置で他 1 チャンクも一致）" in text
+    assert "room.md" in text and "(1 more chunks matched at the same location)" in text
 
 
 def test_search_document_paths_returns_files_with_path_memory_refs(env):
     text = tools.search_document_paths.func(query="weld.md", top_k=1)
-    assert text.startswith("1件見つかりました。")
-    assert "@1 " + str(env["docs"] / "weld.md") in text and "相対パス: weld.md" in text
-    assert "（一致: 意味・キーワード）" in text
+    assert text.startswith("1 found.")
+    assert "@1 " + str(env["docs"] / "weld.md") in text and "relative path: weld.md" in text
+    assert "(matched: meaning/keyword)" in text
 
 
 def test_search_document_paths_shows_keyword_only_matches(env, monkeypatch):
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", dataclasses.replace(env["cfg"], vector_db_path_min_score=1.0))
     text = tools.search_document_paths.func(query="weld", top_k=1)
-    assert "類似度 -（一致: キーワード）" in text and "相対パス: weld.md" in text
+    assert "similarity - (matched: keyword)" in text and "relative path: weld.md" in text
 
 
 def test_search_document_paths_reports_no_match_and_errors(env, monkeypatch):
     monkeypatch.setattr(tools._state, "_LLM_CONFIG", dataclasses.replace(env["cfg"], vector_db_path_min_score=1.0))
-    assert "見つかりませんでした" in tools.search_document_paths.func(query="配管の写真")
-    assert tools.search_document_paths.func(query="x", collection="missing").startswith("エラー: ")
+    assert "were found" in tools.search_document_paths.func(query="配管の写真")
+    assert tools.search_document_paths.func(query="x", collection="missing").startswith("Error: ")

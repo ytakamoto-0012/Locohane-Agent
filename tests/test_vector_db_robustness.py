@@ -218,7 +218,7 @@ def test_crashing_child_process_fails_only_that_file(env, monkeypatch):
     cfg = _config(env, vector_db_ingest_processes=2)
     result = ingest.ingest_collection(cfg, "docs", **env["kwargs"])
     assert result.added == 2
-    assert [(Path(p).name, "子プロセスが異常終了" in r) for p, r in result.failed] == [("b_crash.md", True)]
+    assert [(Path(p).name, "child process for text extraction/rendering crashed" in r) for p, r in result.failed] == [("b_crash.md", True)]
     # 異常終了したら新しいプロセスプールで続ける（巻き込まれたファイルは1つずつ準備し直す）
     assert _CrashingPool.created >= 3
 
@@ -368,7 +368,7 @@ def test_search_tools_return_unexpected_errors_as_text(monkeypatch, tmp_path):
         (vector_db_tools.list_document_collections, {}),
     ):
         text = tool.invoke(args)
-        assert text.startswith("エラー:") and "no such table" in text
+        assert text.startswith("Error:") and "no such table" in text
 
 
 def test_extract_error_is_still_a_failed_file(env, monkeypatch):
@@ -388,13 +388,13 @@ def test_encrypted_office_file_has_clear_reason(tmp_path):
     from src.vector_db.extract import extract_segments
 
     (tmp_path / "secret.docx").write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 512)
-    with pytest.raises(ExtractError, match="パスワード付き"):
+    with pytest.raises(ExtractError, match="password-protected"):
         extract_segments(tmp_path / "secret.docx")
     (tmp_path / "broken.docx").write_bytes(b"not a zip")
     # 単に壊れているファイルは、パスワード付きとは言わない
     with pytest.raises(ExtractError) as excinfo:
         extract_segments(tmp_path / "broken.docx")
-    assert "パスワード" not in str(excinfo.value)
+    assert "password" not in str(excinfo.value)
 
 
 def test_office_export_uses_absolute_output_path(fake_office, tmp_path, monkeypatch):

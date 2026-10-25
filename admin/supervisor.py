@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+from admin.i18n import t as _t
 from src import instance_lock
 from src.config import PROJECT_ROOT, load_config
 
@@ -108,7 +109,7 @@ class Supervisor:
             try:
                 locked = instance_lock.is_locked(self._lock_path_for(name))
             except Exception as exc:  # noqa: BLE001 - 設定が壊れていても一覧表示自体は継続させる
-                logger.warning("インスタンス %r の設定解決に失敗しました: %s", name, exc)
+                logger.warning("Failed to resolve the settings of instance %r: %s", name, exc)
                 return InstanceStatus(state=InstanceState.ERROR)
             if locked:
                 return InstanceStatus(state=InstanceState.EXTERNAL)
@@ -136,14 +137,14 @@ class Supervisor:
         with self._lock:
             current = self.status(name)
             if current.state == InstanceState.RUNNING:
-                raise SupervisorError(f"インスタンス {name!r} は既に稼働中です。")
+                raise SupervisorError(_t("インスタンス {0!r} は既に稼働中です。", name))
             if current.state == InstanceState.EXTERNAL:
                 raise SupervisorError(
-                    f"インスタンス {name!r} は管理ツール以外のプロセスで起動中のため、ここからは操作できません。"
-                    "先にそちらを終了してください。"
+                    _t("インスタンス {0!r} は管理ツール以外のプロセスで起動中のため、ここからは操作できません。"
+                    "先にそちらを終了してください。", name)
                 )
             if current.state == InstanceState.ERROR:
-                raise SupervisorError(f"インスタンス {name!r} の設定を解決できないため起動できません。config_overrides.json を確認してください。")
+                raise SupervisorError(_t("インスタンス {0!r} の設定を解決できないため起動できません。config_overrides.json を確認してください。", name))
             try:
                 meta = inst.read_instance(self._instances_root, name)
                 inst.check_conflicts(
@@ -193,9 +194,9 @@ class Supervisor:
             self._processes[name] = proc
             self._crashed_exit_codes.pop(name, None)
             if meta.is_skill_lab:
-                logger.info("スキル研究室 %r を起動しました（pid=%d）。", name, proc.pid)
+                logger.info("Started skill lab %r (pid=%d).", name, proc.pid)
             else:
-                logger.info("インスタンス %r を起動しました（pid=%d, %s:%d）。", name, proc.pid, meta.app_host, meta.app_port)
+                logger.info("Started instance %r (pid=%d, %s:%d).", name, proc.pid, meta.app_host, meta.app_port)
             return InstanceStatus(state=InstanceState.RUNNING, pid=proc.pid)
 
     @staticmethod
@@ -246,11 +247,11 @@ class Supervisor:
             try:
                 proc.wait(timeout=timeout_seconds)
             except subprocess.TimeoutExpired:
-                logger.warning("インスタンス %r が %.0f 秒以内に終了しなかったため強制終了します。", name, timeout_seconds)
+                logger.warning("Instance %r did not exit within %.0f seconds; killing it.", name, timeout_seconds)
                 proc.kill()
                 proc.wait(timeout=timeout_seconds)
             self._processes.pop(name, None)
-            logger.info("インスタンス %r を停止しました。", name)
+            logger.info("Stopped instance %r.", name)
 
     def restart(self, name: str, timeout_seconds: float = 15.0) -> InstanceStatus:
         with self._lock:

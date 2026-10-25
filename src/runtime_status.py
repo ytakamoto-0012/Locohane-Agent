@@ -46,7 +46,7 @@ def remove(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
     except OSError:
-        logger.debug("%s の削除に失敗しました", path, exc_info=True)
+        logger.debug("Failed to delete %s", path, exc_info=True)
 
 
 async def run_writer_loop(path: Path, collect: Callable[[], dict], interval_seconds: float) -> None:
@@ -81,11 +81,11 @@ async def run_writer_loop(path: Path, collect: Callable[[], dict], interval_seco
             permission_failures += 1
             logger.log(
                 logging.WARNING if permission_failures == _PERMISSION_FAILURES_BEFORE_WARNING else logging.DEBUG,
-                "実行状態ファイル %s の書き出しに失敗しました（%d回連続）",
+                "Failed to write the runtime status file %s (%d times in a row)",
                 path,
                 permission_failures,
                 exc_info=True,
             )
         except Exception:  # noqa: BLE001 - 監視用の付帯機能のため本体の動作は止めない
-            logger.warning("実行状態ファイル %s の書き出しに失敗しました", path, exc_info=True)
+            logger.warning("Failed to write the runtime status file %s", path, exc_info=True)
         await asyncio.sleep(interval_seconds)

@@ -1,32 +1,33 @@
-この会話で扱えるトークン量の上限が近づいたため、**この会話ではこれ以上作業を
-続けられません**。作業を無理に続けると途中で応答できなくなり、ここまでの成果も
-進捗も引き継げなくなります。
+The token limit of this conversation is approaching, so **no more work can be done in this conversation**.
+If you force the work to continue, you will become unable to respond midway, and neither the results nor the
+progress so far can be handed over.
 
-**これ以上ツールを呼ばないでください。** 次のツール呼び出しは行わず、いま分かって
-いる情報だけを使って、以下の2つをテキストで出力して応答を終えてください。
+**Do not call any more tools.** Do not make the next tool call; using only the information you have now,
+output the following two things as text and end your response. Write both in the language of the conversation
+with the user (the user's language).
 
-## 1. ユーザーへの状況報告
+## 1. Status report to the user
 
-- 何をしていたか（1〜2文）
-- どこまで完了したか（処理済みの件数・範囲、生成したファイルの保存先フォルダの絶対パス）
-- 未処理として残っているもの（対象の範囲と件数）
-- トークン量の上限に達したため、この会話では続きを実行できないこと
+- What you were doing (1-2 sentences)
+- How far you got (the number/range processed, and the absolute path of the folder where generated files were saved)
+- What remains unprocessed (the range and number of targets)
+- That the rest cannot be run in this conversation because the token limit was reached
 
-## 2. 新しいチャットで再開するための引継ぎプロンプト
+## 2. Handoff prompt to resume in a new chat
 
-ユーザーが**そのままコピーして新しいチャットへ貼り付ければ続きから再開できる**
-指示文を、コードブロックに入れて出力してください。次の項目を必ず含めること。
+Output, in a code block, an instruction text that the user can **copy as is and paste into a new chat to resume
+from where you left off**. Always include the following items.
 
-- 依頼の目的（元のユーザー依頼を、省略せず具体的に書き直したもの）
-- 入力フォルダの絶対パス
-- 出力フォルダの絶対パス
-- 出力ファイル名の規則と、出力フォーマット（元の依頼で指定されていたものをそのまま）
-- **すでに完了している範囲**（「1件目から120件目まで処理済み」「出力フォルダに
-  既に120件のファイルがある」など、重複処理を避けられる形で）
-- **未処理の範囲**（「121件目以降の残り177件」など）
-- 再開時に最初に行うべき1手（例:「出力フォルダを Glob して既存の件数を確認し、
-  未処理分の先頭から委任を再開する」）
+- The goal of the request (the original user request, rewritten concretely without omissions)
+- The absolute path of the input folder
+- The absolute path of the output folder
+- The naming rule for output files and the output format (as specified in the original request)
+- **The range already completed** (in a form that avoids duplicate processing, such as "items 1 to 120 are processed"
+  or "the output folder already has 120 files")
+- **The range not yet processed** (such as "the remaining 177 items from item 121 on")
+- The first step to take when resuming (e.g. "Glob the output folder to check the existing count, and resume
+  delegation from the first unprocessed item")
 
-引継ぎプロンプトは、この会話の文脈を知らない相手が読んでも作業を再開できる
-自己完結した内容にしてください。「先ほどの続き」「前回と同じ要領で」といった、
-この会話を参照する表現は使わないこと。
+Make the handoff prompt self-contained so that someone who does not know the context of this conversation can
+resume the work. Do not use expressions that refer to this conversation, such as "continue from before" or
+"in the same way as last time".

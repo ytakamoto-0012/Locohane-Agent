@@ -150,6 +150,7 @@ def test_choices_match_src_config_constants():
         LLM_ROUTING_STRATEGIES,
         MAIN_AGENT_TOOL_GUARD_MODES,
         MAIN_AGENT_TOOL_GUARD_VISIBILITY_MODES,
+        UI_DEFAULT_LANGUAGES,
         VECTOR_DB_BACKENDS,
     )
 
@@ -163,6 +164,7 @@ def test_choices_match_src_config_constants():
         ("main_agent_tool_guard", "mode"): MAIN_AGENT_TOOL_GUARD_MODES,
         ("main_agent_tool_guard", "visibility_mode"): MAIN_AGENT_TOOL_GUARD_VISIBILITY_MODES,
         ("log", "level"): {"info", "debug", "none"},
+        ("ui", "default_language"): set(UI_DEFAULT_LANGUAGES),
         ("vector_db", "backend"): set(VECTOR_DB_BACKENDS),
         ("vector_db", "embedding_routing_strategy"): LLM_ROUTING_STRATEGIES,
     }

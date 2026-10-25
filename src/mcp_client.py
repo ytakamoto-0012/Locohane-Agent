@@ -100,7 +100,7 @@ def _resolve_env(server_name: str, env: dict[str, Any]) -> dict[str, str] | None
         actual = os.environ.get(m.group(1))
         if actual is None:
             logger.warning(
-                "MCPサーバー '%s': 環境変数 %s が未設定のため接続をスキップします",
+                "MCP server '%s': skipping the connection because environment variable %s is not set",
                 server_name,
                 m.group(1),
             )
@@ -125,25 +125,25 @@ def _parse_settings(path: Path) -> list[McpServerSpec]:
         妥当な McpServerSpec のリスト（disabled=true のエントリは除外済み）。
     """
     if not path.is_file():
-        logger.info("MCP設定ファイルが見つかりません（スキップ）: %s", path)
+        logger.info("MCP settings file not found (skipped): %s", path)
         return []
 
     data = json.loads(path.read_text(encoding="utf-8"))  # 構文エラーは呼び出し元へ伝播
     servers = data.get("mcpServers", {}) if isinstance(data, dict) else {}
     if not isinstance(servers, dict):
-        logger.warning("mcpServers の形式が不正なため MCP機能をスキップします: %s", path)
+        logger.warning("Skipping MCP because mcpServers is malformed: %s", path)
         return []
 
     specs: list[McpServerSpec] = []
     for name, raw in servers.items():
         if not _SERVER_NAME_PATTERN.match(name):
-            logger.warning("MCPサーバー名が不正なためスキップ: %r", name)
+            logger.warning("Skipping an invalid MCP server name: %r", name)
             continue
         if not isinstance(raw, dict) or not raw.get("command"):
-            logger.warning("MCPサーバー '%s' の定義が不正なためスキップ（command必須）", name)
+            logger.warning("Skipping MCP server '%s' because its definition is invalid (command is required)", name)
             continue
         if raw.get("disabled"):
-            logger.info("MCPサーバー '%s' は disabled=true のためスキップ", name)
+            logger.info("Skipping MCP server '%s' because disabled=true", name)
             continue
         env = _resolve_env(name, raw.get("env", {}) or {})
         if env is None:
@@ -216,7 +216,7 @@ async def _run_server_lifecycle(
         try:
             await exit_stack.aclose()
         except BaseException:  # noqa: BLE001 - 終了処理の失敗でアプリ終了自体は止めない
-            logger.debug("MCPサーバー '%s' の終了処理でエラー", spec.name, exc_info=True)
+            logger.debug("Error while shutting down MCP server '%s'", spec.name, exc_info=True)
 
 
 def _sanitize_tool_name(server_name: str, tool_name: str) -> str:
@@ -258,30 +258,30 @@ def _wrap_mcp_tool(
     async def _call(**kwargs: Any) -> str:
         session = session_holder.get("session")
         if session is None:
-            return f"エラー: MCPサーバー '{server_name}' に接続されていません。"
+            return f"Error: not connected to MCP server '{server_name}'."
         try:
             result = await asyncio.wait_for(
                 session.call_tool(mcp_tool.name, kwargs), timeout=call_timeout
             )
         except asyncio.TimeoutError:
             return (
-                f"エラー: MCPツール呼び出しが{call_timeout}秒でタイムアウトしました"
-                f"（server={server_name}, tool={mcp_tool.name}）。"
+                f"Error: the MCP tool call timed out after {call_timeout} seconds "
+                f"(server={server_name}, tool={mcp_tool.name})."
             )
         except McpError as e:
-            return f"エラー: MCPツール呼び出しに失敗しました（server={server_name}, tool={mcp_tool.name}）: {e}"
+            return f"Error: the MCP tool call failed (server={server_name}, tool={mcp_tool.name}): {e}"
         except Exception as e:  # noqa: BLE001 - 予期しない伝送層エラーもグラフを壊さず返す
             return (
-                f"エラー: MCPツール呼び出し中に予期しないエラーが発生しました"
-                f"（server={server_name}, tool={mcp_tool.name}）: {e}\n{traceback.format_exc()}"
+                f"Error: unexpected error during the MCP tool call "
+                f"(server={server_name}, tool={mcp_tool.name}): {e}\n{traceback.format_exc()}"
             )
         texts = [b.text for b in result.content if getattr(b, "type", None) == "text"]
-        text = "\n".join(texts) if texts else "(テキスト以外の応答、または空の応答)"
-        return f"エラー（MCPツール側）: {text}" if result.isError else text
+        text = "\n".join(texts) if texts else "(non-text or empty response)"
+        return f"Error (on the MCP tool side): {text}" if result.isError else text
 
     return StructuredTool(
         name=name,
-        description=mcp_tool.description or f"(説明なし: {server_name}/{mcp_tool.name})",
+        description=mcp_tool.description or f"(no description: {server_name}/{mcp_tool.name})",
         args_schema=mcp_tool.inputSchema,
         coroutine=_call,
     )
@@ -319,7 +319,7 @@ async def init_mcp_tools(config: Config) -> None:
         await ready_event.wait()
         if "error" in result_holder:
             logger.warning(
-                "MCPサーバー '%s' への接続に失敗しました: %s", spec.name, result_holder["error"]
+                "Failed to connect to MCP server '%s': %s", spec.name, result_holder["error"]
             )
             stop_event.set()
             continue
@@ -331,7 +331,7 @@ async def init_mcp_tools(config: Config) -> None:
             )
         lifecycles.append(_ServerLifecycle(spec.name, task, stop_event))
         logger.info(
-            "MCPサーバー '%s' に接続し、%d個のツールを登録しました", spec.name, len(mcp_tools)
+            "Connected to MCP server '%s' and registered %d tools", spec.name, len(mcp_tools)
         )
 
     _LIFECYCLES = lifecycles

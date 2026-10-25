@@ -83,30 +83,28 @@ def _resolve_script_path(skill_name: str, script_filename: str) -> Path:
     """
     basename = os.path.basename(script_filename)
     if not basename:
-        raise ValueError(f"スクリプトのファイル名を指定してください: {script_filename!r}")
+        raise ValueError(f"specify the file name of the script: {script_filename!r}")
     scripts_root = _safe_skill_path(skill_name, "scripts")
     if scripts_root is None:
-        raise ValueError(f"skills ディレクトリ外へのアクセスは許可されません: {skill_name}")
+        raise ValueError(f"access outside the skills directory is not allowed: {skill_name}")
     if not scripts_root.is_dir():
-        raise ValueError(f"スキル '{skill_name}' に scripts/ ディレクトリがありません")
+        raise ValueError(f"skill '{skill_name}' has no scripts/ directory")
     matches = [p for p in scripts_root.rglob(basename) if p.is_file()]
     if not matches:
-        raise ValueError(f"スクリプトが見つかりません: {basename}（skill={skill_name}）")
+        raise ValueError(f"script not found: {basename} (skill={skill_name})")
     matches.sort(key=lambda p: (len(p.relative_to(scripts_root).parts), str(p)))
     return matches[0]
 
 
 def list_skills() -> str:
-    """Locohaneのスキル一覧を「name: description」形式の1行ずつで返す。
+    """List Locohane's skills, one "name: description" line per skill.
 
-    どのスキルが使えるかを把握するための最初の一手。ここで気になるスキルの
-    name を見つけたら read_skill(skill_name) で手順本文を読むこと。
+    Call this first to see which skills are available. When you find a skill whose
+    name looks relevant, read its instructions with read_skill(skill_name).
 
     Returns:
-        各行が "name: description" のテキスト（Agent Skills仕様の
-        frontmatterを持たない・検証に失敗したスキルフォルダは除外される）。
-        `SKILLS_SRC` が複数ルートを持つ場合、同名スキルは先頭に近いルートの
-        ものが優先され1回だけ列挙される。
+        Text whose lines are "name: description" (skill folders without valid Agent Skills
+        frontmatter are left out). A skill that exists in several skill roots is listed once.
     """
     lines: list[str] = []
     seen: set[str] = set()
@@ -131,54 +129,51 @@ def list_skills() -> str:
 
 
 def read_skill(skill_name: str) -> str:
-    """スキルの SKILL.md 本文全体を読み込んで返す。
+    """Read the whole SKILL.md of a skill.
 
-    list_skills で見つけたスキルの手順・呼び出し方法（scripts/配下のどの
-    ファイルをどんな引数で呼ぶか）を確認するために使う。
+    Use it to check the steps of a skill found with list_skills and how to call it
+    (which file under scripts/ to run with which arguments).
 
     Args:
-        skill_name: 読み込むスキルのフォルダ名（= SKILL.md の name）。
+        skill_name: Folder name of the skill to read (= name in SKILL.md).
 
     Returns:
-        SKILL.md の本文全体（UTF-8テキスト）。skill_name が不正、または
-        SKILL.md が存在しない場合は「エラー: ...」形式の文字列を返す。
+        The whole SKILL.md text. If skill_name is invalid or SKILL.md does not exist,
+        a string starting with "Error: ".
     """
     skill_md = _safe_skill_path(skill_name, "SKILL.md")
     if skill_md is None:
-        return f"エラー: skills ディレクトリ外へのアクセスは許可されません: {skill_name}"
+        return f"Error: access outside the skills directory is not allowed: {skill_name}"
     if not skill_md.is_file():
-        return f"エラー: スキル '{skill_name}' の SKILL.md が見つかりません。"
+        return f"Error: SKILL.md of skill '{skill_name}' was not found."
     return skill_md.read_text(encoding="utf-8")
 
 
 def run_skill_script(skill_name: str, script_filename: str, script_args: list[str] | None = None) -> str:
-    """スキルの scripts/ 配下のスクリプトを実際に実行し、結果を返す。
+    """Run a script under scripts/ of a skill and return the result.
 
-    read_skill で確認した呼び出し方法（`python <script>.py <args...>`
-    形式で書かれている）に従い、script_filename と script_args を渡すこと。
-    生成物の出力先（output_path等）は相対パスに頼らず、絶対パスで
-    script_args に指定すること。実行時の作業ディレクトリ（cwd）はこのMCP
-    サーバー自身の起動時cwdをそのまま使う（環境変数 LOCOHANE_MCP_SKILLS_WORKDIR が
-    設定されていればそちらを優先する）。スクリプトを起動するPython実行ファイルは
-    既定でこのMCPサーバー自身のPython（sys.executable）だが、環境変数
-    LOCOHANE_MCP_SKILLS_PYTHON が設定されていればそちらを優先する。
+    Pass script_filename and script_args following the call written in SKILL.md
+    (read with read_skill; written as `python <script>.py <args...>`).
+    Give output locations (output_path, etc.) in script_args as absolute paths, not
+    relative ones. The working directory (cwd) is the directory this MCP server was
+    started in (LOCOHANE_MCP_SKILLS_WORKDIR takes precedence if set). The script runs
+    with this MCP server's own Python (LOCOHANE_MCP_SKILLS_PYTHON takes precedence if set).
 
     Args:
-        skill_name: スクリプトを持つスキルのフォルダ名。
-        script_filename: 実行したいスクリプトのファイル名（例: "count.py"）。
-            scripts/ プレフィックスは不要。
-        script_args: スクリプトへ渡す追加引数のリスト（省略可）。
+        skill_name: Folder name of the skill that has the script.
+        script_filename: File name of the script to run (e.g. "count.py").
+            No scripts/ prefix is needed.
+        script_args: Additional arguments passed to the script (optional).
 
     Returns:
-        「[終了コード] N」に続けて、標準出力・標準エラーがあれば
-        それぞれ「[標準出力]」「[標準エラー]」の見出し付きで連結した文字列。
-        スキルが見つからない・タイムアウトした・起動自体に失敗した場合は
-        いずれも例外を送出せず「エラー: ...」形式で返す。
+        "[exit code] N", followed by the standard output and standard error under the
+        headings "[stdout]" and "[stderr]" when present. When the skill or script is not
+        found, or the script times out or cannot be started, a string starting with "Error: ".
     """
     try:
         script_path = _resolve_script_path(skill_name, script_filename)
     except ValueError as e:
-        return f"エラー: {e}"
+        return f"Error: {e}"
 
     if WORKDIR is not None:
         WORKDIR.mkdir(parents=True, exist_ok=True)
@@ -194,13 +189,13 @@ def run_skill_script(skill_name: str, script_filename: str, script_args: list[st
             timeout=SCRIPT_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:
-        return f"エラー: スクリプトが {SCRIPT_TIMEOUT_SECONDS} 秒でタイムアウトしました。"
+        return f"Error: the script timed out after {SCRIPT_TIMEOUT_SECONDS} seconds."
     except OSError as e:
-        return f"エラー: スクリプトの起動に失敗しました: {e}"
+        return f"Error: could not start the script: {e}"
 
-    parts = [f"[終了コード] {result.returncode}"]
+    parts = [f"[exit code] {result.returncode}"]
     if result.stdout:
-        parts.append(f"[標準出力]\n{result.stdout.rstrip()}")
+        parts.append(f"[stdout]\n{result.stdout.rstrip()}")
     if result.stderr:
-        parts.append(f"[標準エラー]\n{result.stderr.rstrip()}")
+        parts.append(f"[stderr]\n{result.stderr.rstrip()}")
     return "\n".join(parts)

@@ -5,7 +5,8 @@
 
 > このファイル（`admin/API_REFERENCE.md`）はダッシュボードの「APIリファレンス」
 > メニューにそのまま表示される。ファイルを編集すれば、次に画面を開いたときに
-> 反映される（管理ツールの再起動は不要）。
+> 反映される（管理ツールの再起動は不要）。表示言語が英語のときは英訳の
+> `admin/API_REFERENCE.en.md` を表示する。こちらが正本で、更新したら英訳も合わせて直す。
 
 ## 共通ルール
 
@@ -16,6 +17,9 @@
   無いと `403` になる。
 - リクエストボディはJSON（`Content-Type: application/json`）。
 - エラー時は `{"detail": "エラー内容"}` が返る。
+- **言語**: `X-Locohane-Lang: en` を付けると、エラー内容（`detail`）と管理アシスタントの回答が英語になる
+  （無ければ日本語。訳の無いメッセージは日本語のまま）。表示言語の既定値（`[ui].default_language`）は
+  認証なしの `GET /ui-config.js` が `window.LOCOHANE_DEFAULT_LANGUAGE = "auto";` の形で返す。
 
 | ステータス | 意味 |
 |---|---|
@@ -556,6 +560,31 @@ cmd:
 %C% %BASE%/api/instances/default/knowledge/collections/manuals/job
 ```
 
+## 管理アシスタント（AIに相談）
+
+困りごとを送ると、関係する設定キー・画面を AI が助言する（設定は読むだけで変更しない）。
+`GET /api/assistant/status` で有効か（`[admin] assistant_enabled`）と、回答に使う LLM の取得元インスタンス（固定していれば）が分かる。
+
+`POST /api/assistant/chat` は NDJSON（1行1イベント）で少しずつ返す。`messages` は会話全体（サーバーは保存しないため、
+続きの質問では前の回答も含めて送る）で、最後は `role: "user"`。`view` は任意（今開いている画面の手がかり）。
+
+| イベント | 内容 |
+|---|---|
+| `{"type":"delta","text":"..."}` | 回答の続き（思考部分は除く） |
+| `{"type":"done","text":"...","html":"...","keys":[{"section":"llm","key":"max_concurrent_requests"}]}` | 回答の全文・HTML・回答中で参照された実在するキー |
+| `{"type":"error","message":"..."}` | LLM に接続できない等 |
+
+```bash
+$C $BASE/api/assistant/status
+# => {"enabled":true,"llm_instance":null}
+$C -N -X POST $BASE/api/assistant/chat -H "$H" -H "$J"   -d '{"instance":"default","messages":[{"role":"user","content":"2人同時に使うと待たされる"}]}'
+```
+
+```bat
+%C% %BASE%/api/assistant/status
+%C% -N -X POST %BASE%/api/assistant/chat -H %H% -H %J% -d "{\"instance\":\"default\",\"messages\":[{\"role\":\"user\",\"content\":\"2人同時に使うと待たされる\"}]}"
+```
+
 ## 変更履歴
 
 新しい順に最大 `limit` 件（既定200）。`instance` で絞り込める。
@@ -569,6 +598,8 @@ $C "$BASE/api/audit?limit=50&instance=default"
 ```
 
 ## このリファレンス自体
+
+`X-Locohane-Lang: en` を付けると英訳（`admin/API_REFERENCE.en.md`）を返す。
 
 ```bash
 $C $BASE/api/docs/api-reference

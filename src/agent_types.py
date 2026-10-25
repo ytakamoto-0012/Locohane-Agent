@@ -75,7 +75,7 @@ def _parse_frontmatter(text: str) -> dict | None:
     try:
         data = yaml.safe_load(parts[1])
     except yaml.YAMLError as e:
-        logger.warning("frontmatter の YAML パースに失敗: %s", e)
+        logger.warning("Failed to parse frontmatter YAML: %s", e)
         return None
     return (data, parts[2]) if isinstance(data, dict) else None
 
@@ -116,19 +116,19 @@ def _validate(name: object, description: object, file_stem: str) -> str | None:
         検証に失敗した場合はその理由。すべて通過した場合は None。
     """
     if not isinstance(name, str) or not name:
-        return "name が無い、または文字列でない"
+        return "name is missing or not a string"
     if len(name) > _NAME_MAX:
-        return f"name が {_NAME_MAX} 文字を超えている"
+        return f"name exceeds {_NAME_MAX} characters"
     if "--" in name or "__" in name or "-_" in name or "_-" in name:
-        return "name に区切り文字 (- や _) の連続が含まれる"
+        return "name contains consecutive separators (- or _)"
     if not _NAME_RE.match(name):
-        return "name は小文字英数字・ハイフン・アンダースコアのみ・先頭末尾は区切り文字不可"
+        return "name must contain only lowercase letters, digits, hyphens and underscores, and must not start or end with a separator"
     if name != file_stem:
-        return f"name '{name}' がファイル名 '{file_stem}' と一致しない"
+        return f"name '{name}' does not match the file name '{file_stem}'"
     if not isinstance(description, str) or not description.strip():
-        return "description が無い、または空"
+        return "description is missing or empty"
     if len(description) > _DESC_MAX:
-        return f"description が {_DESC_MAX} 文字を超えている"
+        return f"description exceeds {_DESC_MAX} characters"
     return None
 
 
@@ -154,7 +154,7 @@ def _scan_one(root: Path) -> list[AgentType]:
         text = entry.read_text(encoding="utf-8")
         parsed = _parse_frontmatter(text)
         if parsed is None:
-            logger.warning("frontmatter を読めないためスキップ: %s", entry.name)
+            logger.warning("Skipping because the frontmatter cannot be read: %s", entry.name)
             continue
         fm, body = parsed
 
@@ -162,7 +162,7 @@ def _scan_one(root: Path) -> list[AgentType]:
         description = fm.get("description")
         error = _validate(name, description, entry.stem)
         if error:
-            logger.warning("仕様違反のためスキップ (%s): %s", entry.name, error)
+            logger.warning("Skipping because it violates the spec (%s): %s", entry.name, error)
             continue
 
         agent_types.append(
@@ -174,7 +174,7 @@ def _scan_one(root: Path) -> list[AgentType]:
                 model=_parse_model_field(fm.get("model")),
             )
         )
-        logger.info("エージェント種別発見: %s", name)
+        logger.info("Discovered agent type: %s", name)
 
     return agent_types
 
@@ -207,11 +207,11 @@ def scan_agent_types(agents_dirs: Path | str | Sequence[Path | str]) -> list[Age
     for agents_dir in agents_dirs:
         root = Path(agents_dir)
         if not root.is_dir():
-            logger.debug("agents ディレクトリが存在しない（任意）: %s", root)
+            logger.debug("agents directory does not exist (optional): %s", root)
             continue
         for agent_type in _scan_one(root):
             if agent_type.name in merged:
-                logger.info("エージェント種別 '%s' を %s の定義で上書き", agent_type.name, root)
+                logger.info("Agent type '%s' overridden by the definition in %s", agent_type.name, root)
             merged[agent_type.name] = agent_type
 
     return sorted(merged.values(), key=lambda a: a.name)
@@ -233,7 +233,7 @@ def render_agent_types_block(agent_types: list[AgentType]) -> str:
     if agent_types:
         lines = []
         for a in agent_types:
-            tools = ", ".join(a.tool_names) if a.tool_names is not None else "（サブエージェント用の既定ツール一式）"
-            lines.append(f"- {a.name}: {a.description}\n  使用可能ツール: {tools}")
+            tools = ", ".join(a.tool_names) if a.tool_names is not None else "(the default tool set for sub-agents)"
+            lines.append(f"- {a.name}: {a.description}\n  Available tools: {tools}")
         return "\n".join(lines)
-    return "（利用可能なエージェント種別はありません）"
+    return "(no agent types available)"

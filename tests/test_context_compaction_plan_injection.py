@@ -85,7 +85,7 @@ async def test_plan_status_is_injected_independently_of_summary_llm(monkeypatch,
     summary_content = result[0].content
     assert "月間版を作る" in summary_content
     assert "週間版を作成中" in summary_content  # in_progress は activeForm で表示
-    assert "承認済みの実行計画" in summary_content
+    assert "Approved plan" in summary_content
 
 
 @pytest.mark.asyncio

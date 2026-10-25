@@ -109,7 +109,7 @@ def render_pages(path: Path, dpi: int, *, out_dir: Path | None = None, office_ti
     """
     ext = path.suffix.lower()
     if ext not in IMAGE_EXTENSIONS:
-        raise ExtractError(f"画像化に対応していない形式です: {ext}")
+        raise ExtractError(f"Unsupported format for rendering: {ext}")
     write = _page_writer(out_dir)
     try:
         if ext == ".pdf":
@@ -124,9 +124,9 @@ def render_pages(path: Path, dpi: int, *, out_dir: Path | None = None, office_ti
     except ExtractError:
         raise
     except ImportError as e:
-        raise ExtractError(f"Office ファイルの画像化には Windows と Microsoft Office（pywin32）が必要です: {e}") from e
+        raise ExtractError(f"Rendering Office files requires Windows and Microsoft Office (pywin32): {e}") from e
     except Exception as e:  # noqa: BLE001 - 壊れたファイルは1件の失敗として扱い、取り込み全体は止めない
-        raise ExtractError(f"画像化に失敗しました: {type(e).__name__}: {e}") from e
+        raise ExtractError(f"Rendering failed: {type(e).__name__}: {e}") from e
 
 
 def _render_pdf(pdf_path: Path, dpi: int, locate: Locate, write: _PageWriter) -> list[PageImage]:
@@ -169,7 +169,7 @@ def _render_image_file(path: Path, dpi: int, write: _PageWriter) -> list[PageIma
         frames = ImageSequence.Iterator(img) if path.suffix.lower() in _MULTI_PAGE_IMAGE_EXTENSIONS else [img]
         written = [write(_to_png(ImageOps.exif_transpose(frame), max_long_side)) for frame in frames]
     if len(written) == 1:
-        return [PageImage("画像", "", *written[0])]
+        return [PageImage("image", "", *written[0])]
     return [PageImage(f"p.{i}", "", png, png_path) for i, (png, png_path) in enumerate(written, start=1)]
 
 
@@ -196,7 +196,7 @@ def _page_locator(page: int, total: int) -> str:
 
 def _sheet_locator(sheet: str) -> Locate:
     """Excel のシート1枚分の PDF の位置。1ページに収まれば「シート: 名前」だけにする。"""
-    return lambda page, total: f"シート: {sheet}" if total == 1 else f"シート: {sheet} p.{page}"
+    return lambda page, total: f"Sheet: {sheet}" if total == 1 else f"Sheet: {sheet} p.{page}"
 
 
 # Office のアプリ（Word / PowerPoint / Excel）をスレッドごとに起動したまま使い回すための状態。
@@ -295,7 +295,9 @@ def _find_process(image_name: str) -> int | None:
     try:
         out = subprocess.run(
             ["tasklist", "/FI", f"IMAGENAME eq {image_name}", "/FO", "CSV", "/NH"],
-            capture_output=True, text=True, timeout=30, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            # tasklist の出力は OEM コードページ（言語により異なる）。UTF-8 モードでも落ちないよう明示する。
+            capture_output=True, text=True, encoding="oem", errors="replace", timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         ).stdout
     except (OSError, subprocess.SubprocessError):
         return None
@@ -333,8 +335,8 @@ def _watchdog(pid: int | None, seconds: float | None, path: Path):
         timer.cancel()
         if fired.is_set():
             raise OfficeTimeout(
-                f"Office の PDF への書き出しが {seconds:g} 秒で終わらなかったため中止しました（確認画面で止まった等。"
-                f"[vector_db] office_timeout_seconds で上限を変えられます）: {path.name}"
+                f"Office export to PDF did not finish within {seconds:g} seconds and was aborted (stopped at a confirmation dialog, etc.; "
+                f"the limit can be changed with [vector_db] office_timeout_seconds): {path.name}"
             )
 
 
@@ -407,7 +409,7 @@ def _export_with(app, path: Path, out_dir: Path) -> list[tuple[Path, Locate]]:
             doc = app.Presentations.Open(f"{abs_path}::{_DUMMY_PASSWORD}::", ReadOnly=True, Untitled=False, WithWindow=False)
             visible = [s.SlideIndex for s in doc.Slides if not s.SlideShowTransition.Hidden]
             doc.SaveAs(str(pdf_path), 32)  # ppSaveAsPDF
-            return [(pdf_path, lambda page, total: f"スライド{visible[page - 1]}" if page <= len(visible) else f"p.{page}")]
+            return [(pdf_path, lambda page, total: f"Slide {visible[page - 1]}" if page <= len(visible) else f"p.{page}")]
 
         # Filename, UpdateLinks, ReadOnly, Format, Password, WriteResPassword, IgnoreReadOnlyRecommended
         doc = app.Workbooks.Open(abs_path, 0, True, None, _DUMMY_PASSWORD, None, True)

@@ -1,6 +1,6 @@
 ---
 name: pdf-tools
-description: PDFファイルからテキストを抽出して読む、PDFページを画像化してレイアウト・図表・スキャン内容をLLMに視覚的に把握させる、およびセマンティックHTML（見出し・表・箇条書き・強調ボックス等）からデザイン済みのPDFファイルを生成する（日本語対応）。ユーザーがPDFの内容を確認したいとき、PDFの文章を要約・検索したいとき、PDFの表・図・レイアウトを確認したいとき、テキスト抽出できないスキャンPDFの内容を知りたいとき、レポートや文書を見た目良くPDFとして出力・保存したいときに使う。
+description: Extracts and reads text from PDF files, renders PDF pages as images so the LLM can grasp the layout, figures/tables and scanned content visually, and generates designed PDF files from semantic HTML (headings, tables, bullets, emphasis boxes, etc.) (supports Japanese). Use it when the user wants to check the content of a PDF, summarize or search the text of a PDF, check the tables, figures and layout of a PDF, know the content of a scanned PDF whose text cannot be extracted, or output and save reports and documents as good-looking PDFs.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,68 +9,66 @@ metadata:
 
 # pdf-tools
 
-PDFの読み込み（テキスト抽出／ページの画像化）とPDFの生成を行うスキルです。3つの
-スクリプトを実行して結果を得ます。日本語のPDF読み書きに
-対応しています。
+A skill that reads PDFs (text extraction / rendering pages as images) and generates PDFs. Run its three
+scripts to get results. It supports reading and writing Japanese PDFs.
 
-各スクリプトは正常系なら終了コード0でJSON1行を標準出力へ、異常系なら
-終了コード非0でエラーメッセージを標準エラーへ出力します。
+On success each script prints one line of JSON to stdout with exit code 0; on failure it prints an
+error message to stderr with a non-zero exit code.
 
-`read_pdf.py` は抽出したページ本文を直接標準出力へは返さず、一時JSON
-ファイルへ書き出してそのパス（`result_path`）を返します。中身を確認するには
-`result_path` を読んでください（内容は複数行に整形されているため部分読み込みできます）。
+`read_pdf.py` does not return the extracted page text directly on stdout; it writes it to a temporary JSON
+file and returns its path (`result_path`). To check the content,
+read `result_path` (the content is formatted over multiple lines, so it can be read partially).
 
-## 1. read_pdf.py — PDFからテキスト抽出
+## 1. read_pdf.py — extract text from PDF
 
-呼び出し例:
+Call example:
 ```bash
 python read_pdf.py "C:\Users\me\report.pdf" --start-page 1 --max-pages 20
 ```
-`--start-page`/`--max-pages` は省略可（既定 start-page=1, max-pages=20）。
+`--start-page`/`--max-pages` can be omitted (defaults start-page=1, max-pages=20).
 
-出力例:
+Output example:
 ```json
 {"path": "C:\\foo\\report.pdf", "total_pages": 42, "start_page": 1, "end_page": 20,
- "metadata": {"title": "資料タイトル", "author": null, "subject": null},
+ "metadata": {"title": "Document title", "author": null, "subject": null},
  "pages_count": 20,
  "result_path": "C:\\...\\pdf_read\\1a2b3c4d_20260805_153012_123456.json"}
 ```
-ページ本文（`pages`、各要素は `{"page", "text", "width_pt", "height_pt"}`）は標準出力からは省かれ、
-`result_path` が指すJSONファイルにのみ含まれます。`result_path` を
-読み、各要素の `text` をつなげてユーザーに内容を報告するか、要約して伝えてください。
-`width_pt`/`height_pt`（pt単位）はページサイズであり、レイアウト検証時に参考になります。
-`total_pages` が `max_pages` より多い場合は、続きを読みたければ `--start-page` を
-`end_page + 1` に指定して再度呼び出すことを案内してください（`read_file.py` の
-offset/limitと同じ考え方のページ版です）。
+The page text (`pages`, each element `{"page", "text", "width_pt", "height_pt"}`) is left out of stdout and
+included only in the JSON file that `result_path` points to. Read `result_path`,
+and report the content to the user by joining the `text` of each element, or summarize it.
+`width_pt`/`height_pt` (in pt) are the page size and are useful when verifying layout.
+If `total_pages` is larger than `max_pages`, tell the user that to read on, call it again with `--start-page`
+set to `end_page + 1` (the page version of the same idea as offset/limit of `read_file.py`).
 
-エッジケース:
-- ファイル不在・ディレクトリ指定はエラー終了します。
-- 壊れたPDF/PDF以外のファイルを指定した場合もエラー終了します。
-- パスワード保護されたPDFは、空パスワードでの復号を試みて失敗すればエラー終了します
-  （「パスワード保護されたPDFです」という旨がstderrに出ます）。
-- `start_page` が総ページ数を超える場合はエラーにはならず、
-  `pages_count: 0`, `start_page`/`end_page`: `null` を終了コード0で返します。
-- スキャン画像のみのPDF（OCRされていないもの）は `text` が空文字になることがあります。
-  その場合は下記の `render_pdf_pages.py` でページを画像化し、`analyze_image` で
-  LLMに直接見せる方法を使ってください（このスキルはOCRを行いません）。
-- 一部のページのみ内部的に破損している場合、そのページだけ `text: ""` と
-  `error` キー（失敗理由）が入り、他のページは通常通り抽出されます
-  （1ページの破損で全体が失敗することはありません）。
+Edge cases:
+- A missing file or a directory ends with an error.
+- A broken PDF or a non-PDF file also ends with an error.
+- For password-protected PDFs, it tries decrypting with an empty password and ends with an error if that fails
+  (stderr says the PDF is password-protected).
+- If `start_page` exceeds the total number of pages, it is not an error;
+  it returns `pages_count: 0`, `start_page`/`end_page`: `null` with exit code 0.
+- For PDFs that are only scanned images (not OCR'd), `text` may be an empty string.
+  In that case, render the pages as images with `render_pdf_pages.py` below and show them
+  directly to the LLM with `analyze_image` (this skill does not do OCR).
+- If only some pages are internally broken, only those pages get `text: ""` and
+  an `error` key (the reason for failure), and the other pages are extracted as usual
+  (one broken page does not make the whole thing fail).
 
-## 2. render_pdf_pages.py — PDFページを画像化してLLMに見せる
+## 2. render_pdf_pages.py — render PDF pages as images to show them to the LLM
 
-`read_pdf.py` でテキストがうまく取れないスキャンPDF・画像主体のPDFの内容を
-知りたいときに使うほか、テキストは取得できても表・図・段組みなどテキストだけ
-では読み取れない情報があるため、文書の意図をより高精度に汲み取りたいときも
-こちらを使って画像として内容を確認します。
+Use it to know the content of scanned or image-based PDFs whose text `read_pdf.py` cannot get well,
+and also, since even when the text can be obtained some information such as tables, figures and multi-column layout
+cannot be read from text alone, use it to check the content as images when you want to grasp the intent of a document
+more accurately.
 
-呼び出し例:
+Call example:
 ```bash
 python render_pdf_pages.py "C:\Users\me\report.pdf"
 ```
-全ページを一度に画像化します（範囲の指定はできません）。解像度は既定150DPI固定。
+All pages are rendered at once (a range cannot be specified). The resolution is fixed at 150 DPI by default.
 
-出力例:
+Output example:
 ```json
 {"path": "C:\\foo\\report.pdf", "total_pages": 3, "start_page": 1, "end_page": 3, "dpi": 150,
  "images": [
@@ -79,101 +77,101 @@ python render_pdf_pages.py "C:\Users\me\report.pdf"
    {"page": 3, "image_path": "C:\\...\\pdf_rendered\\1a2b3c4d_p3.png"}
  ]}
 ```
-`images`には`total_pages`件全てが含まれる。
+`images` contains all `total_pages` entries.
 
-**重要（2段階手順）**: このスクリプト自体はPNGファイルを保存してパスをJSONで
-返すだけで、LLMへ画像を見せるところまでは行いません。`images` の各要素の
-`image_path`（絶対パス）を、続けて `analyze_image` ツール（このスキル専用ではなく
-共通ツール）の `relative_path` 引数にそのまま渡して呼び出してください（`analyze_image`
-は絶対パスもそのまま読める）。1回の `analyze_image` 呼び出しで1ページ分が見えるので、
-複数ページある場合はページ数分 `analyze_image` を呼びます。
+**Important (2-step procedure)**: this script only saves PNG files and returns their paths in JSON;
+it does not go as far as showing the images to the LLM. Next, pass the `image_path` (absolute path) of each element of `images`
+as is to the `relative_path` argument of the `analyze_image` tool (a shared tool,
+not specific to this skill) and call it (`analyze_image`
+can read absolute paths as is). One `analyze_image` call shows one page,
+so if there are several pages, call `analyze_image` once per page.
 
-エッジケース:
-- ファイル不在・ディレクトリ指定・壊れたPDF/暗号化PDFはエラー終了します。
-- 生成されるPNGは一時フォルダ（`pdf_rendered/`配下）に保存されます。同一PDF・
-  同一ページの再実行時は上書きされます。
-- 一部のページのみ内部的に破損している場合、そのページの要素は
-  `image_path` の代わりに `error`（失敗理由）を持ち、他のページは通常通り
-  画像化されます（1ページの破損で全体が失敗することはありません）。
+Edge cases:
+- A missing file, a directory, or a broken/encrypted PDF ends with an error.
+- Generated PNGs are saved in a temporary folder (under `pdf_rendered/`). Rerunning on the same PDF
+  and page overwrites them.
+- If only some pages are internally broken, the elements of those pages have
+  `error` (the reason for failure) instead of `image_path`, and the other pages are rendered
+  as usual (one broken page does not make the whole thing fail).
 
-## 3. create_pdf.py — セマンティックHTMLからPDF生成
+## 3. create_pdf.py — generate PDF from semantic HTML
 
-呼び出し側（LLM）が見出し・段落・表・箇条書きなどのHTMLを直接書き、色や余白は
-このスクリプトが同梱テーマとして自動で整える方式です。デザイン込みのレイアウト
-（表・強調ボックス・ヘッダーフッター・ページ番号）が1回のスクリプト実行で作れます。
+The caller (the LLM) writes HTML such as headings, paragraphs, tables and bullets directly, and this script
+arranges colors and spacing automatically with a bundled theme. A designed layout
+(tables, emphasis boxes, header/footer, page numbers) can be made with one script run.
 
-呼び出し例:
+Call example:
 ```bash
-python create_pdf.py "C:\Users\me\out.pdf" --title 報告書 --header-text 社外秘 --footer-text 株式会社サンプル --page-number --html '<h1>四半期報告</h1><p>本文です。<b>重要な部分</b>は太字にできます。</p><div class="callout">補足事項はこのように強調できます。</div><table><tr><th>月</th><th>売上</th></tr><tr><td>4月</td><td>120</td></tr></table>'
+python create_pdf.py "C:\Users\me\out.pdf" --title Report --header-text Confidential --footer-text "Sample Inc." --page-number --html '<h1>Quarterly report</h1><p>This is the body. <b>Important parts</b> can be bold.</p><div class="callout">Supplementary notes can be emphasized like this.</div><table><tr><th>Month</th><th>Sales</th></tr><tr><td>April</td><td>120</td></tr></table>'
 ```
-`--html` の値は下記「使えるHTMLタグ」に従うHTML断片（`<body>`の中身のみ、
-`<html>`/`<body>`は不要）です。長くなる場合は `--html` の代わりに
-`<出力先PDFの絶対パス> --html-file <本文HTMLを書いたUTF-8ファイルの絶対パス>`
-を使う（`--html`/`--html-file` はどちらか一方を必ず指定。両方指定・両方省略はエラー）。
-`--html-file` はUTF-8として読み込みますが、UTF-8としてデコードできない場合は
-cp932（Shift-JIS系）として読み込みを試みます（判別不能な文字化けを防ぐため、
-本文HTMLファイルは基本的にUTF-8で保存してください）。
-`--title` を指定するとPDFのメタデータ（タイトル）に設定されます（省略可）。
+The value of `--html` is an HTML fragment following "Available HTML tags" below (only the content of `<body>`;
+`<html>`/`<body>` are not needed). When it gets long, use
+`<absolute path of the output PDF> --html-file <absolute path of a UTF-8 file with the body HTML>`
+instead of `--html` (always specify exactly one of `--html`/`--html-file`; specifying both or neither is an error).
+`--html-file` is read as UTF-8, and if it cannot be decoded as UTF-8, reading it as
+cp932 (the Shift-JIS family) is tried (to avoid undetectable garbled text,
+basically save the body HTML file in UTF-8).
+`--title` sets the PDF metadata (title) (optional).
 
-### 使えるHTMLタグとCSSクラス
+### Available HTML tags and CSS classes
 
-| タグ/クラス | 用途 |
+| Tag/class | Use |
 |---|---|
-| `<h1>`〜`<h4>` | 見出し（ゴシック太字・アクセント色。`h1`のみ下線付き） |
-| `<p>` | 段落 |
-| `<b>`/`<strong>`, `<i>`/`<em>` | 太字・斜体 |
-| `<table><tr><th>...</th></tr><tr><td>...</td></tr></table>` | 表（見出し行は`th`。自動でアクセント色の見出し帯＋罫線が付く） |
-| `<ul>`/`<ol>`+`<li>` | 箇条書き・番号付きリスト |
-| `<div class="callout">...</div>` | 左に色帯の付いた強調ボックス（補足・注意書き向け） |
-| `<div class="page-break"></div>` | 明示的な改ページ |
-| `<hr>` | 区切り線 |
-| `<img src="C:\\...\\chart.png" width="300">` | 画像挿入（`src`は実在する絶対パス） |
+| `<h1>`-`<h4>` | Headings (bold sans-serif in the accent color; only `h1` is underlined) |
+| `<p>` | Paragraph |
+| `<b>`/`<strong>`, `<i>`/`<em>` | Bold, italic |
+| `<table><tr><th>...</th></tr><tr><td>...</td></tr></table>` | Table (header row with `th`; an accent-colored header band + rules are added automatically) |
+| `<ul>`/`<ol>`+`<li>` | Bullets, numbered lists |
+| `<div class="callout">...</div>` | An emphasis box with a colored band on the left (for supplements and cautions) |
+| `<div class="page-break"></div>` | Explicit page break |
+| `<hr>` | Divider |
+| `<img src="C:\\...\\chart.png" width="300">` | Insert an image (`src` is an absolute path that exists) |
 
-**上記以外のタグ（`<script>`・`<button>`・`onclick`等のJS・タブ切替・
-折れ線グラフ等のインタラクティブUI）は使えない**（本文冒頭の通りJS実行は
-行われない）。PDFは静的な印刷物なので、ブラウザ表示を想定したタブ切替や
-折りたたみUIで「1画面に複数パターンをまとめる」設計にする必要はなく、
-単純に見出し（`<h1>`〜`<h4>`）やページ区切り（`div.page-break`）で
-セクションを縦に並べれば同じ内容を表現できる。generate済みのHTMLに
-このタグ一覧に無いものが含まれている場合、諦めて別ライブラリを提案する前に
-このタグ一覧の範囲だけでHTMLを書き直すこと。
+**Tags other than the above (`<script>`, `<button>`, JS such as `onclick`, tab switching,
+interactive UI such as line charts) cannot be used** (as said above, no JS is
+executed). A PDF is a static printed document, so there is no need to design it to "put several patterns on one screen"
+with tab switching or collapsible UI meant for browsers;
+the same content can be expressed simply by arranging sections vertically with headings (`<h1>`-`<h4>`) and page breaks (`div.page-break`).
+If HTML you already generated contains things not in this tag list,
+rewrite the HTML using only this tag list before giving up and suggesting another library.
 
-見た目の作り込みはこの範囲のセマンティックなタグ構成で行い、`style`属性で
-個別に色・フォント・余白を指定する必要はありません（同梱テーマが一括で当てる）。
+Do the visual refinement with semantic tag structures within this range; there is no need to specify
+colors, fonts or spacing individually with `style` attributes (the bundled theme applies them all at once).
 
-### 見た目のオプション（すべて省略可）
+### Appearance options (all optional)
 
-| オプション | 既定値 | 説明 |
+| Option | Default | Description |
 |---|---|---|
-| `--accent-color` | `1F4E78` | 見出し・表見出し行に使うアクセント色（RRGGBB16進） |
-| `--page-size` | `a4` | `a4` または `letter` |
-| `--orientation` | `portrait` | `portrait` または `landscape` |
-| `--margin-cm` | `2.0` | 全辺共通の余白（cm） |
-| `--header-text` | なし | ページ上部に小さく表示する文字列（例: 社外秘） |
-| `--footer-text` | なし | ページ下部中央に表示する文字列（例: 会社名） |
-| `--page-number` | 無効 | 指定するとフッターに `1 / 3` 形式のページ番号を追加（`--footer-text`と併記可） |
+| `--accent-color` | `1F4E78` | Accent color used for headings and table header rows (RRGGBB hex) |
+| `--page-size` | `a4` | `a4` or `letter` |
+| `--orientation` | `portrait` | `portrait` or `landscape` |
+| `--margin-cm` | `2.0` | Margin common to all sides (cm) |
+| `--header-text` | None | A string shown small at the top of the page (e.g. Confidential) |
+| `--footer-text` | None | A string shown at the bottom center of the page (e.g. company name) |
+| `--page-number` | Disabled | When given, adds page numbers in the form `1 / 3` to the footer (can be combined with `--footer-text`) |
 
-出力例:
+Output example:
 ```json
 {"output_path": "C:\\foo\\report.pdf", "size_bytes": 18234}
 ```
-生成が終わったら `output_path` をユーザーに伝えてください。
+When generation is done, tell the user `output_path`.
 
-エッジケース:
-- `--html` と `--html-file` を両方指定、または両方省略した場合はエラー終了します。
-- `--html-file` に指定したファイルが存在しない場合はエラー終了します。
-- `--accent-color` がRRGGBB形式の16進数でない場合はエラー終了します。
-- 出力先ディレクトリが存在しない場合は自動的に作成されます。
-- 既存ファイルと同名の場合は上書きされます（上書きしてよいか事前にユーザーへ確認するとよい）。
-- 日本語はWindows同梱のTTFフォント（Yu Gothic=ゴシック見出し, Yu Mincho=明朝本文、
-  無ければMeiryo/MS ゴシック/MS 明朝で代替）を実グリフごとPDFへ埋め込んで描画します。
-  ビューアに依存せず同じ字形で表示されます。Windows標準の日本語フォントが1つも
-  見つからない環境（Windows以外、フォント未導入等）ではエラー終了します。
+Edge cases:
+- Specifying both `--html` and `--html-file`, or neither, ends with an error.
+- If the file given to `--html-file` does not exist, it ends with an error.
+- If `--accent-color` is not a hexadecimal RRGGBB value, it ends with an error.
+- If the output directory does not exist, it is created automatically.
+- A file with the same name is overwritten (it is good to confirm with the user beforehand whether overwriting is OK).
+- Japanese is drawn by embedding the actual glyphs of TTF fonts bundled with Windows (Yu Gothic = sans-serif headings, Yu Mincho = serif body;
+  substituted with Meiryo/MS Gothic/MS Mincho if missing) into the PDF.
+  It displays with the same glyphs regardless of the viewer. In environments where no standard Windows Japanese font
+  is found (e.g. English Windows without the Japanese supplemental fonts), text without Japanese characters is drawn
+  with Latin fonts (Arial/Segoe UI, Times New Roman/Georgia) instead, but text containing Japanese characters ends with an error.
 
-## エッジケース共通
+## Common edge cases
 
-- 依存パッケージ `pypdf`（テキスト抽出）・`pypdfium2`（画像化）・`reportlab`（生成）が
-  実行環境に無いと `ModuleNotFoundError` で終了コード非0になります。その場合は導入者へ
-  `pip install pypdf pypdfium2 reportlab` の実施を促してください。
-- いずれのスクリプトも例外を投げず、エラーはstderr+終了コード非0で返します。
-  標準エラー出力を確認してください。
+- If the dependencies `pypdf` (text extraction), `pypdfium2` (rendering) and `reportlab` (generation) are not
+  in the environment, it ends with `ModuleNotFoundError` and a non-zero exit code. In that case, prompt the installer to
+  run `pip install pypdf pypdfium2 reportlab`.
+- None of the scripts throw exceptions; errors are returned via stderr + a non-zero exit code.
+  Check the standard error output.

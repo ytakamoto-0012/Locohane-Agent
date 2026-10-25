@@ -54,14 +54,14 @@ class DocEditContext:
         idx = int(index)
         total = len(self._original_paragraph_elements)
         if not (0 <= idx < total):
-            raise ValueError(f"存在しないindexです: {index}（このopsバッチ開始時点の総段落数: {total}）")
+            raise ValueError(f"index does not exist: {index} (total paragraphs at the start of this ops batch: {total})")
         element = self._original_paragraph_elements[idx]
         live_elements = [p._p for p in self.doc.paragraphs]
         try:
             live_idx = live_elements.index(element)
         except ValueError:
             raise ValueError(
-                f"段落{index}は、この呼び出し内の先行する操作（delete_paragraph等）で既に削除されています"
+                f"Paragraph {index} was already deleted by an earlier operation in this call (delete_paragraph, etc.)"
             )
         return self.doc.paragraphs[live_idx]
 
@@ -79,12 +79,12 @@ def op_find_replace(ctx: DocEditContext, op: dict) -> dict:
     doc = ctx.doc
     old_text = op["old_text"]
     if not old_text:
-        raise ValueError("old_text は空文字列にできません")
+        raise ValueError("old_text cannot be an empty string")
     new_text = op.get("new_text", "")
     track = bool(op.get("track_changes", False))
     occurrence = op.get("occurrence", "all")
     if occurrence not in ("all", "first"):
-        raise ValueError(f"occurrence は 'all' または 'first' である必要があります: {occurrence!r}")
+        raise ValueError(f"occurrence must be 'all' or 'first': {occurrence!r}")
     author = op.get("author") or DEFAULT_AUTHOR
     date = op.get("date") or now_iso()
 
@@ -110,9 +110,9 @@ def op_find_replace(ctx: DocEditContext, op: dict) -> dict:
 
     if replaced == 0:
         raise ValueError(
-            f"old_text が見つかりませんでした: {old_text!r}"
-            "（1つのrun内に収まっている必要があります。書式が混在する文字列や複数runにまたがる文字列、"
-            "既存のTrack Changes内の文字列は検出できません）"
+            f"old_text not found: {old_text!r}"
+            " (it must fit within a single run; strings with mixed formatting, strings spanning several runs,"
+            " and strings inside existing Track Changes cannot be detected)"
         )
     return {"op": "find_replace", "replaced_count": replaced}
 
@@ -120,10 +120,10 @@ def op_find_replace(ctx: DocEditContext, op: dict) -> dict:
 def op_append_block(ctx: DocEditContext, op: dict) -> dict:
     block = op["block"]
     if not isinstance(block, dict):
-        raise ValueError("block はオブジェクトである必要があります")
+        raise ValueError("block must be an object")
     handler = BLOCK_HANDLERS.get(block.get("type"))
     if handler is None:
-        raise ValueError(f"未対応のblock typeです: {block.get('type')!r}（対応: {sorted(BLOCK_HANDLERS)}）")
+        raise ValueError(f"Unsupported block type: {block.get('type')!r} (supported: {sorted(BLOCK_HANDLERS)})")
     theme = resolve_theme(op.get("theme"))
     handler(ctx.doc, block, theme)
     return {"op": "append_block", "block_type": block.get("type")}
@@ -163,11 +163,11 @@ def op_set_paragraph_style(ctx: DocEditContext, op: dict) -> dict:
             style.setdefault("fill_color", theme["secondary"])
             style.setdefault("border_color", theme["primary"])
         else:
-            raise ValueError(f"未対応の role です: {role!r}（対応: heading, callout）")
+            raise ValueError(f"Unsupported role: {role!r} (supported: heading, callout)")
 
     align = style.get("align")
     if align is not None and align not in _ALIGN_MAP:
-        raise ValueError(f"未対応の align です: {align!r}（対応: {', '.join(_ALIGN_MAP)}）")
+        raise ValueError(f"Unsupported align: {align!r} (supported: {', '.join(_ALIGN_MAP)})")
 
     has_any = any(
         style.get(k) is not None
@@ -176,9 +176,9 @@ def op_set_paragraph_style(ctx: DocEditContext, op: dict) -> dict:
     )
     if not has_any:
         raise ValueError(
-            "color/bold/italic/underline/font/size_pt/fill_color/border_color/"
-            "align/indent_left_cm/line_spacing のいずれか、"
-            "または role（heading/callout）+ theme の指定が必要です"
+            "one of color/bold/italic/underline/font/size_pt/fill_color/border_color/"
+            "align/indent_left_cm/line_spacing, "
+            "or role (heading/callout) + theme, is required"
         )
 
     if style.get("fill_color"):
@@ -212,14 +212,14 @@ def op_set_table_style(ctx: DocEditContext, op: dict) -> dict:
     tables = ctx.doc.tables
     idx = int(table_index)
     if not (0 <= idx < len(tables)):
-        raise ValueError(f"存在しないtable_indexです: {table_index}（総表数: {len(tables)}）")
+        raise ValueError(f"table_index does not exist: {table_index} (total tables: {len(tables)})")
     table = tables[idx]
 
     theme = resolve_theme(op["theme"]) if op.get("theme") else None
     fill_color = op.get("header_fill") or (theme["primary"] if theme else None)
     font_color = op.get("header_font_color") or (theme["text_on_primary"] if theme else None)
     if not fill_color:
-        raise ValueError("set_table_style には theme または header_fill のいずれかが必要です")
+        raise ValueError("set_table_style needs either theme or header_fill")
     fill_color = str(fill_color).lstrip("#").upper()
     font_color = str(font_color).lstrip("#").upper() if font_color else None
 
@@ -229,7 +229,7 @@ def op_set_table_style(ctx: DocEditContext, op: dict) -> dict:
     elif op.get("row") is not None:
         row = int(op["row"])
         if not (0 <= row < len(table.rows)):
-            raise ValueError(f"存在しない行です: {row}（この表は{len(table.rows)}行）")
+            raise ValueError(f"Row does not exist: {row} (this table has {len(table.rows)} rows)")
         target_rows = [row]
         force_bold = False
     else:
@@ -259,14 +259,14 @@ def op_insert_image(ctx: DocEditContext, op: dict) -> dict:
 
     image_path = op.get("image_path")
     if not image_path:
-        raise ValueError("'image_path' が必要です")
+        raise ValueError("'image_path' is required")
     image_file = Path(str(image_path))
     if not image_file.is_file():
-        raise ValueError(f"画像ファイルが見つかりません: {image_path}")
+        raise ValueError(f"Image file not found: {image_path}")
 
     before_index, after_index = op.get("before_index"), op.get("after_index")
     if (before_index is None) == (after_index is None):
-        raise ValueError("before_index または after_index のどちらか一方のみを指定してください")
+        raise ValueError("Specify only one of before_index or after_index")
 
     if before_index is not None:
         anchor_para = ctx.get_paragraph(before_index)
@@ -298,16 +298,16 @@ def op_set_image_size(ctx: DocEditContext, op: dict) -> dict:
 
     image_index = op.get("image_index")
     if image_index is None:
-        raise ValueError("'image_index' が必要です")
+        raise ValueError("'image_index' is required")
     idx = int(image_index)
     inline_shapes = ctx.doc.inline_shapes
     if not (0 <= idx < len(inline_shapes)):
-        raise ValueError(f"存在しないimage_indexです: {image_index}（総画像数: {len(inline_shapes)}）")
+        raise ValueError(f"image_index does not exist: {image_index} (total images: {len(inline_shapes)})")
     shape = inline_shapes[idx]
 
     width_cm, height_cm = op.get("width_cm"), op.get("height_cm")
     if width_cm is None and height_cm is None:
-        raise ValueError("width_cm/height_cm のいずれか1つ以上の指定が必要です")
+        raise ValueError("At least one of width_cm/height_cm is required")
 
     current_width, current_height = shape.width, shape.height
     if width_cm is not None and height_cm is not None:
@@ -327,9 +327,9 @@ def op_delete_paragraph(ctx: DocEditContext, op: dict) -> dict:
     index = op["index"]
     if op.get("track_changes"):
         raise ValueError(
-            "delete_paragraph はtrack_changesに対応していません（段落マーク削除はOOXML上複雑なため非対応です）。"
-            "変更履歴として残したい場合は、段落内の全文をfind_replaceでtrack_changes:trueにより"
-            "空文字へ置換してください（段落自体は残り、中身の削除のみが変更履歴になります）"
+            "delete_paragraph does not support track_changes (deleting paragraph marks is complex in OOXML, so it is not supported). "
+            "To keep it as a tracked change, replace the whole text of the paragraph with an empty string using find_replace with track_changes:true"
+            " (the paragraph itself remains, and only the deletion of its contents becomes a tracked change)"
         )
     para = ctx.get_paragraph(index)
     p_element = para._p
@@ -364,5 +364,5 @@ def apply_op(ctx: DocEditContext, op: dict) -> dict | None:
     op_name = op.get("op")
     handler = OP_HANDLERS.get(op_name)
     if handler is None:
-        raise ValueError(f"未対応のopです: {op_name!r}（対応op: {sorted(OP_HANDLERS)}）")
+        raise ValueError(f"Unsupported op: {op_name!r} (supported ops: {sorted(OP_HANDLERS)})")
     return handler(ctx, op)

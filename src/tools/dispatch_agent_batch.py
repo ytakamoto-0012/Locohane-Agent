@@ -15,6 +15,7 @@ import time
 import uuid
 
 from .. import skill_drafts
+from ..i18n import current_lang, t
 from . import _dispatch_agent_job
 from . import _state
 from ._dispatch_agent_job import _SUBAGENT_MESSAGE_AUTHOR, _DispatchAgentJob, _finalize_dispatch_agent_job_result
@@ -52,7 +53,7 @@ _BATCH_PROGRESS_TASKS: set[asyncio.Task] = set()
 
 # LLMに届かないグループが続いたため、起動しなかったグループに付ける理由。
 _UNREACHABLE_SKIP_REASON = (
-    "LLMサーバーに接続できない（タイムアウト・通信エラーが再試行後も続いた）グループが出たため、起動しませんでした。"
+    "Not started because a group could not connect to the LLM server (timeouts/communication errors persisted after retries)."
 )
 
 
@@ -61,7 +62,7 @@ def interrupted_note_topic(tool_call_id: str) -> str:
 
     app.py は孤立した tool_call の id からこの topic を求め、次のターンへの案内に載せる。
     """
-    return f"dispatch_agent_batch中断時の結果（{sanitize_run_id(tool_call_id)}）"
+    return f"dispatch_agent_batch results at interruption ({sanitize_run_id(tool_call_id)})"
 
 
 @dataclass
@@ -165,8 +166,8 @@ def _workdir_folders_hint() -> str:
         return ""
     shown = ", ".join(names[:20]) + ("…" if len(names) > 20 else "")
     return (
-        f"\n作業ディレクトリ（{workdir}）直下のフォルダ: {shown or '（なし）'}。"
-        "path には作業ディレクトリからの相対パス（例: 上記のフォルダ名、作業ディレクトリ自体なら \".\"）を渡すこと。"
+        f"\nFolders directly under the working directory ({workdir}): {shown or '(none)'}. "
+        "Pass a path relative to the working directory in path (e.g. one of the folder names above, or \".\" for the working directory itself)."
     )
 
 
@@ -184,10 +185,10 @@ def _group_task(task: str, group: list[Path], index: int, group_count: int, star
     end = start + len(group) - 1
     return (
         f"{task}\n\n"
-        f"[担当ファイル（グループ{index}/{group_count}、{len(group)}件。全{total}件中 {start}〜{end}件目）]\n"
+        f"[Assigned files (group {index}/{group_count}, {len(group)} files; items {start} to {end} of {total})]\n"
         f"{_file_listing(group)}\n"
-        "上記の担当ファイルだけを処理する（他のファイルは別のサブエージェントが並行して処理している）。"
-        "最終回答は処理件数・書き出し件数・失敗した対象とその理由だけを簡潔に返す（ファイル名の全件一覧は返さない）。"
+        "Process only the assigned files above (other files are processed in parallel by other sub-agents). "
+        "In your final answer, return only the number processed, the number written, and the failed targets with reasons, concisely (do not list every file name)."
     )
 
 
@@ -203,14 +204,14 @@ def _is_active(job: _DispatchAgentJob) -> bool:
 def _group_status(job: _DispatchAgentJob, result: str) -> str:
     if job.run_started_at is None:
         # 順番待ちのまま停止された、または _UnreachableGuard により起動しなかった。
-        return "未実行"
-    if job.status == "error" or result.startswith("エラー:"):
-        return "エラー"
+        return "not started"
+    if job.status == "error" or result.startswith("Error:"):
+        return "error"
     if job.status == "killed":
-        return "強制終了"
+        return "killed"
     if is_truncated_result(job.result or ""):
-        return "打ち切り"
-    return "完了"
+        return "truncated"
+    return "done"
 
 
 def _format_batch_progress(jobs: list[tuple[str, _DispatchAgentJob]], started_at: float) -> str:
@@ -219,13 +220,30 @@ def _format_batch_progress(jobs: list[tuple[str, _DispatchAgentJob]], started_at
     running = [(index, job_id, job) for index, job_id, job in active if job.run_started_at is not None]
     waiting = len(active) - len(running)
     elapsed = int(time.monotonic() - started_at)
+    # 画面への進捗push 専用なので、セッションの表示言語で組み立てる。
+    lang = current_lang()
     lines = [
-        f"一括実行中です（経過 {elapsed} 秒・全{len(jobs)}グループ: 完了 {len(jobs) - len(active)}・"
-        f"実行中 {len(running)}・順番待ち {waiting}）。"
+        t(
+            "progress.batch",
+            lang,
+            elapsed=elapsed,
+            total=len(jobs),
+            done=len(jobs) - len(active),
+            running=len(running),
+            waiting=waiting,
+        )
     ]
     for index, job_id, job in running:
         lines.append(
-            f"- グループ{index}: 反復 {job.current_iteration}/{job.max_iterations} 回（job_id={job_id}）{_format_activity(job)}"
+            t(
+                "progress.batch_group",
+                lang,
+                index=index,
+                iteration=job.current_iteration,
+                max_iterations=job.max_iterations,
+                job_id=job_id,
+            )
+            + _format_activity(job, lang)
         )
     return "\n".join(lines)
 
@@ -258,7 +276,7 @@ async def _push_batch_progress(jobs: list[tuple[str, _DispatchAgentJob]], starte
     except asyncio.CancelledError:
         raise
     except Exception:  # noqa: BLE001 - 進捗表示の失敗でfire-and-forgetタスクの例外警告を残さない
-        logger.debug("dispatch_agent_batch: 進捗pushに失敗しました", exc_info=True)
+        logger.debug("dispatch_agent_batch: failed to push progress", exc_info=True)
 
 
 async def _run_group_runnable(
@@ -278,7 +296,7 @@ async def _run_group_runnable(
         if is_llm_unreachable_result(job.result):
             guard.count += 1
         if job.status == "error":
-            return f"エラー: {job.error_message or ''}"[:_GROUP_RESULT_PREVIEW_CHARS]
+            return f"Error: {job.error_message or ''}"[:_GROUP_RESULT_PREVIEW_CHARS]
         return (job.result or "")[:_GROUP_RESULT_PREVIEW_CHARS]
 
     await RunnableLambda(_run).ainvoke(
@@ -304,12 +322,12 @@ def _collect_group_results(
     for index, ((job_id, job), group) in enumerate(zip(jobs, groups), start=1):
         start = (index - 1) * size + 1
         first, last = (_relative_display(p, base) for p in (group[0], group[-1]))
-        label = f"グループ{index}（{start}〜{start + len(group) - 1}件目、{len(group)}件、{first}〜{last}）"
+        label = f"Group {index} (items {start} to {start + len(group) - 1}, {len(group)} files, {first} to {last})"
         if _is_active(job):
             # 安全上限超過でまだ終わっていないグループ。結果は check_dispatch_agent_job で取得する。
             pending.append(job_id)
-            counts["実行中"] = counts.get("実行中", 0) + 1
-            summary_lines.append(f"### {label}: 実行中（job_id={job_id}）\n担当ファイル:\n{_file_listing(group)}")
+            counts["running"] = counts.get("running", 0) + 1
+            summary_lines.append(f"### {label}: running (job_id={job_id})\nAssigned files:\n{_file_listing(group)}")
             continue
         if job.status == "running":
             # status を書き換えられないままキャンセルで終わったジョブ。
@@ -317,19 +335,19 @@ def _collect_group_results(
         if job.run_started_at is None:
             # 起動していないので「強制終了されました」等の文言は付けない。
             _dispatch_agent_job._DISPATCH_AGENT_JOBS.pop(job_id, None)
-            result = job.error_message or "停止されたため、起動前に中断しました。"
+            result = job.error_message or "Interrupted before starting because it was stopped."
         else:
             result = _finalize_dispatch_agent_job_result(job, job_id)
         status = _group_status(job, result)
         counts[status] = counts.get(status, 0) + 1
         header = f"### {label}: {status}"
-        preview = result if len(result) <= _GROUP_RESULT_PREVIEW_CHARS else result[:_GROUP_RESULT_PREVIEW_CHARS] + "…（以下略）"
-        if status == "完了":
+        preview = result if len(result) <= _GROUP_RESULT_PREVIEW_CHARS else result[:_GROUP_RESULT_PREVIEW_CHARS] + "... (rest omitted)"
+        if status == "done":
             summary_lines.append(f"{header}\n{preview}")
         else:
             # 再委任時にLLMがファイル名を推測で補わないよう、担当ファイルをそのまま返す。
-            summary_lines.append(f"{header}\n{preview}\n担当ファイル:\n{_file_listing(group)}")
-        full_lines.append(f"{header}\n担当ファイル:\n{_file_listing(group)}\n\n{result}")
+            summary_lines.append(f"{header}\n{preview}\nAssigned files:\n{_file_listing(group)}")
+        full_lines.append(f"{header}\nAssigned files:\n{_file_listing(group)}\n\n{result}")
     return summary_lines, full_lines, pending, counts
 
 
@@ -346,15 +364,15 @@ def _save_interrupted_note(
     """
     try:
         _, full_lines, _, counts = _collect_group_results(jobs, groups, size, base)
-        count_text = "、".join(f"{k} {v}" for k, v in counts.items())
+        count_text = ", ".join(f"{k} {v}" for k, v in counts.items())
         head = (
-            f"{base} の一括委譲（{len(groups)} グループ）を中断した時点の状態です（{count_text}）。"
-            "「完了」のグループは処理済みなのでやり直さないこと。それ以外のグループは、"
-            "担当ファイルの一覧をそのまま task に入れて dispatch_agent で再委任すること。"
+            f"State at the interruption of the batch delegation of {base} ({len(groups)} groups) ({count_text}). "
+            "Groups marked \"done\" are finished; do not redo them. For the other groups, "
+            "put their list of assigned files as is into task and re-delegate with dispatch_agent."
         )
         write_thread_note.invoke({"topic": interrupted_note_topic(tool_call_id), "content": "\n\n".join([head, *full_lines])})
     except Exception:  # noqa: BLE001 - 中断処理そのものは止めない
-        logger.exception("dispatch_agent_batch: 中断時の結果を thread note へ保存できませんでした")
+        logger.exception("dispatch_agent_batch: could not save the results at interruption to the thread note")
 
 
 @tool
@@ -368,74 +386,75 @@ async def dispatch_agent_batch(
     orchestrator_skill: str | None = None,
     model: str | None = None,
 ) -> str:
-    """フォルダ内の多数のファイルへ同じ処理を行う作業を、自動でグループに分けて複数のサブエージェントへ並列に委譲する。
+    """Split work that applies the same processing to many files in a folder into groups automatically and delegate them in parallel to several sub-agents.
 
-    「imagesフォルダの全画像を解析してmdへ書き出す」のように、同じ指示を
-    多数のファイルへ適用する場合に、dispatch_agent を自分で何度も呼ぶ代わりに
-    これを1回だけ呼ぶ。ファイル一覧の取得・group_size 件ずつのグループ分け・
-    各サブエージェントへの担当ファイルの割り当て・並列実行・結果の集計は
-    このツールが行う。自分でファイル名を列挙したり、グループごとに
-    dispatch_agent を呼び分けたりしなくてよい。
+    When applying the same instruction to many files, such as "analyze every image in the images
+    folder and write it out to md", call this once instead of calling dispatch_agent yourself many
+    times. This tool gets the file list, splits it into groups of group_size, assigns the files to
+    each sub-agent, runs them in parallel and collects the results. You do not need to list file
+    names yourself or call dispatch_agent separately for each group.
 
-    サブエージェントへ渡る task 文には、共通の指示の後ろに
-    「担当ファイル（絶対パスの一覧）」が自動で付け足される。task には全グループ
-    共通の指示（出力先・出力形式・ファイル名規則・スキップ条件等）だけを書くこと。
+    The task text passed to each sub-agent automatically gets "assigned files (a list of absolute
+    paths)" appended after the common instruction. Write in task only the instruction common to
+    all groups (output destination, output format, file naming rules, skip conditions, etc.).
 
-    agent_type は dispatch_agent と同じ基準で選ぶ。例: 多数のファイルを読んで
-    内容を抽出・要約するだけなら explore、読んで書き出すなら worker、生成済みの
-    多数のファイルを検証するなら verifier。
+    Choose agent_type by the same criteria as dispatch_agent. For example: explore if it only reads
+    many files to extract or summarize their contents, worker if it reads and writes, verifier to
+    verify many generated files.
 
-    書き込みを伴う agent_type（worker 等）で使う場合は、dispatch_agent と同じく
-    先に create_plan → approve_plan で承認を得ておくこと（計画のステップは
-    「このツールで一括処理する」の1ステップでよい）。
+    When using it with an agent_type that writes (worker, etc.), get approval first with
+    create_plan -> approve_plan, as with dispatch_agent (one plan step such as "process them in
+    bulk with this tool" is enough).
 
     Args:
-        task: 全グループ共通の指示。対象パスは `@N` を埋め込んでよい。
-        agent_type: 使用するサブエージェントの種別名（dispatch_agent と同じ）。
-        pattern: 対象ファイルのglobパターン（例: "*.{jpg,jpeg,png,heic}"）。
-            path からの相対パターンで書く（絶対パスは書かない。フォルダは path に渡す）。
-            "/" を含まなければ path の直下だけが対象。サブフォルダ内も対象にするなら
-            "*/ocr_md/*.md"（1階層下の ocr_md フォルダ内）や "**/*.jpg"（全階層）の
-            ように書く。拡張子の大文字・小文字はどちらか一方を書けば両方一致する。
-        path: 対象フォルダの絶対パス（`@N` 可）。省略時は作業ディレクトリ。
-        group_size: 1つのサブエージェントへ渡すファイル数（既定15。画像解析を
-            伴うなら15以下）。1〜[subagent].max_iterations の範囲に丸める。
-            グループ数が設定の上限を超える場合は起動前にエラーになる（上限はエラー文に示す）。
-        orchestrator_skill: dispatch_agent と同じ（通常は省略）。
-        model: dispatch_agent と同じ（通常は省略）。
+        task: The instruction common to all groups. You may embed `@N` for target paths.
+        agent_type: The name of the sub-agent type to use (same as dispatch_agent).
+        pattern: A glob pattern for the target files (e.g. "*.{jpg,jpeg,png,heic}").
+            Write it relative to path (do not write absolute paths; pass the folder in path).
+            Without "/", only files directly under path are targeted. To include subfolders,
+            write e.g. "*/ocr_md/*.md" (in the ocr_md folder one level down) or "**/*.jpg"
+            (all levels). Writing either the upper- or lower-case extension matches both.
+        path: The absolute path of the target folder (`@N` allowed). Defaults to the working
+            directory.
+        group_size: The number of files per sub-agent (default 15; 15 or fewer when image
+            analysis is involved). Clamped to 1..[subagent].max_iterations.
+            If the number of groups exceeds the configured limit, it fails before starting (the
+            limit is shown in the error).
+        orchestrator_skill: Same as dispatch_agent (normally omitted).
+        model: Same as dispatch_agent (normally omitted).
 
     Returns:
-        グループごとの処理結果（状態と最終回答の先頭部分）をまとめたテキスト。
-        「エラー」「打ち切り」「強制終了」「未実行」のグループには担当ファイルの一覧も載る
-        （再委任時はその一覧を dispatch_agent の task へそのまま入れる）。
-        各グループの最終回答の全文は thread note に保存し、その topic 名を
-        末尾に示す。安全上限（[subagent].background_inline_wait_max_seconds）に
-        達した場合は、完了済みグループの結果に加えて、まだ実行中のグループの
-        job_id を返す（check_dispatch_agent_job で後から結果を取得する）。
-        対象ファイルが0件・agent_type が不明等の場合は起動前に
-        「エラー: ...」を返す（この場合 job は作られない）。
+        A text summarizing the result of each group (its status and the beginning of its final
+        answer). Groups marked "error", "truncated", "killed" or "not started" also list their
+        assigned files (when re-delegating, put that list as is into the task of
+        dispatch_agent). The full final answer of each group is saved to a thread note, and the
+        topic name is shown at the end. If the safety limit
+        ([subagent].background_inline_wait_max_seconds) is reached, it returns the results of the
+        finished groups plus the job_ids of the groups still running (get their results later
+        with check_dispatch_agent_job). If there are no target files, agent_type is unknown, etc.,
+        it returns "Error: ..." before starting (no job is created in that case).
     """
     if _state._LLM_CONFIG is None:
-        return "エラー: init_tools() が未実行です"
+        return "Error: init_tools() has not been run"
     resolved = _state._AGENT_TYPES.get(agent_type)
     if resolved is None:
-        available = ", ".join(sorted(_state._AGENT_TYPES)) or "（登録なし）"
-        return f"エラー: 不明な agent_type '{agent_type}' です。利用可能: {available}"
+        available = ", ".join(sorted(_state._AGENT_TYPES)) or "(none registered)"
+        return f"Error: unknown agent_type '{agent_type}'. Available: {available}"
     base, error = _resolve_file_tools_path(path)
     if error:
-        return f"エラー: {error}"
+        return f"Error: {error}"
     if not base.is_dir():
-        hint = "（`@N` は例の記法です。実際の番号の `@12` 等か、作業ディレクトリからの相対パス `images` 等を渡すこと）" if "@N" in path else ""
-        return f"エラー: 対象フォルダが見つかりません: {base}{hint}{_workdir_folders_hint()}"
+        hint = "(`@N` is example notation. Pass an actual number such as `@12`, or a path relative to the working directory such as `images`)" if "@N" in path else ""
+        return f"Error: target folder not found: {base}{hint}{_workdir_folders_hint()}"
     try:
         # "**" の再帰探索は大きなフォルダで時間がかかるため、イベントループ（他セッション・
         # 進捗表示を含むサーバー全体）を止めないよう別スレッドで行う。
         files = await asyncio.to_thread(_list_target_files, base, pattern)
     except GLOB_PATTERN_ERRORS as e:
-        return f"エラー: {glob_pattern_error_message(e)}"
+        return f"Error: {glob_pattern_error_message(e)}"
     if not files:
-        hint = "" if _is_subfolder_pattern(pattern) else "（サブフォルダ内のファイルなら \"*/フォルダ名/*.md\" や \"**/*.jpg\" のように階層を含めて書くこと）"
-        return f"エラー: {base} 配下に pattern '{pattern}' に一致するファイルがありません。{hint}"
+        hint = "" if _is_subfolder_pattern(pattern) else "(For files in subfolders, include the levels, e.g. \"*/folder-name/*.md\" or \"**/*.jpg\")"
+        return f"Error: no files under {base} match pattern '{pattern}'. {hint}"
 
     size = max(1, min(group_size, _state._SUBAGENT_MAX_ITERATIONS))
     groups = [files[i : i + size] for i in range(0, len(files), size)]
@@ -445,9 +464,9 @@ async def dispatch_agent_batch(
     max_groups = _state._DISPATCH_AGENT_BATCH_MAX_GROUPS
     if max_groups > 0 and len(groups) > max_groups:
         return (
-            f"エラー: {base} 配下で pattern '{pattern}' に一致する {len(files)} 件は "
-            f"{len(groups)} グループ（{size}件ずつ）になり、1回の上限（{max_groups}グループ）を超えます。"
-            "pattern を絞り込むか、対象をサブフォルダ等に分けて複数回に分けて呼ぶこと（ジョブは起動していません）。"
+            f"Error: the {len(files)} files under {base} matching pattern '{pattern}' would make "
+            f"{len(groups)} groups ({size} each), exceeding the per-call limit ({max_groups} groups). "
+            "Narrow the pattern, or split the targets into subfolders and call it several times (no jobs were started)."
         )
 
     common = _resolve_path_memory_tokens_in_text(task)
@@ -502,7 +521,7 @@ async def dispatch_agent_batch(
         # 同時実行数は _run_dispatch_agent_job 内のセッション単位セマフォ
         # （[subagent].max_parallel）がそのまま制御する。
         group = groups[index - 1]
-        label = f"SUB: {agent_type}（グループ{index}/{len(groups)}・{len(group)}件）"
+        label = f"SUB: {agent_type} (group {index}/{len(groups)}, {len(group)} files)"
         job.runner_task = asyncio.create_task(_run_group_runnable(job, job_id, text, resolved, label, guard))
         _dispatch_agent_job._DISPATCH_AGENT_JOBS[job_id] = job
         jobs.append((job_id, job))
@@ -541,36 +560,36 @@ async def dispatch_agent_batch(
 
     note_line = ""
     if full_lines:
-        topic = f"dispatch_agent_batch結果（{agent_type}、{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}）"
+        topic = f"dispatch_agent_batch results ({agent_type}, {datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
         try:
             note_result = write_thread_note.invoke({"topic": topic, "content": "\n\n".join(full_lines)})
         except Exception as e:  # noqa: BLE001 - 保存失敗で集計結果そのものを失わない
-            logger.exception("dispatch_agent_batch: thread note への保存に失敗しました")
-            note_result = f"エラー: thread note への保存に失敗しました: {e}"
-        note_line = f'終了した各グループの最終回答の全文は thread note "{topic}" に保存しました。' if not note_result.startswith("エラー:") else note_result
+            logger.exception("dispatch_agent_batch: failed to save to the thread note")
+            note_result = f"Error: failed to save to the thread note: {e}"
+        note_line = f'The full final answers of the finished groups were saved to thread note "{topic}".' if not note_result.startswith("Error:") else note_result
 
-    count_text = "、".join(f"{k} {v}" for k, v in counts.items())
+    count_text = ", ".join(f"{k} {v}" for k, v in counts.items())
     head = (
-        f"{base} の {len(files)} 件を {len(groups)} グループ（{size}件ずつ）に分けて "
-        f"{agent_type} へ並列に委譲しました（{count_text}）。"
+        f"Split the {len(files)} files of {base} into {len(groups)} groups ({size} each) and "
+        f"delegated them in parallel to {agent_type} ({count_text})."
     )
     tail: list[str] = []
-    if set(counts) - {"完了", "実行中"}:
+    if set(counts) - {"done", "running"}:
         tail.append(
-            "「エラー」「打ち切り」「強制終了」「未実行」のグループは、表示した担当ファイルの一覧を"
-            "そのまま task に入れて dispatch_agent で再委任すること。"
+            "For groups marked \"error\", \"truncated\", \"killed\" or \"not started\", put the shown list of assigned files "
+            "as is into task and re-delegate with dispatch_agent."
         )
-    if "未実行" in counts and guard.skip_reason():
+    if "not started" in counts and guard.skip_reason():
         tail.append(
-            "LLMサーバーに接続できないグループが出たため、残りのグループは起動していません。"
-            "再委任の前に、LLMサーバーの状態をユーザーに確認すること。"
+            "Because a group could not connect to the LLM server, the remaining groups were not started. "
+            "Before re-delegating, ask the user to check the state of the LLM server."
         )
     if pending:
-        logger.warning("dispatch_agent_batch: 安全上限(%s秒)に達したため job_id を返します: %s", wait_timeout, pending)
-        head += f"安全上限（{wait_timeout}秒）に達したため、まだ実行中の {len(pending)} グループを残していったんこのターンを終えて制御を返します（ジョブ自体は裏側で動き続けます）。"
+        logger.warning("dispatch_agent_batch: reached the safety limit (%s seconds), returning job_id: %s", wait_timeout, pending)
+        head += f"The safety limit ({wait_timeout} s) was reached, so this turn ends and control is returned for now, leaving {len(pending)} groups still running (the jobs themselves keep running in the background)."
         tail.append(
-            f"実行中の job_id: {', '.join(pending)}\n"
-            "完了確認・結果取得には check_dispatch_agent_job（job_id指定）を使うこと。"
-            "処理に時間がかかっていること自体は打ち切る理由にはならない。"
+            f"Running job_ids: {', '.join(pending)}\n"
+            "Use check_dispatch_agent_job (with job_id) to check completion and get the results. "
+            "Taking a long time is not in itself a reason to stop them."
         )
     return "\n\n".join(part for part in [head, *summary_lines, note_line, *tail] if part)

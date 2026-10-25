@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 from pathlib import Path
 
 from ._state import _SUBAGENT_RUN_ID
+from .thread_notes import NOTE_FILE_LOCK
 from ._workdir import _resolve_exec_workdir
 
 _UNSAFE_RUN_ID_CHARS = re.compile(r"[^A-Za-z0-9_-]")
@@ -56,38 +57,38 @@ def _scratch_notes_path() -> Path:
 
 @tool
 def write_scratch_note(content: str) -> str:
-    """調査中に分かった内容を、その場でスクラッチファイルへ追記する。
+    """Append what you found during an investigation to a scratch file on the spot.
 
-    大量のファイルを読み進めながら1つの成果物（要約・抽出データ等）に
-    まとめていくような調査タスクで使う。ある程度読み進めるたびにこの
-    ツールで分かったことを書き残しておくと、万一このサブエージェント自身が
-    トークン上限に達して打ち切られても、ここまでの内容は消えずに残る
-    （打ち切り時、委譲元にはこのファイルのパスが案内され、そこから
-    続きを判断できる）。
+    Use it for investigation tasks that read through many files and compile them into one output
+    (a summary, extracted data, etc.). If you write down what you found with this tool every so
+    often, the content so far is not lost even if this sub-agent itself reaches the token limit and
+    is stopped (on stopping, the delegator is told the path of this file and can decide how to
+    continue from there).
 
-    execute_python_code/run_script と異なり、計画（create_plan/approve_plan）が
-    未承認でも常に呼べる（調査は通常 create_plan より前に行うため）。書き込み先の
-    ファイル名はこのツール自身が決めるため任意パスへは書き込めず、ユーザーの
-    作業ディレクトリや出力先には一切触れない（execute_python_code の中間生成物と
-    同じスクラッチ領域を使う）。
+    Unlike execute_python_code/run_script, it can always be called even if the plan
+    (create_plan/approve_plan) is not approved (investigation normally happens before create_plan).
+    This tool decides the file name itself, so it cannot write to arbitrary paths, and it never
+    touches the user's working directory or output destinations (it uses the same scratch area as
+    the intermediate artifacts of execute_python_code).
 
     Args:
-        content: 追記する内容（Markdown・JSON文字列など自由形式）。
-            これまでの内容は消さず、末尾に追記される。
+        content: The content to append (free form, such as Markdown or a JSON string).
+            Earlier content is not erased; it is appended at the end.
 
     Returns:
-        書き込み先の絶対パスと、追記後の累計文字数。content が空、または
-        書き込みに失敗した場合は例外を送出せず「エラー: ...」形式で返す。
+        The absolute path written to and the total characters after appending. If content is empty
+        or writing fails, it returns an "Error: ..." string instead of raising.
     """
     if not content.strip():
-        return "エラー: content が空です。"
+        return "Error: content is empty."
     path = _scratch_notes_path()
     try:
-        with path.open("a", encoding="utf-8") as f:
-            f.write(content)
-            if not content.endswith("\n"):
-                f.write("\n")
-        total_chars = len(path.read_text(encoding="utf-8"))
+        with NOTE_FILE_LOCK:
+            with path.open("a", encoding="utf-8") as f:
+                f.write(content)
+                if not content.endswith("\n"):
+                    f.write("\n")
+            total_chars = len(path.read_text(encoding="utf-8"))
     except OSError as e:
-        return f"エラー: スクラッチファイルへの書き込みに失敗しました: {e}"
-    return f"書き込みました: {path}（累計 {total_chars} 文字）"
+        return f"Error: failed to write to the scratch file: {e}"
+    return f"Written: {path} ({total_chars} chars in total)"

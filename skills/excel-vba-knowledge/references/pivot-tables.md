@@ -1,11 +1,11 @@
-# ピボットテーブルの扱い方
+# Handling pivot tables
 
-## オブジェクト階層
+## Object hierarchy
 
-`PivotCache`（元データとの接続・集計結果のメモリキャッシュ）と `PivotTable`
-（それを表示するレイアウト）は別オブジェクト。1つのキャッシュを複数のピボット
-テーブルで共有できる（同じ元データから複数のレイアウトを作る場合、キャッシュを
-使い回すとメモリ・更新コストを削減できる）。
+`PivotCache` (the connection to the source data and the in-memory cache of aggregated results) and `PivotTable`
+(the layout that displays it) are separate objects. One cache can be shared by several pivot
+tables (when making several layouts from the same source data, reusing the cache
+reduces memory and refresh costs).
 
 ```vb
 Dim pc As PivotCache
@@ -25,38 +25,37 @@ Set pt = pc.CreatePivotTable( _
     TableName:="SalesPivot")
 ```
 
-`SourceData` にはセル範囲だけでなく、テーブル名（[[excel-tables-listobject]]の
-`ListObject`）を文字列で渡すこともでき、その場合は元データの行が増減しても
-`SourceData` を書き換えずに済む（`SourceData:="Data!SalesTable"` のように
-テーブル名指定にしておくのが定石。詳細は下記「テーブルを元データにする」参照）。
+`SourceData` can take not only a cell range but also a table name (a `ListObject` of [[excel-tables-listobject]])
+as a string, in which case you do not need to rewrite `SourceData` even when rows of the source data increase or decrease
+(specifying a table name like `SourceData:="Data!SalesTable"` is the standard practice; see "Using a table as source data" below for details).
 
-## フィールドの配置（行・列・値・フィルタ）
+## Placing fields (rows, columns, values, filters)
 
 ```vb
 With pt
-    .PivotFields("地域").Orientation = xlRowField
-    .PivotFields("商品カテゴリ").Orientation = xlColumnField
-    .PivotFields("担当者").Orientation = xlPageField   ' フィルタ欄
+    .PivotFields("Region").Orientation = xlRowField
+    .PivotFields("Category").Orientation = xlColumnField
+    .PivotFields("Owner").Orientation = xlPageField   ' filter area
 
-    With .PivotFields("売上金額")
+    With .PivotFields("Sales")
         .Orientation = xlDataField
         .Function = xlSum
         .NumberFormat = "#,##0"
-        .Name = "合計 / 売上金額"   ' 既定名（"合計 / xxx"）と衝突しないよう明示推奨
+        .Name = "Total Sales"   ' recommended to set explicitly so it does not collide with the default name ("Sum of xxx")
     End With
 End With
 ```
 
-値フィールドの `.Name` を明示しないと、同名フィールドを複数回データ欄に置いた際
-（合計と平均を両方出す等）に自動採番された既定名（`合計 / 売上金額2` 等）に
-なり、後続コードから参照する名前が予測しにくくなる。作成直後に明示的な名前を
-付けておくと安全。
+If you do not set `.Name` of a value field explicitly, placing the same field in the data area several times
+(showing both the sum and the average, etc.) gives automatically numbered default names (`Sum of Sales2`, etc.),
+making the names that later code refers to hard to predict. Giving an explicit name right after creating it
+is safe.
 
-## データ更新（RefreshTable）と元データ範囲の追従
+## Refreshing data (RefreshTable) and following the source data range
 
-元データに行が追加された場合、`pt.RefreshTable` は**値の再集計**はするが、
-**元データの範囲自体が広がったことまでは自動追従しない**（`SourceData` を
-固定セル範囲で作った場合）。範囲を固定セル範囲にすると、行追加のたびに
+When rows are added to the source data, `pt.RefreshTable` **re-aggregates the values** but
+**does not automatically follow the source data range itself growing** (when `SourceData` was created with
+a fixed cell range). With a fixed cell range, every time rows are added you need to recreate the cache, like
 
 ```vb
 pt.ChangePivotCache ThisWorkbook.PivotCaches.Create( _
@@ -65,12 +64,11 @@ pt.ChangePivotCache ThisWorkbook.PivotCaches.Create( _
 pt.RefreshTable
 ```
 
-のようにキャッシュを作り直す必要が出てくる。**元データを [[excel-tables-listobject]]
-のテーブル（ListObject）にしておき、`SourceData` にテーブル名を渡す**方が、
-行追加時も `RefreshTable` だけで追従するため保守性が高い（新規作成時は
-この方式を優先して検討する）。
+**Making the source data a table (ListObject) of [[excel-tables-listobject]] and passing the table name to `SourceData`**
+is more maintainable, since it follows added rows with just `RefreshTable` (consider this method first
+when creating new ones).
 
-## 全ピボットテーブルの一括更新
+## Refreshing all pivot tables at once
 
 ```vb
 Dim ws As Worksheet, p As PivotTable
@@ -81,50 +79,47 @@ For Each ws In ThisWorkbook.Worksheets
 Next ws
 ```
 
-または `ThisWorkbook.RefreshAll`（ピボットテーブル以外のクエリ等も含めて
-全て更新するため、意図せず他の重い外部接続まで更新されないか確認してから使う）。
+Or `ThisWorkbook.RefreshAll` (it refreshes everything, including queries other than pivot tables, so check that it
+does not unintentionally refresh other heavy external connections before using it).
 
-## フィルタの一括変更（PivotItems の Visible）
+## Changing filters in bulk (Visible of PivotItems)
 
-チェックボックス式フィルタ（複数選択可のページ/行/列フィルタ）の選択状態は
-`PivotField.PivotItems` の `.Visible` を個別に切り替える。**最後の1件を
-非表示にしようとするとエラーになる**（フィールドに表示アイテムが0件には
-できない制約があるため）ので、全選択→対象だけ表示のように「まず全部Trueに
-してから絞る」か、最低1件は残す順序で処理する。
+The selection state of checkbox filters (page/row/column filters allowing multiple selection) is toggled individually
+with `.Visible` of `PivotField.PivotItems`. **Trying to hide the last item causes an error**
+(a field cannot have 0 visible items), so process in an order that "first sets everything to True and then narrows",
+such as select all -> show only the targets, or keeps at least one item.
 
 ```vb
 Dim pi As PivotItem
-With pt.PivotFields("地域")
+With pt.PivotFields("Region")
     For Each pi In .PivotItems
-        pi.Visible = (pi.Name = "関東" Or pi.Name = "関西")
+        pi.Visible = (pi.Name = "Kanto" Or pi.Name = "Kansai")
     Next pi
 End With
 ```
 
-大量アイテムがある場合、1件ずつの `.Visible` 変更は遅い。後述の
-`ManualUpdate` を有効にしてからまとめて変更する方が確実に効果がある。
-（`EnableMultiplePageItems` はページ（フィルタ）欄のフィールドにチェック
-ボックス式の複数選択UIを持たせるためのプロパティで、行・列欄のフィールドには
-適用できず、`.Visible` 変更自体の処理速度にも影響しないため、高速化目的では
-使わない）
+With many items, changing `.Visible` one by one is slow. Enabling `ManualUpdate` (described below)
+and changing them all together is reliably effective.
+(`EnableMultiplePageItems` is a property that gives a field in the page (filter) area a checkbox-style
+multi-select UI; it cannot be applied to fields in the row/column areas and does not affect the speed of
+changing `.Visible`, so do not use it for speeding up)
 
-## 更新中の高速化（ManualUpdate）
+## Speeding up while updating (ManualUpdate)
 
 ```vb
 pt.ManualUpdate = True
-' ... 複数フィールドのVisible切り替え等をまとめて実行 ...
-pt.ManualUpdate = False   ' ここで初めて画面へ反映・再計算される
+' ... toggle Visible of several fields etc. all together ...
+pt.ManualUpdate = False   ' only now is it reflected on screen and recalculated
 ```
 
-フィルタ条件を多数変更する処理では、都度再計算させず最後にまとめて反映させると
-大幅に速くなる（[[performance-tips]] のScreenUpdating停止と同じ考え方）。
+In processing that changes many filter conditions, not recalculating each time and applying everything at the end
+is much faster (the same idea as stopping ScreenUpdating in [[performance-tips]]).
 
-## PivotTable が既に存在する場合のエラー対策
+## Dealing with errors when the PivotTable already exists
 
-同名の `TableName` で `CreatePivotTable` を再実行するとエラーになる。
-マクロを複数回実行される前提の作り（再実行可能にする）にするなら、
-実行前に既存ピボットの有無を確認して削除するか、既存があれば更新のみに
-分岐する。
+Rerunning `CreatePivotTable` with the same `TableName` causes an error.
+If the macro is meant to be run several times (rerunnable), check whether the pivot exists before running
+and delete it, or branch to only refreshing it if it exists.
 
 ```vb
 Dim exists As Boolean, p As PivotTable

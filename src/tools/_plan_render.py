@@ -35,7 +35,7 @@ _STATUS_MARKERS = {
 }
 
 
-def _render_plan(plan: list[dict], *, finished: bool = False) -> str:
+def _render_plan(plan: list[dict], *, finished: bool = False, heading: str = "### Plan") -> str:
     """計画（ステップ一覧）をチェックリスト形式の Markdown へ整形する。
 
     create_plan / update_task_progress の両方から呼ばれる表示専用の純関数。
@@ -44,18 +44,20 @@ def _render_plan(plan: list[dict], *, finished: bool = False) -> str:
         plan: {"content": str, "activeForm": str,
             "status": "pending"|"in_progress"|"completed"} の辞書のリスト。
         finished: 全ステップ完了時に完了メッセージを付記するかどうか。
+        heading: 先頭の見出し行。画面にだけ出す場合（approve_plan の確認）は
+            表示言語の見出しを渡す（LLM へ返す場合は既定の日本語のまま）。
 
     Returns:
         「### 実行計画」見出しに続けて各ステップをチェックリストで並べた Markdown 文字列。
         "in_progress" のステップは content の代わりに activeForm を表示する。
     """
-    lines = ["### 実行計画"]
+    lines = [heading]
     for step in plan:
         marker = _STATUS_MARKERS[step["status"]]
         text = step["activeForm"] if step["status"] == "in_progress" else step["content"]
         lines.append(f"- {marker} {text}")
     if finished:
-        lines.append("\n✅ 計画完了")
+        lines.append("\n✅ Plan completed")
     return "\n".join(lines)
 
 
@@ -100,17 +102,17 @@ def _write_plan_detail(plan: list[dict], detail_markdown: str) -> Path | None:
     if path is None:
         return None
     lines = [
-        "# 実行計画",
+        "# Plan",
         "",
-        f"- スレッドID: {cl.user_session.get('thread_id') or '_no_session'}",
-        f"- 作成日時: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
-        f"- ステップ数: {len(plan)}",
+        f"- Thread ID: {cl.user_session.get('thread_id') or '_no_session'}",
+        f"- Created: {datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"- Steps: {len(plan)}",
         "",
-        "## ステップ一覧",
+        "## Steps",
         "",
         *[f"{i + 1}. {s['content']}" for i, s in enumerate(plan)],
         "",
-        "## 詳細",
+        "## Details",
         "",
         detail_markdown.rstrip(),
         "",

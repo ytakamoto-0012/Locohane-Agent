@@ -33,16 +33,6 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, Tool
 from langchain_core.tools import BaseTool
 
 
-def _contains_error(content: str) -> bool:
-    """文字列にエラーを示すキーワードが含まれるかを判定する。
-
-    日本語「エラー」、英語「error」(大文字小文字区別なし)、全角カタカナ
-    「ｴﾗｰ」に対応する。
-    """
-    content_lower = content.lower()
-    return "エラー" in content or "error" in content_lower or "ｴﾗｰ" in content
-
-
 from .config import Config
 from .context_compaction import (
     force_write_thread_note,
@@ -54,6 +44,7 @@ from .context_compaction import (
 )
 from .context_trim import is_trigger_reached, trim_old_ai_messages, trim_old_tool_messages
 from .images import image_followup_message
+from .tool_errors import looks_like_error
 from .tool_loop_guard import detect_tool_call_loop, find_leaked_tool_markup, leaked_tool_markup_error
 from .llm import (
     LLM_CONNECTION_ERRORS,
@@ -69,22 +60,25 @@ from .llm import (
     set_llm_wait_listener,
     tool_loop_nudge_text,
 )
-from .tool_labels import tool_label
 
 logger = logging.getLogger(__name__)
 
 _EMPTY_RESPONSE_NUDGE_TEXT = (
-    "[システム通知: 直前の応答にはツール呼び出しも本文もありませんでした。"
-    "これまでに分かったことをまとめて回答するか、必要な追加のツール呼び出しを"
-    "行ってください]"
+    "[System notice: your previous response had neither a tool call nor text. "
+    "Either summarize what you have found so far as your answer, or make the additional tool calls you need]"
 )
 
 # on_cancelled（会話履歴の緊急退避）が呼ばれる理由。スクラッチノートの見出しに
 # そのまま出るため、後からログを読む人が原因を取り違えないよう区別する。
-RESCUE_REASON_CANCELLED = "停止ボタン等による強制終了"
-RESCUE_REASON_TOKEN_GUARD = "トークン使用量が上限に到達したことによる打ち切り"
-# run_subagent の on_activity へ、LLM の空き待ち中に渡す表示名。
-_LLM_WAIT_ACTIVITY = "LLMの空き待ち"
+RESCUE_REASON_CANCELLED = "forced stop by the stop button or similar"
+RESCUE_REASON_TOKEN_GUARD = "stopped because token usage reached the limit"
+# run_subagent の on_activity へ渡す「今している動作」は (種別, *引数) のタプル。
+# 表示文言は src/tools/_dispatch_agent_job.py の format_activity が表示言語に合わせて組み立てる。
+Activity = tuple[str, ...]
+ACTIVITY_THINKING: Activity = ("thinking",)
+ACTIVITY_COMPACTING: Activity = ("compacting",)
+# LLM の空き待ち中に渡す動作。
+_LLM_WAIT_ACTIVITY: Activity = ("llm_wait",)
 
 # 会話履歴圧縮・トークン閾値注意メッセージ注入の直後1手に限り、tool_calls無し
 # の最終応答を無検査で受理しない（2026-08-23 issue: 圧縮直後にモデルが
@@ -94,10 +88,9 @@ _LLM_WAIT_ACTIVITY = "LLMの空き待ち"
 # 疑わしいとみなし1回だけ再試行する。
 _POST_COMPACTION_SUSPICIOUS_RESPONSE_MIN_LENGTH = 80
 _POST_COMPACTION_SUSPICIOUS_RESPONSE_NUDGE_TEXT = (
-    "[システム通知: 直前の応答は会話履歴の圧縮・トークン使用量の注意喚起の"
-    "直後にもかかわらず極端に短く、本来のタスクと無関係な内容に見えます。"
-    "これまでの作業内容（ツール呼び出しの結果）を踏まえて、本来のタスクへの"
-    "回答をやり直してください]"
+    "[System notice: your previous response was extremely short right after "
+    "conversation history compaction / a token usage warning, and looks unrelated to the original task. "
+    "Based on the work so far (the results of your tool calls), answer the original task again]"
 )
 
 
@@ -107,7 +100,7 @@ async def _run_one_tool_call(call: dict, tools_by_name: dict[str, BaseTool]) -> 
     leaked_key = find_leaked_tool_markup(call.get("args"))
     if tool_obj is None:
         tool_message = ToolMessage(
-            content=f"エラー: 未知のツールです: {call['name']}",
+            content=f"Error: unknown tool: {call['name']}",
             tool_call_id=call["id"],
         )
     elif leaked_key is not None:
@@ -129,14 +122,14 @@ async def _run_one_tool_call(call: dict, tools_by_name: dict[str, BaseTool]) -> 
         except Exception as e:  # noqa: BLE001 - ツール異常はエラー文字列化してループ継続
             logger.exception("subagent tool error: %s", call["name"])
             tool_message = ToolMessage(
-                content=f"エラー: ツール実行に失敗しました: {e}\n{traceback.format_exc()}",
+                content=f"Error: tool execution failed: {e}\n{traceback.format_exc()}",
                 tool_call_id=call["id"],
             )
     # execute_python_*系ツールは成功時もWARNING（スキル開発アイデアのシグナルとして記録）
-    # それ以外でエラーメッセージが含まれる場合もWARNING
+    # それ以外でも戻り値がエラーを示す場合はWARNING（src/tool_errors.py）
     content = str(tool_message.content)
     is_execute_python = call["name"].startswith("execute_python_")
-    has_error = _contains_error(content)
+    has_error = looks_like_error(content)
 
     if is_execute_python or has_error:
         logger.warning(
@@ -239,7 +232,7 @@ async def _invoke_with_loop_retry(model, messages: list, config: Config, tools: 
             if attempt >= max_retries:
                 raise
             logger.warning(
-                "subagent: LLM応答のループを検知（%d回目の再試行）: 直近テキスト=%r [%s]",
+                "subagent: detected an LLM response loop (retry %d): recent text=%r [%s]",
                 attempt + 1,
                 exc.snippet,
                 describe_current_task(),
@@ -260,10 +253,10 @@ async def _invoke_with_loop_retry(model, messages: list, config: Config, tools: 
             try:
                 await adispatch_custom_event("subagent_loop_retry", {"snippet": exc.snippet})
             except Exception:  # noqa: BLE001 - UI通知の失敗でリトライ自体を止めない
-                logger.debug("subagent_loop_retry イベントの送出に失敗しました", exc_info=True)
+                logger.debug("Failed to emit the subagent_loop_retry event", exc_info=True)
             current_model = enable_thinking_control(await build_model(config, role="sub"), config, "sub").bind_tools(tools)
             logger.warning(
-                "subagent: リトライ前にLLMモデルを再構築しました" "（client_broken=%s） [%s]",
+                "subagent: rebuilt the LLM model before retrying (client_broken=%s) [%s]",
                 exc.client_broken,
                 describe_current_task(),
             )
@@ -273,7 +266,7 @@ async def _invoke_with_loop_retry(model, messages: list, config: Config, tools: 
             # サブエージェントがキャンセルされた場合、握りつぶさず
             # 診断ログを出してから再送出する（従来は捕捉していなかった）。
             logger.warning(
-                "subagent: asyncio.CancelledError を検知 [%s, cause=%r]",
+                "subagent: detected asyncio.CancelledError [%s, cause=%r]",
                 describe_current_task(),
                 repr(exc.__cause__),
             )
@@ -319,7 +312,7 @@ async def _invoke_with_empty_response_retry(model, messages: list, config: Confi
         if attempt >= max_retries:
             return response, current_model, True
         logger.warning(
-            "subagent: 空の応答（tool_calls無し・本文無し）を検知したため再試行します" "(%d/%d回目)",
+            "subagent: detected an empty response (no tool_calls, no text), retrying (%d/%d)",
             attempt + 1,
             max_retries,
         )
@@ -380,7 +373,7 @@ async def _invoke_with_timeout_retry(
             if attempt >= max_retries:
                 raise
             logger.warning(
-                "dispatch_agent: LLM呼び出しがタイムアウトしたため再試行します" "(%d/%d回目): %s",
+                "dispatch_agent: LLM call timed out, retrying (%d/%d): %s",
                 attempt + 1,
                 max_retries,
                 exc,
@@ -413,7 +406,7 @@ def _extract_total_tokens(response: AIMessage) -> int | None:
     return usage.get("total_tokens")
 
 
-_TRUNCATION_PREFIX = "[サブエージェント: "
+_TRUNCATION_PREFIX = "[Sub-agent: "
 
 
 def is_truncated_result(content: object) -> bool:
@@ -428,7 +421,7 @@ def is_truncated_result(content: object) -> bool:
 
 
 # LLM呼び出しのタイムアウト・通信エラーが再試行後も続いた場合の打ち切り理由。
-_LLM_UNREACHABLE_REASON = "LLM呼び出しがタイムアウトした"
+_LLM_UNREACHABLE_REASON = "the LLM call timed out"
 
 
 def is_llm_unreachable_result(content: object) -> bool:
@@ -457,14 +450,14 @@ def _build_truncation_message(reason: str, messages: list) -> str:
     """
     last = messages[-1]
     last_text = last.content if isinstance(last, AIMessage) else ""
-    parts = [f"{_TRUNCATION_PREFIX}{reason}ため打ち切りました]"]
+    parts = [f"{_TRUNCATION_PREFIX}stopped because {reason}]"]
     if last_text:
         parts.append(last_text)
     collected = _collect_tool_results_summary(messages)
     if collected:
         parts.append(
-            "[ここまでに収集できたツール実行結果（打ち切りにより要約や整理は未完了）。"
-            "委譲元はこれを踏まえて続きの調査が必要か判断すること]\n" + collected
+            "[Tool results collected so far (summarizing/organizing is unfinished because of the stop). "
+            "The delegator should decide based on this whether further investigation is needed]\n" + collected
         )
     return "\n\n".join(parts)
 
@@ -538,7 +531,7 @@ async def run_subagent(
     on_iteration: Callable[[int, int], None] | None = None,
     llm_timeout_max_retries: int = 0,
     on_cancelled: Callable[[list, str], None] | None = None,
-    on_activity: Callable[[str], None] | None = None,
+    on_activity: Callable[[Activity], None] | None = None,
 ) -> str:
     """独立した ReAct ループでタスクを処理し、最終回答のテキストのみを返す。
 
@@ -617,7 +610,7 @@ async def run_subagent(
     tools_by_name = {t.name: t for t in tools}
     messages: list = [SystemMessage(content=system_prompt), HumanMessage(content=task)]
 
-    logger.info("dispatch_agent 開始: task=%r max_iterations=%d", task, max_iterations)
+    logger.info("dispatch_agent start: task=%r max_iterations=%d", task, max_iterations)
 
     token_guard_enabled = config.subagent_token_guard_enabled and config.track_token_usage
     soft_warning_issued = False
@@ -644,10 +637,10 @@ async def run_subagent(
 
     # on_activity へ最後に渡した表示と、LLMの空き待ち中か。空き待ちから抜けたら
     # 待つ前の表示（"思考中"・"会話履歴の圧縮中" 等）へ戻す。
-    activity = ""
+    activity: Activity = ()
     llm_waiting = False
 
-    def _set_activity(name: str) -> None:
+    def _set_activity(name: Activity) -> None:
         nonlocal activity, llm_waiting
         activity, llm_waiting = name, False
         if on_activity is not None:
@@ -676,17 +669,17 @@ async def run_subagent(
             if tool_loop is not None:
                 if tool_loop_retries >= config.thinking_loop_guard_max_retries:
                     logger.warning(
-                        "dispatch_agent: 同じツール呼び出しのループが解消しないため打ち切り(iter=%d): %s",
+                        "dispatch_agent: stopping because the same tool call loop did not resolve (iter=%d): %s",
                         iteration,
                         tool_loop.detail(),
                     )
                     return _build_truncation_message(
-                        f"全く同じツール呼び出し（{'、'.join(tool_loop.tool_names)}）が繰り返され、"
-                        f"{tool_loop_retries}回注意しても解消しなかった",
+                        f"the exact same tool call ({', '.join(tool_loop.tool_names)}) kept repeating "
+                        f"and {tool_loop_retries} warnings did not resolve it",
                         messages,
                     )
                 logger.warning(
-                    "dispatch_agent: 同じツール呼び出しのループを検知（%d回目）: %s",
+                    "dispatch_agent: detected a loop of the same tool call (%d): %s",
                     tool_loop_retries + 1,
                     tool_loop.detail(),
                 )
@@ -704,14 +697,14 @@ async def run_subagent(
                 )
                 tool_loop_retries += 1
             llm_input = _build_llm_input(messages, config)
-            _set_activity("思考中")
+            _set_activity(ACTIVITY_THINKING)
             try:
                 response, model, empty_retries_exhausted = await _invoke_with_timeout_retry(
                     model, llm_input, config, tools, llm_timeout_max_retries
                 )
             except (TimeoutError, *LLM_CONNECTION_ERRORS) as exc:
                 logger.warning(
-                    "dispatch_agent: LLM呼び出しがタイムアウトしたため打ち切り(iter=%d): %s",
+                    "dispatch_agent: stopping because the LLM call timed out (iter=%d): %s",
                     iteration,
                     exc,
                 )
@@ -727,12 +720,12 @@ async def run_subagent(
                 # aclose_model_client でこのモデルインスタンスをクローズ済み
                 # のため、ここでの追加クローズ処理は不要。
                 logger.warning(
-                    "dispatch_agent: LLM応答の反復ループが解消しないため打ち切り(iter=%d): %s",
+                    "dispatch_agent: stopping because the repeated LLM response loop did not resolve (iter=%d): %s",
                     iteration,
                     exc.snippet,
                 )
                 return _build_truncation_message(
-                    f"LLM応答の反復ループを検知した(直近テキスト: {exc.snippet!r})", messages
+                    f"a repetition loop in the LLM response was detected (recent text: {exc.snippet!r})", messages
                 )
             messages.append(response)
             logger.info("subagent iter=%d ai=%r", iteration, str(response.content)[:500])
@@ -743,12 +736,12 @@ async def run_subagent(
             if not tool_calls:
                 if empty_retries_exhausted:
                     logger.warning(
-                        "dispatch_agent: 空の応答が%d回続いたため打ち切り (iter=%d)",
+                        "dispatch_agent: stopping after %d empty responses in a row (iter=%d)",
                         config.subagent_empty_response_max_retries + 1,
                         iteration,
                     )
                     return _build_truncation_message(
-                        f"LLMが空の応答を{config.subagent_empty_response_max_retries + 1}" "回連続で返した",
+                        f"the LLM returned an empty response {config.subagent_empty_response_max_retries + 1} " "times in a row",
                         messages,
                     )
                 content_text = str(response.content).strip()
@@ -765,14 +758,13 @@ async def run_subagent(
                     # せず1回だけやり直しを促す。
                     hallucination_retry_used = True
                     logger.warning(
-                        "dispatch_agent: 会話圧縮/トークン閾値注意の直後に極端に短い最終応答"
-                        "(%d文字)を検知したため再試行します (iter=%d)",
+                        "dispatch_agent: detected an extremely short final response (%d chars) right after compaction/token threshold warning, retrying (iter=%d)",
                         len(content_text),
                         iteration,
                     )
                     messages.append(HumanMessage(content=_POST_COMPACTION_SUSPICIOUS_RESPONSE_NUDGE_TEXT))
                     continue
-                logger.info("dispatch_agent 正常終了: %d回で完了", iteration)
+                logger.info("dispatch_agent finished normally: completed in %d iterations", iteration)
                 return response.content
 
             total_tokens = _extract_total_tokens(response) if config.track_token_usage else None
@@ -785,7 +777,7 @@ async def run_subagent(
                 and total_tokens >= config.subagent_token_guard_hard_threshold
             ):
                 logger.warning(
-                    "dispatch_agent: トークン使用量が閾値(%d)に達したため打ち切り" "(iter=%d, total_tokens=%d)",
+                    "dispatch_agent: stopping because token usage reached the threshold (%d) (iter=%d, total_tokens=%d)",
                     config.subagent_token_guard_hard_threshold,
                     iteration,
                     total_tokens,
@@ -794,14 +786,14 @@ async def run_subagent(
                     try:
                         on_cancelled(messages, RESCUE_REASON_TOKEN_GUARD)
                     except Exception:  # noqa: BLE001 - 退避処理の失敗で打ち切り自体を妨げない
-                        logger.exception("subagent: token_guard hard_threshold到達時の退避コールバック実行に失敗しました")
+                        logger.exception("subagent: failed to run the rescue callback on reaching token_guard hard_threshold")
                 return _build_truncation_message(
-                    "トークン使用量が上限" f"({config.subagent_token_guard_hard_threshold}トークン)に達した",
+                    "token usage reached the limit " f"({config.subagent_token_guard_hard_threshold} tokens)",
                     messages,
                 )
 
             # 並列の同名呼び出しは1つにまとめる（dict.fromkeys で順序を保つ）。
-            _set_activity("ツール: " + "、".join(dict.fromkeys(tool_label(call["name"]) for call in tool_calls)))
+            _set_activity(("tools", *dict.fromkeys(call["name"] for call in tool_calls)))
             results = await asyncio.gather(*(_run_one_tool_call(call, tools_by_name) for call in tool_calls))
             for tool_message, followup in results:
                 messages.append(tool_message)
@@ -831,7 +823,7 @@ async def run_subagent(
                     # write_thread_note の実行を強制する。サブエージェントは
                     # 「委譲元へ返すのは要約、具体的な事実は thread note へ」と
                     # いう前提で動くため、ここでの退避はメイン側以上に重要。
-                    _set_activity("ツール: " + tool_label("write_thread_note"))
+                    _set_activity(("tools", "write_thread_note"))
                     summary_model = await build_model(config, role="sub")
                     # messages[0]（SystemMessage）は要約元テキストに含めない
                     # （maybe_compact へ messages[1:] を渡すのと同じ理由。下記参照）。
@@ -839,8 +831,7 @@ async def run_subagent(
                     if forced is None:
                         note_skip_count += 1
                         logger.warning(
-                            "subagent: write_thread_noteの強制実行に失敗したため圧縮を見送ります"
-                            "(iter=%d, skip_count=%d)",
+                            "subagent: forced write_thread_note failed, postponing compaction (iter=%d, skip_count=%d)",
                             iteration,
                             note_skip_count,
                         )
@@ -853,7 +844,7 @@ async def run_subagent(
                         note_skip_count = 0
                         blocked = False
                         logger.warning(
-                            "subagent: write_thread_noteを強制実行した上で圧縮します (iter=%d)",
+                            "subagent: compacting after forcing write_thread_note (iter=%d)",
                             iteration,
                         )
                 if not blocked:
@@ -863,7 +854,7 @@ async def run_subagent(
                     # 猶予を使い切って強制圧縮に踏み切った直後に要約が失敗したとき、
                     # 安全弁がまた最初から猶予を積み直すことになり骨抜きになる）。
                     # 見送る場合（blocked のまま）は圧縮しないため、ここで初めて表示する。
-                    _set_activity("会話履歴の圧縮中")
+                    _set_activity(ACTIVITY_COMPACTING)
                     if summary_model is None:
                         summary_model = await build_model(config, role="sub")
                     # messages[0] は run_subagent 開始時に積んだ SystemMessage。graph.py の
@@ -882,7 +873,7 @@ async def run_subagent(
                     )
                     if new_tail is not None:
                         logger.info(
-                            "subagent: 会話履歴を圧縮しました (iter=%d) [%s]",
+                            "subagent: compacted the conversation history (iter=%d) [%s]",
                             iteration,
                             describe_current_task(),
                         )
@@ -913,7 +904,7 @@ async def run_subagent(
                 soft_warning_issued = True
                 just_compacted_or_nudged = True
                 logger.warning(
-                    "subagent: トークン使用量が閾値(%d)に近づいたため注意メッセージを注入" "(iter=%d, total_tokens=%d)",
+                    "subagent: token usage is approaching the threshold (%d), injecting a warning message (iter=%d, total_tokens=%d)",
                     config.subagent_token_guard_soft_threshold,
                     iteration,
                     total_tokens,
@@ -932,8 +923,8 @@ async def run_subagent(
                 if messages is not before_pre_note:
                     just_compacted_or_nudged = True
 
-        logger.warning("dispatch_agent: 最大反復回数(%d)に到達したため打ち切り", max_iterations)
-        return _build_truncation_message(f"最大反復回数({max_iterations})に達した", messages)
+        logger.warning("dispatch_agent: stopping because the maximum number of iterations (%d) was reached", max_iterations)
+        return _build_truncation_message(f"the maximum number of iterations ({max_iterations}) was reached", messages)
     except asyncio.CancelledError:
         # 停止ボタン等でこのサブエージェントが強制終了された場合、ここまでの
         # messages（ローカル変数のためこの関数を抜けると失われる）を
@@ -946,7 +937,7 @@ async def run_subagent(
             try:
                 on_cancelled(messages, RESCUE_REASON_CANCELLED)
             except Exception:  # noqa: BLE001 - 退避処理の失敗でCancelledErrorの伝播を妨げない
-                logger.exception("subagent: on_cancelled コールバックの実行に失敗しました")
+                logger.exception("subagent: failed to run the on_cancelled callback")
         raise
     finally:
         reset_llm_wait_listener(wait_listener_token)
@@ -976,7 +967,7 @@ def dump_messages_for_cancelled_rescue(messages: list, reason: str = RESCUE_REAS
     """
     if not messages:
         return ""
-    parts = [f"[サブエージェントの会話履歴の緊急退避: {reason}]"]
+    parts = [f"[Emergency save of the sub-agent conversation history: {reason}]"]
     for m in messages:
         if isinstance(m, SystemMessage):
             continue
@@ -1044,7 +1035,7 @@ def _collect_tool_results_summary(messages: list) -> str:
             if len(content) > _TOOL_RESULT_SNIPPET_LIMIT:
                 content = content[:_TOOL_RESULT_SNIPPET_LIMIT] + "...[truncated]"
             name = getattr(messages[i], "name", None) or "?"
-            snippets.append(f"- ツール={name}: {content}")
+            snippets.append(f"- tool={name}: {content}")
             i += 1
         # このツール群の直後（view_image の画像 followup である
         # HumanMessage は飛ばす）に続く最初の AIMessage があれば、
@@ -1058,7 +1049,7 @@ def _collect_tool_results_summary(messages: list) -> str:
                 if ai_content:
                     if len(ai_content) > _TOOL_RESULT_SNIPPET_LIMIT:
                         ai_content = ai_content[:_TOOL_RESULT_SNIPPET_LIMIT] + "...[truncated]"
-                    snippets.append(f"  → モデルの解釈: {ai_content}")
+                    snippets.append(f"  -> model's interpretation: {ai_content}")
                 break
     joined = "\n".join(snippets)
     if len(joined) > _TOOL_RESULT_TOTAL_LIMIT:

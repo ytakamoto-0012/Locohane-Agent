@@ -152,7 +152,7 @@ async def test_on_activity_reports_thinking_before_llm_call(monkeypatch) -> None
         on_activity=activities.append,
     )
 
-    assert activities == ["思考中"]
+    assert activities == [("thinking",)]
 
 
 class _ScriptedModel:
@@ -191,7 +191,7 @@ async def test_on_activity_uses_step_badge_labels_for_tools(monkeypatch) -> None
         task="t", tools=[], system_prompt="sp", config=_FakeConfig(), max_iterations=5, on_activity=activities.append
     )
 
-    assert activities == ["思考中", "ツール: スクリプト実行、Grep", "思考中"]
+    assert activities == [("thinking",), ("tools", "run_script", "Grep"), ("thinking",)]
 
 
 @pytest.mark.asyncio
@@ -218,9 +218,9 @@ async def test_on_activity_reports_llm_wait_and_restores(monkeypatch) -> None:
         task="t", tools=[], system_prompt="sp", config=_FakeConfig(), max_iterations=5, on_activity=activities.append
     )
 
-    assert activities == ["思考中", "LLMの空き待ち", "思考中"]
+    assert activities == [("thinking",), ("llm_wait",), ("thinking",)]
     routing.notify_llm_wait(True)
-    assert activities == ["思考中", "LLMの空き待ち", "思考中"]
+    assert activities == [("thinking",), ("llm_wait",), ("thinking",)]
 
 
 @pytest.mark.asyncio
@@ -241,7 +241,7 @@ async def test_default_zero_retries_truncates_immediately_on_timeout(monkeypatch
     )
 
     assert subagent.is_truncated_result(result)
-    assert "タイムアウト" in result
+    assert "timed out" in result
     assert state["calls"] == 1  # リトライしていない
 
 
@@ -345,5 +345,5 @@ async def test_thinking_loop_detected_truncates_like_timeout_instead_of_raising(
     )
 
     assert subagent.is_truncated_result(result)
-    assert "反復ループ" in result
+    assert "repetition loop" in result
     assert "同じ文の繰り返し" in result

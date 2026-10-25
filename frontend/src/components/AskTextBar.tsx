@@ -2,6 +2,7 @@ import { useEffect, useState, type KeyboardEvent } from 'react';
 import { v4 as uuidv4 } from 'uuid';
 import { useChatData, useChatInteract } from '@chainlit/react-client';
 import type { IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 
 /**
  * AskUserQuestion（labels省略時の自由記述単発質問）専用の表示コンポーネント。
@@ -16,6 +17,7 @@ import type { IStep } from '@chainlit/react-client';
 export function AskTextBar() {
   const { askUser } = useChatData();
   const { replyMessage } = useChatInteract();
+  const { t } = useI18n();
   const [value, setValue] = useState('');
 
   const stepId = askUser?.spec.type === 'text' ? askUser.spec.step_id : undefined;
@@ -46,7 +48,7 @@ export function AskTextBar() {
   };
 
   const handleCancel = () => {
-    reply('❌ キャンセル', { askCancel: true });
+    reply(t('common.cancelWithIcon'), { askCancel: true });
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -66,7 +68,7 @@ export function AskTextBar() {
       <textarea
         className="ask-text-input"
         value={value}
-        placeholder="回答を入力..."
+        placeholder={t('ask.answerPlaceholder')}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={onKeyDown}
         rows={3}
@@ -74,10 +76,10 @@ export function AskTextBar() {
       />
       <div className="ask-form-actions">
         <button type="button" className="ask-form-cancel" onClick={handleCancel}>
-          ❌ キャンセル
+          {t('common.cancelWithIcon')}
         </button>
         <button type="submit" className="ask-text-submit">
-          送信
+          {t('common.send')}
         </button>
       </div>
     </form>

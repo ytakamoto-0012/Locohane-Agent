@@ -5554,3 +5554,32 @@ system_prompt.md は「同じ処理を多数のファイルへ行うなら dispa
 - 追加修正（評価後）: フォルダが見つからない時に作業ディレクトリ直下のフォルダ一覧を添える。
   各グループを BATCH_GROUP_RUN_NAME の名前付きRunnableで実行し、UIでグループごとの中間Stepを表示可能に
   （app.py 側は出力元ごとの思考Step/回答Message管理に改修、並列時の思考の混線も解消）。
+
+## 英語化プロンプト（feature/i18n）での再評価
+
+### en_iter01（instance: default、system_prompt 001/003/005、変更なし）
+- 001: 判定不能（error: timeout 1800秒）。調査はプラン前に正しく進んでいた（スレッドメモに共通指示→ask_user_choice（evalでキャンセル）→
+  年フォルダごとに explore を10件同時発行、ocr_md があれば画像を解析しない指示も守れていた）。ただし [subagent] max_parallel=1 のため
+  explore が1件約4分で順番に実行され、8年分の途中で時間切れ。モデルは「年ごとに md 優先の条件があるので batch は不向き」と判断して
+  dispatch_agent_batch を使わなかった（英訳前の batch_iter06 は batch で3グループ）。プロンプトの不備とは言い切れないため、scale の後に再実行して確かめる。
+- 003: 合格（ツール呼び出しの前後に前置き・後置きなし。最終回答は1文で簡潔）。
+- 005: 合格（メイン自身の Glob は1回だけ、その後 explore へ3件並列委譲。最終回答も正確）。
+- 別件: evals.log で同梱スキル excel-knowledge（frontmatter の YAML が壊れていた）と excel-vba-knowledge（説明が1024文字超）が
+  読み飛ばされているのを発見。英訳（2c79e86）で入った不具合で、09056a1 で修正し、全スキルが読み込まれることのテストを追加した。
+
+### en_iter01-scale（instance: default、system_prompt_scale 全7ケース、変更なし）
+- 中断: 001（xlsx）は3600秒の上限で打ち切りとみられる（年ごとの調査→計画承認→worker へ Excel 作成を委譲した途中）。002（pptx）の実行中に、
+  LLM を軽量モデルへ切り替えるためユーザー指示で停止。003以降は未実行。
+- 評価中に見つけた不具合（どれも英語化前からあったもの）: 並列の write_thread_note で追記が消える／本文に error を含むだけでツール結果を
+  WARNING にする誤判定。1a36d51 で修正。
+
+### en_iter02（instance: default、モデル Qwen3.6-35B-A3B-UD-Q2_K_XL に切り替え、system_prompt 001/003/005、プロンプト変更なし）
+- 001: 合格（ぎりぎり）。メインの Glob 1回→2回目以降はガードで拒否→explore へ委譲して全年の ocr_md を抽出→計画（「過去31件の行事データ」と具体的な件数あり）。
+  ただし調査は ocr_md だけで、写真しかない 2024 年を「データなし」と誤って扱った（写真を見ていない）。なお config.ini の [plan].auto_approve=true
+  （d1503d7 以降）のため approve_plan が自動承認され、ケースが前提とする「却下で早期終了」は起きず xlsx 作成・検証まで進んだ（判定項目4は確かめられない）。
+- 003: 合格（前置き・後置きなし、最終回答1文）。画像の中身の説明が正しいかはこのケースの対象外。
+- 005: 不合格（ルール tool_called_any: dispatch_agent が呼ばれていない）。メインの Glob は1回だけで、その後の委譲を dispatch_agent ではなく
+  dispatch_agent_batch で行った（system_prompt の「同じ処理を多数のファイルへ行うなら dispatch_agent_batch（最優先）」に従った形）。
+  委譲という趣旨は守れているが、batch を4回に分けて呼ぶなど回り道があった。ケースの期待値（dispatch_agent のみ）が batch 導入前のままという面もある。
+
+### en_iter02-scale（instance: default、Qwen3.6-35B-A3B-UD-Q2_K_XL、system_prompt_scale 全7ケース、変更なし）

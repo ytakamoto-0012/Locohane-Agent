@@ -1,5 +1,6 @@
 import { useContext, useState } from 'react';
 import { ChainlitContext, useAuth } from '@chainlit/react-client';
+import { LANGUAGE_OPTIONS, useI18n } from '../i18n';
 
 /**
  * config.ini の [auth] enabled=true のときに表示するログインフォーム。
@@ -10,6 +11,7 @@ import { ChainlitContext, useAuth } from '@chainlit/react-client';
 export function LoginForm() {
   const chainlitApi = useContext(ChainlitContext);
   const { setUserFromAPI } = useAuth();
+  const { lang, setLang, t } = useI18n();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +32,7 @@ export function LoginForm() {
       await chainlitApi.passwordAuth(formData);
       await setUserFromAPI();
     } catch {
-      setError('ユーザー名またはパスワードが正しくありません');
+      setError(t('login.invalid'));
     } finally {
       setSubmitting(false);
     }
@@ -39,10 +41,10 @@ export function LoginForm() {
   return (
     <div className="login-shell">
       <form className="login-card" onSubmit={handleSubmit}>
-        <h1 className="login-title">ログイン</h1>
+        <h1 className="login-title">{t('login.title')}</h1>
         {error && <div className="login-error">{error}</div>}
         <label className="login-field">
-          <span className="login-label">ユーザー名</span>
+          <span className="login-label">{t('login.username')}</span>
           <input
             className="login-input"
             value={username}
@@ -51,7 +53,7 @@ export function LoginForm() {
           />
         </label>
         <label className="login-field">
-          <span className="login-label">パスワード</span>
+          <span className="login-label">{t('login.password')}</span>
           <input
             className="login-input"
             type="password"
@@ -60,8 +62,20 @@ export function LoginForm() {
           />
         </label>
         <button className="login-submit" type="submit" disabled={submitting}>
-          {submitting ? 'ログイン中…' : 'ログイン'}
+          {submitting ? t('login.submitting') : t('login.submit')}
         </button>
+        <div className="login-language">
+          {LANGUAGE_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              type="button"
+              className={opt.id === lang ? 'login-language--active' : undefined}
+              onClick={() => setLang(opt.id)}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
       </form>
     </div>
   );

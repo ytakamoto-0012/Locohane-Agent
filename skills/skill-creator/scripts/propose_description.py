@@ -40,29 +40,29 @@ from _common import (
 )
 
 _SYSTEM_PROMPT = (
-    "あなたはローカルLLM向けAgent SkillsシステムのSKILL.mdのdescriptionを改善する"
-    "アシスタントです。descriptionはLLMがこのスキルを使うべきか判断する唯一の手がかりで、"
-    "「何をするか」と「どんなユーザー発話のときに使うべきか」の両方を含める必要があります。"
-    "1〜1024文字、日本語で、既存のトーンを保ちつつ、失敗例を踏まえて具体的なユーザー発話の"
-    "パターンや文脈を補うよう改善してください。改善後のdescription本文のみを出力し、"
-    "前置きや説明、コードブロックの囲みは付けないでください。"
+    "You are an assistant that improves the description in SKILL.md for an Agent Skills system for local LLMs. "
+    "The description is the only clue the LLM uses to decide whether to use this skill, and it must include both "
+    "\"what it does\" and \"for what kind of user messages it should be used\". "
+    "Keep it 1-1024 characters, in the same language as the current description, keep the existing tone, and improve it "
+    "by adding concrete patterns of user messages and context based on the failures. Output only the body of the improved description, "
+    "with no preamble, explanation or code block fences."
 )
 
 
 def _build_user_prompt(skill_name: str, current_description: str, failed_queries: list[dict]) -> str:
     lines = [
-        f"スキル名: {skill_name}",
-        f"現在のdescription:\n{current_description}",
+        f"Skill name: {skill_name}",
+        f"Current description:\n{current_description}",
         "",
-        "以下はトリガー精度評価で期待と異なる結果になったクエリです"
-        "（should_trigger=trueなのに実際は使われなかった、または"
-        "should_trigger=falseなのに実際は使われてしまった、のどちらか）:",
+        "The following are queries whose result differed from the expectation in the trigger accuracy evaluation"
+        " (either should_trigger=true but it was not actually used, or"
+        " should_trigger=false but it was actually used):",
     ]
     for item in failed_queries:
-        expectation = "使われるべき" if item.get("should_trigger") else "使われるべきでない"
-        lines.append(f"- 発話例: {item.get('query')!r} / 期待: {expectation} / 実際のトリガー率: {item.get('trigger_rate')}")
+        expectation = "should be used" if item.get("should_trigger") else "should not be used"
+        lines.append(f"- Example message: {item.get('query')!r} / expected: {expectation} / actual trigger rate: {item.get('trigger_rate')}")
     lines.append("")
-    lines.append("これらの失敗例を踏まえ、改善したdescriptionを1つ提案してください。")
+    lines.append("Based on these failures, propose one improved description.")
     return "\n".join(lines)
 
 
@@ -70,7 +70,7 @@ def _cmd_start(args: argparse.Namespace) -> int:
     try:
         failed_queries = json.loads(Path(args.failed_queries).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
-        raise SkillCreatorError(f"--failed-queries を読み込めません: {e}") from e
+        raise SkillCreatorError(f"Cannot read --failed-queries: {e}") from e
     ctx = draft_context()
     ref = resolve_draft(ctx, args.name, "write")
     fm = parse_frontmatter((ref.dir / "SKILL.md").read_text(encoding="utf-8", errors="replace")) or {}
@@ -102,7 +102,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             {
                 "job_id": args.job_id,
                 "status": "finished",
-                "error": result.get("error", "提案を取得できませんでした"),
+                "error": result.get("error", "Could not get a proposal"),
                 "log_tail": "\n".join(lines[-20:]),
             }
         )
@@ -116,8 +116,8 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_start = sub.add_parser("start")
-    p_start.add_argument("--name", required=True, help="ドラフト名（自分のドラフトはスキル名だけでよい）")
-    p_start.add_argument("--failed-queries", required=True, help="per_query から matched:false を抜き出したJSON配列のファイル")
+    p_start.add_argument("--name", required=True, help="draft name (for your own drafts, just the skill name)")
+    p_start.add_argument("--failed-queries", required=True, help="file with a JSON array of the matched:false entries extracted from per_query")
 
     p_status = sub.add_parser("status")
     p_status.add_argument("--name", required=True)

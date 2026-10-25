@@ -97,7 +97,7 @@ async def resolve_pending_ask(thread_id: str) -> None:
     try:
         res = await entry["factory"]()
     except Exception:  # noqa: BLE001 - 引き継ぎ表示自体の失敗で元セッション側の待機を巻き込まない
-        logging.getLogger(__name__).warning("応答待ちの引き継ぎ表示に失敗しました [thread_id=%s]", thread_id, exc_info=True)
+        logging.getLogger(__name__).warning("Failed to show the handover of a pending question [thread_id=%s]", thread_id, exc_info=True)
         return
     if not entry["future"].done():
         entry["future"].set_result(res)

@@ -38,6 +38,7 @@ from .. import instances as inst
 from .. import overrides
 from ..ini_catalog import find_key, parse_file
 from . import sources, themes
+from admin.i18n import t as _t
 
 PROMOTION_LOG = PROJECT_ROOT / "evals" / "promotion_log.md"
 PROMOTE_HISTORY_DIR = PROJECT_ROOT / "evals" / "history" / "promote"
@@ -105,7 +106,7 @@ def _current_override_text(instances_root: Path, name: str, section: str, key: s
     existing = overrides.read(inst.overrides_path(instances_root, name))
     info = find_key(catalog, section, key)
     if info is None:
-        raise PromotionError(f"config.ini に [{section}].{key} がありません。")
+        raise PromotionError(_t("config.ini に [{0}].{1} がありません。", section, key))
     return existing.get(section, {}).get(key, info.default_value)
 
 
@@ -144,13 +145,13 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
     instance = data["instance"]
     result = CheckResult()
     if data.get("status") in themes.CLOSED_STATUSES:
-        result.problems.append(f"このテーマは既に終了しています（{data.get('status')}）")
+        result.problems.append(f"This theme has already ended ({data.get('status')})")
         return result
     if data.get("status") in themes.ACTIVE_STATUSES:
-        result.problems.append("ループ・トライアウトの実行中は昇格できません（停止するか、終わるのを待ってください）")
+        result.problems.append("Cannot promote while a loop or tryout is running (stop it or wait for it to finish)")
     assets = themes.list_assets(directory)
     if not assets["skills"] and not assets["agents"]:
-        result.problems.append("昇格する研究対象（スキル・サブエージェント）がありません")
+        result.problems.append("There are no research targets (skills or sub-agents) to promote")
 
     target_cfg = instance_config(instances_root, instance)
     tryout = data.get("tryout")
@@ -158,12 +159,12 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
     if tryout:
         if (tryout.get("repeat") or 0) < target_cfg.skill_tryout_repeats:
             result.problems.append(
-                f"トライアウトの回数が足りません: {tryout.get('repeat')} 回（必要: {target_cfg.skill_tryout_repeats} 回以上）"
+                f"Not enough tryout runs: {tryout.get('repeat')} (required: {target_cfg.skill_tryout_repeats} or more)"
             )
         if tryout.get("ai_verdict") != "pass":
-            result.problems.append("トライアウトに全回合格していません")
+            result.problems.append("The tryout did not pass every run")
         if tryout.get("instance") != instance:
-            result.problems.append(f"トライアウトの評価対象のインスタンスが違います: {tryout.get('instance')}")
+            result.problems.append(f"The tryout was evaluated against a different instance: {tryout.get('instance')}")
 
     # 取り込み元・複製元
     for asset_type in themes.ASSET_TYPES:
@@ -172,18 +173,18 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
             origin = Path(src["origin"]) if src.get("origin") else None
             if kind == "draft" and origin is not None:
                 if not (origin / "SKILL.md").is_file():
-                    result.notices.append(f"取り込み元のドラフト {src.get('owner')}/{name} はもうありません（アーカイブは省略）")
+                    result.notices.append(f"The source draft {src.get('owner')}/{name} no longer exists (archiving skipped)")
                 elif tree_sha256(origin) != src.get("origin_sha256"):
                     result.confirmations.append(
-                        f"取り込み元のドラフト {src.get('owner')}/{name} が取り込み後に作成者によって変更されています"
-                        "（昇格すると作成者の変更は反映されず、ドラフトはアーカイブされます）"
+                        f"The source draft {src.get('owner')}/{name} was changed by its author after it was imported"
+                        " (promoting will not include the author's changes, and the draft will be archived)"
                     )
             elif kind == "official" and origin is not None:
                 exists = (origin / "SKILL.md").is_file() if asset_type == "skills" else origin.is_file()
                 now = (tree_sha256(origin) if asset_type == "skills" else file_sha256(origin)) if exists else None
                 if now is not None and now != src.get("origin_sha256"):
                     result.problems.append(
-                        f"複製元の正式な {name}（{origin}）が複製後に変更されています（上書きすると変更が失われるため、複製し直してください）"
+                        f"The official {name} ({origin}) it was copied from was changed after copying (overwriting would lose the changes, so copy it again)"
                     )
 
     # 配置先（対象インスタンス + 配布先）
@@ -196,7 +197,7 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
             result.problems.append(str(e))
             continue
         if meta.is_skill_lab:
-            result.problems.append(f"{name} はスキル研究室のため配置先にできません")
+            result.problems.append(f"{name} is a Skill Lab, so it cannot be a placement target")
             continue
         cfg = target_cfg if name == instance else instance_config(instances_root, name)
         dest = cfg.instance_locohane_dir
@@ -212,16 +213,16 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
                         placement["replaces"].append(f"{asset_type}/{asset}")
                     else:
                         result.problems.append(
-                            f"{name} の専用の置き場に同じ名前の {asset} が既にあります（{target}）。"
-                            "それを複製して改善するテーマにするか、名前を変えてください"
+                            f"A {asset} with the same name already exists in the dedicated location of {name} ({target}). "
+                            "Make a theme that copies and improves it, or change the name"
                         )
                 elif _exists_in_shared(cfg, asset_type, asset):
                     placement["overrides_builtin"].append(f"{asset_type}/{asset}")
-                    result.notices.append(f"{name} では同梱・共有の {asset} をこのテーマの {asset} で置き換えます（他のインスタンスは変わりません）")
+                    result.notices.append(f"In {name}, the bundled/shared {asset} will be replaced by this theme's {asset} (other instances do not change)")
         blocked = _env_blocked(instances_root, name, register.keys())
         if blocked:
             result.problems.append(
-                f"{name} の .env（または管理ツールの環境変数）に {blocked} があり、設定の登録が効きません。.env を見直してください"
+                f"The .env of {name} (or the admin tool's environment variables) has {blocked}, so registering the settings has no effect. Review .env"
             )
         try:
             updates, added = compute_updates(instances_root, name, register)
@@ -236,7 +237,7 @@ def check(instances_root: Path, directory: Path, *, distribute_to: list[str] | N
                 )
             placement["register"] = added
         except (overrides.ValidationError, PromotionError, ValueError) as e:
-            result.problems.append(f"{name} の設定の登録内容を検証できません: {e}")
+            result.problems.append(f"Cannot validate the settings to register for {name}: {e}")
         result.placements[name] = placement
     return result
 
@@ -245,7 +246,7 @@ def settings_to_register_safe(directory: Path, result: CheckResult) -> dict:
     try:
         return settings_to_register(directory)
     except Exception as e:  # noqa: BLE001 - 事前確認では理由を並べて返す
-        result.problems.append(f"登録する設定を求められません: {e}")
+        result.problems.append(f"Cannot determine the settings to register: {e}")
         return {}
 
 
@@ -274,7 +275,7 @@ def promote(
     backup_keep: int,
 ) -> dict:
     if not _LOCK.acquire(blocking=False):
-        raise PromotionError("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。")
+        raise PromotionError(_t("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。"))
     try:
         return _promote(
             instances_root,
@@ -303,9 +304,9 @@ def _promote(
 ) -> dict:
     result = check(instances_root, directory, distribute_to=distribute_to)
     if result.problems:
-        raise PromotionError("昇格できません: " + " / ".join(result.problems))
+        raise PromotionError(_t("昇格できません: {0}", " / ".join(result.problems)))
     if result.confirmations and not discard_source_changes:
-        raise PromotionError("確認が必要です: " + " / ".join(result.confirmations))
+        raise PromotionError(_t("確認が必要です: {0}", " / ".join(result.confirmations)))
     data = themes.read(directory)
     instance = data["instance"]
     assets = themes.list_assets(directory)
@@ -363,7 +364,7 @@ def _promote(
                 backup_keep=backup_keep,
                 audit_log_path=instances_root / "admin_changes.log",
                 instance_name=name,
-                actor=f"{actor}（スキル研究室: {data['title']}）",
+                actor=_t("{0}（スキル研究室: {1}）", actor, data['title']),
                 remote_addr=remote_addr,
                 instances_root=instances_root,
             )
@@ -378,7 +379,7 @@ def _promote(
             if backup is not None and backup.exists():
                 shutil.move(str(backup), str(target))
         raise PromotionError(
-            f"昇格に失敗したため、置いたファイルを元に戻しました（設定を保存済みのインスタンス: {saved_instances or 'なし'}）: {e}"
+            _t("昇格に失敗したため、置いたファイルを元に戻しました（設定を保存済みのインスタンス: {0}）: {1}", saved_instances or _t('なし'), e)
         ) from e
 
     # 取り込み元のドラフトをアーカイブ（配置と設定の登録は済んでいるため、ここで失敗しても昇格は取り消さず、
@@ -477,7 +478,7 @@ def _append_log(data: dict, record: dict) -> None:
 def return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reject: bool, actor: str) -> dict:
     """取り込み元のドラフトへ差し戻す（apply_fixes なら研究室での修正をドラフトへ写す）。"""
     if not _LOCK.acquire(blocking=False):
-        raise PromotionError("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。")
+        raise PromotionError(_t("ほかの昇格・差し戻しを処理中です。終わってからやり直してください。"))
     try:
         return _return_to_creators(directory, reason=reason, apply_fixes=apply_fixes, reject=reject, actor=actor)
     finally:
@@ -487,19 +488,19 @@ def return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, rejec
 def _return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reject: bool, actor: str) -> dict:
     reason = (reason or "").strip()
     if not reason:
-        raise PromotionError("差し戻しの理由を書いてください（作成者の skill-creator に表示されます）。")
+        raise PromotionError(_t("差し戻しの理由を書いてください（作成者の skill-creator に表示されます）。"))
     data = themes.read(directory)
     if data.get("status") in themes.CLOSED_STATUSES:
-        raise PromotionError(f"このテーマは既に終了しています（{data.get('status')}）")
+        raise PromotionError(_t("このテーマは既に終了しています（{0}）", data.get('status')))
     if data.get("status") in themes.ACTIVE_STATUSES:
-        raise PromotionError("ループ・トライアウトの実行中は差し戻せません（先に停止してください）")
+        raise PromotionError(_t("ループ・トライアウトの実行中は差し戻せません（先に停止してください）"))
     drafts = [
         (name, src)
         for name, src in (data.get("sources") or {}).get("skills", {}).items()
         if src.get("kind") == "draft" and src.get("origin") and (Path(src["origin"]) / "SKILL.md").is_file()
     ]
     if not drafts:
-        raise PromotionError("差し戻せる取り込み元のドラフトがありません（テーマを終えるには「取りやめ」を使ってください）。")
+        raise PromotionError(_t("差し戻せる取り込み元のドラフトがありません（テーマを終えるには「取りやめ」を使ってください）。"))
     returned = []
     for name, src in drafts:
         draft = Path(src["origin"])
@@ -509,8 +510,7 @@ def _return_to_creators(directory: Path, *, reason: str, apply_fixes: bool, reje
                 _replace_draft_with(draft, work)
             except OSError as e:
                 raise PromotionError(
-                    f"ドラフト {src.get('owner')}/{name} へ修正を写せませんでした（ドラフトは元のままです。"
-                    f"作成者がファイルを開いていないか確かめてください。差し戻し済み: {returned or 'なし'}）: {e}"
+                    _t("ドラフト {0}/{1} へ修正を写せませんでした（ドラフトは元のままです。作成者がファイルを開いていないか確かめてください。差し戻し済み: {2}）: {3}", src.get('owner'), name, returned or _t('なし'), e)
                 ) from e
         meta_path = draft / DRAFT_META_FILENAME
         meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}

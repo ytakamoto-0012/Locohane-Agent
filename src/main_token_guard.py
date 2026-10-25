@@ -30,7 +30,7 @@ from .context_trim import last_ai_total_tokens as _last_ai_total_tokens
 logger = logging.getLogger(__name__)
 
 # 差し込むメッセージの先頭に付ける目印。ログ・テストからの識別用。
-GUARD_MARKER = "[コンテキスト上限が近づいています]"
+GUARD_MARKER = "[Context limit is approaching]"
 
 
 def maybe_append_token_guard(
@@ -60,13 +60,12 @@ def maybe_append_token_guard(
         # 文言を読めないことで会話を止めてしまう方が損失が大きいため、
         # 記録だけ残して通常どおり続行する。
         logger.exception(
-            "引継ぎプロンプトの読み込みに失敗しました: %s", config.graph_handoff_prompt_path
+            "Failed to load the handoff prompt: %s", config.graph_handoff_prompt_path
         )
         return messages
 
     logger.warning(
-        "メインエージェントのトークン使用量が閾値(%d)に達しました"
-        "(直近の応答: %dトークン)。引継ぎプロンプトの生成を促します",
+        "Main agent token usage reached the threshold (%d) (last response: %d tokens). Prompting it to generate a handoff prompt",
         config.graph_token_guard_soft_threshold,
         total,
     )

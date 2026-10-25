@@ -178,7 +178,7 @@ def test_write_validates_content_and_invalidates_tryout(lab_env):
     _add_skill(directory)
     with pytest.raises(themes.ThemeError, match="SKILL.md"):
         themes.write_text(directory, "assets/skills/my-skill/SKILL.md", "frontmatter なし", actor="admin")
-    with pytest.raises(themes.ThemeError, match="構文"):
+    with pytest.raises(themes.ThemeError, match="syntax error"):
         themes.write_text(directory, "assets/skills/my-skill/scripts/run.py", "def (:", actor="admin")
     themes.update(directory, lambda d: d.update({"tryout": {"repeat": 10}, "status": themes.STATUS_REVIEW}))
     themes.write_text(directory, "cases/001.yaml", _CASE.format(id="001"), actor="admin")
@@ -223,7 +223,7 @@ def test_fixer_applies_all_or_nothing(lab_env):
         {"path": "spec.md", "content": "仕様を変える"},
     ]
     applied, errors = fixer.apply_edits(directory, bad, known_tools=["Read"])
-    assert applied == [] and any("仕様" in e for e in errors)
+    assert applied == [] and any("spec" in e for e in errors)
     assert skill_md.read_text(encoding="utf-8") == original
     themes.add_asset_new(directory, "agents", "helper", _agent_md("helper", "Read"), actor="admin")
     invalid_agent = [{"path": "assets/agents/helper.md", "content": _agent_md("helper", "Read, NoSuchTool")}]
@@ -409,12 +409,12 @@ def test_promote_requires_confirmation_when_creator_changed_draft(lab_env, monke
 def test_promote_refuses_stale_tryout_and_name_collision(lab_env):
     directory, _ = _ready_theme(lab_env)
     (directory / "cases" / "002.yaml").write_text(_CASE.format(id="002"), encoding="utf-8")
-    assert any("ケース" in p for p in promotion.check(lab_env["root"], directory).problems)
+    assert any("cases" in p for p in promotion.check(lab_env["root"], directory).problems)
     (directory / "cases" / "002.yaml").unlink()
     taken = _cfg(lab_env, "org_a").instance_locohane_dir / "agents"
     taken.mkdir(parents=True)
     (taken / "helper.md").write_text(_agent_md("helper"), encoding="utf-8")
-    assert any("同じ名前" in p for p in promotion.check(lab_env["root"], directory).problems)
+    assert any("same name" in p for p in promotion.check(lab_env["root"], directory).problems)
 
 
 def test_promote_can_distribute_to_another_instance(lab_env, monkeypatch):
@@ -614,10 +614,18 @@ def test_api_overview_shows_worker_workload(client, lab_env):
 
 
 def test_spec_filled_requires_purpose(lab_env):
-    """仕様の「目的」が見出しだけ・「要確認:」だけなら書かれていないとみなす（開始の条件）。"""
+    """仕様の Purpose が見出しだけ・「TODO:」だけなら書かれていないとみなす（開始の条件）。"""
     directory = _theme(lab_env)
-    assert not themes.spec_filled(directory)  # 作成直後のひな形
     spec = directory / themes.SPEC_FILENAME
+    assert [line for line in spec.read_text(encoding="utf-8").splitlines() if line.startswith("## ")] == [
+        f"## {heading}" for heading in themes.SPEC_HEADINGS
+    ]
+    assert not themes.spec_filled(directory)  # 作成直後のひな形
+    spec.write_text("# t\n## Purpose\nTODO: 何を確かめるか\n## When to use\n営業の確認\n", encoding="utf-8")
+    assert not themes.spec_filled(directory)  # Purpose 以外が書かれていても足りない
+    spec.write_text("# t\n## Purpose\nFind calculation errors in quotes\n## When to use\n", encoding="utf-8")
+    assert themes.spec_filled(directory)
+    # 日本語の旧見出し・「要確認:」で書かれた仕様も同じに扱う
     spec.write_text("# t\n## 目的\n要確認:\n## 使う場面\n営業の確認\n", encoding="utf-8")
     assert not themes.spec_filled(directory)  # 目的以外が書かれていても足りない
     spec.write_text("# t\n## 目的\n見積書の計算ミスを見つける\n## 使う場面\n", encoding="utf-8")
@@ -652,17 +660,17 @@ def test_drafting_uses_targets_and_spec(lab_env, monkeypatch):
     themes.add_asset_new(directory, "skills", "estimate-check", _skill_md("estimate-check", "見積書の計算ミスを探す"), actor="admin", description="見積書の計算ミスを一覧にする")
     themes.add_task(directory, "draft_asset", {"asset_type": "agents", "name": "reviewer", "request": "見積書を総合的に見直す"}, actor="admin")
     brief = drafting.targets_brief(directory)
-    assert "スキル estimate-check: このテーマで新しく作ったもの（注文: 見積書の計算ミスを一覧にする）" in brief
-    assert "サブエージェント reviewer: AI が作成中（注文: 見積書を総合的に見直す）" in brief
+    assert "skill estimate-check: newly created in this theme (order: 見積書の計算ミスを一覧にする)" in brief
+    assert "sub-agent reviewer: being created by the AI (order: 見積書を総合的に見直す)" in brief
 
     prompts = []
     monkeypatch.setattr(drafting, "ask_text", lambda _c, _s, user: prompts.append(user) or "# テスト\n## 目的\n計算ミスを見つける\n")
     drafting.draft_spec(None, directory, max_file_chars=10000)
-    assert "## 研究対象の一覧" in prompts[0] and "assets/skills/estimate-check/SKILL.md" in prompts[0]
+    assert "## Research targets" in prompts[0] and "assets/skills/estimate-check/SKILL.md" in prompts[0]
 
     monkeypatch.setattr(drafting, "ask_json", lambda _c, _s, user: prompts.append(user) or [{"id": "c1", "turns": ["見積書を確認して"], "judge": "誤りを指摘している"}])
     assert drafting.draft_cases(None, directory, max_file_chars=10000, count=1) == ["c1"]
-    assert "## 研究対象の一覧" in prompts[1] and "計算ミスを見つける" in prompts[1]
+    assert "## Research targets" in prompts[1] and "計算ミスを見つける" in prompts[1]
 
 
 # --- あらゆる状況への備え（抜け道・競合・異常終了） -------------------------------------------
@@ -697,13 +705,13 @@ def test_case_without_effective_condition_is_rejected(lab_env):
     """expect の項目がすべて空で judge も無いケースは、何をしても合格になるため保存させない。"""
     directory = _theme(lab_env)
     empty = "id: '001'\ntarget: skill_lab\nturns: [x]\nexpect:\n  response_contains: []\n"
-    with pytest.raises(themes.ThemeError, match="合格の決め方"):
+    with pytest.raises(themes.ThemeError, match="way to decide passing"):
         themes.write_text(directory, "cases/001.yaml", empty, actor="admin")
     # 手で置かれた壊れたケース・無い入力フォルダは、開始の条件で知らせる
     (directory / "cases" / "001.yaml").write_text(empty, encoding="utf-8")
     (directory / "cases" / "002.yaml").write_text(_CASE.format(id="002") + "work_dir: fixtures/nothing\n", encoding="utf-8")
     cases = {c["id"]: c for c in themes.list_cases(directory)}
-    assert "合格の決め方" in cases["001"]["error"] and "fixtures/nothing" in cases["002"]["error"]
+    assert "way to decide passing" in cases["001"]["error"] and "fixtures/nothing" in cases["002"]["error"]
     assert any("001" in m and "002" in m for m in themes.start_missing(directory))
 
 
@@ -775,7 +783,7 @@ def test_worker_does_not_run_drafts_after_loop_started(lab_env, monkeypatch):
     monkeypatch.setattr(w, "_run_task", lambda *a: pytest.fail("ループ開始後に下書きを実行した"))
     w.process_tasks()
     task = themes.read(directory)["tasks"][0]
-    assert task["status"] == "error" and "開始後" in task["error"]
+    assert task["status"] == "error" and "has started" in task["error"]
 
 
 def test_worker_stops_without_fixing_when_llm_is_unreachable(lab_env, monkeypatch):

@@ -1,6 +1,6 @@
 ---
 name: skill-creator
-description: 自分専用のドラフトスキル（未検証のスキル）を作る・既存スキルの改善案を作る・本文やスクリプトを書き直す・実際のローカルLLMで繰り返し評価する（スキル安定化トライアウト）・descriptionのトリガー精度を上げる、ためのメタスキル。「新しいスキルを作りたい」「スキルを作って」「このスキルを直したい」「スキルがちゃんと動くか試したい」「スキルのトリガー精度を上げたい」「自分のドラフトを見せて」など、スキル自体の作成・改善・検証の依頼があれば、ユーザーが「skill-creator」と言わなくても必ず使う。
+description: A meta-skill for creating your own draft skills (unverified skills), making improved versions of existing skills, rewriting their body and scripts, evaluating them repeatedly with the real local LLM (skill stabilization tryout), and improving the trigger accuracy of the description. Whenever there is a request to create, improve or verify a skill itself, such as "I want to make a new skill", "make a skill", "I want to fix this skill", "I want to test whether the skill works properly", "I want to improve the skill's trigger accuracy" or "show me my drafts", always use it even if the user does not say "skill-creator".
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,50 +9,50 @@ metadata:
 
 # skill-creator
 
-ドラフトスキルを作り、ローカルLLMで評価して直す、を繰り返すためのスキル。
+A skill for repeating the cycle of creating a draft skill, evaluating it with the local LLM and fixing it.
 
-## 必ず守ること
+## Always follow
 
-- 作るのは**ドラフト**だけ。正式スキル（skills/ 等）は書き換えない。既存スキルを直したいときは `fork_skill.py` で改善案のドラフトを作る。
-- ドラフトは作った人の会話でだけ、スキル名 `ユーザー名/スキル名` として一覧に出る（作成・削除の次のメッセージから）。他の人には見えない。
-- 正式スキルにするのはスキル開発者の仕事。完了したら「正式化はスキル開発者に依頼してください」と伝える（開発者は管理ツールのスキル研究室で仕上げてから正式化する。正式化されたドラフトは一覧から消える）。
-- 評価（`run_isolated_eval.py` `run_trigger_eval.py`）は1件ずつ。`status` が `finished` になるまで次を `start` しない。`running` の間は1分ほど待ってから `status` を呼ぶ。
-- このスキルのスクリプトは計画承認なしで自分で直接実行できる。
-- ドラフトを1か所でも直すと、トライアウトの合格回数は0に戻る。直した後は `--repeat 10` から評価し直す。
+- Create only **drafts**. Do not rewrite official skills (skills/ etc.). To fix an existing skill, make a draft of the improvement with `fork_skill.py`.
+- Drafts appear in the list as `username/skill name` only in the creator's conversations (from the message after creating or deleting). Other people cannot see them.
+- Making a skill official is the skill developer's job. When done, say "ask a skill developer to make it official" (the developer finishes it in the Skill Lab of the admin tool before making it official. Drafts that become official disappear from the list).
+- Run evaluations (`run_isolated_eval.py`, `run_trigger_eval.py`) one at a time. Do not `start` the next one until `status` becomes `finished`. While it is `running`, wait about a minute before calling `status`.
+- You can run this skill's scripts directly yourself without plan approval.
+- Fixing a draft in even one place resets its tryout pass count to 0. After fixing, evaluate again from `--repeat 10`.
 
-## 流れ
+## Flow
 
-1. 何をするスキルか・どんな発話で使うか・出力の形を確かめる。
-2. ドラフトを作る（新規は `scaffold_skill.py`、既存スキルの改善は `fork_skill.py`）。
-3. `write_draft_file.py` で SKILL.md・scripts/・references/ を書く。
-4. `validate_skill.py` で確認する。
-5. `make_eval_case.py` で評価ケースを2〜3件作る。
-6. `run_isolated_eval.py` で評価し、結果を見て 3 に戻る。
-7. 安定したら `--repeat 10` で評価する（スキル安定化トライアウト）。
-8. 結果をユーザーに報告する。
+1. Confirm what the skill does, for what kind of messages it is used, and the shape of the output.
+2. Create the draft (`scaffold_skill.py` for new ones, `fork_skill.py` for improving an existing skill).
+3. Write SKILL.md, scripts/ and references/ with `write_draft_file.py`.
+4. Check with `validate_skill.py`.
+5. Create 2-3 evaluation cases with `make_eval_case.py`.
+6. Evaluate with `run_isolated_eval.py`, look at the results, and go back to 3.
+7. Once it is stable, evaluate with `--repeat 10` (skill stabilization tryout).
+8. Report the results to the user.
 
-## 1. ドラフトを作る
+## 1. Create the draft
 
-新規（スクリプトも使うなら `--with-script` を付ける）:
+New (add `--with-script` if it also uses a script):
 ```
-python scaffold_skill.py --name my-skill --description "何をするか。どんな発話で使うか。" --with-script
+python scaffold_skill.py --name my-skill --description "What it does. For what kind of messages it is used." --with-script
 ```
 
-既存スキルの改善案（正式スキルはそのまま残る。正式スキルの評価ケースも写される）:
+An improvement of an existing skill (the official skill stays as is; the official skill's evaluation cases are also copied):
 ```
 python fork_skill.py --name excel-read
 ```
 
-自分のドラフトの一覧:
+List of your drafts:
 ```
 python list_drafts.py
 ```
 
-## 2. 中身を書く
+## 2. Write the content
 
-`--name` は自分のドラフトならスキル名だけでよい。
+For your own drafts, `--name` can be just the skill name.
 
-ファイル全体を書く:
+Write a whole file:
 ```
 python write_draft_file.py --name my-skill --path SKILL.md --content "---
 name: my-skill
@@ -63,95 +63,96 @@ description: ...
 ..."
 ```
 
-一部だけ置き換える（`--old` はファイル内で1か所だけ一致させる）:
+Replace only part (`--old` must match exactly one place in the file):
 ```
-python write_draft_file.py --name my-skill --path SKILL.md --old "古い文" --new "新しい文"
-```
-
-スクリプトを書く（長い内容は作業フォルダのファイルから写す）:
-```
-python write_draft_file.py --name my-skill --path scripts/run.py --content-file <作業フォルダのファイル>
+python write_draft_file.py --name my-skill --path SKILL.md --old "old text" --new "new text"
 ```
 
-ファイルやドラフトを消す:
+Write a script (copy long content from a file in the working folder):
+```
+python write_draft_file.py --name my-skill --path scripts/run.py --content-file <file in the working folder>
+```
+
+Delete files or the draft:
 ```
 python delete_draft.py --name my-skill --path references/old.md
 python delete_draft.py --name my-skill
 ```
 
-書き方:
-- description が唯一のトリガー手がかり。「何をするか」と「どんな発話で使うか」を具体的に書く。
-- SKILL.md 本文は500行以内。長くなるなら references/ に分ける。
-- スクリプトの呼び出し例は `python <script>.py <args...>` の形で書き、出力キーの意味も書く。
-- スクリプトは正常時に終了コード0で1行のJSON、異常時は終了コード1で標準エラーに理由を出す。
+How to write:
+- The description is the only trigger clue. Write concretely "what it does" and "for what kind of messages it is used".
+- Keep the body of SKILL.md within 500 lines. If it gets longer, split it into references/.
+- Write script call examples in the form `python <script>.py <args...>`, and also write what the output keys mean.
+- On success, scripts print one line of JSON with exit code 0; on failure, they print the reason to stderr with exit code 1.
 
-確認:
+Check:
 ```
 python validate_skill.py --name my-skill
 ```
 
-## 3. 評価ケースを作る
+## 3. Create evaluation cases
 
 ```
-python make_eval_case.py --name my-skill --case-id 001_basic --turns "[\"ユーザーが実際に打ちそうな発話\"]" --expect "{\"tool_call_args_contains\": {\"read_skill\": {\"skill_name\": \"my-skill\"}}}"
+python make_eval_case.py --name my-skill --case-id 001_basic --turns "[\"a message a user would actually type\"]" --expect "{\"tool_call_args_contains\": {\"read_skill\": {\"skill_name\": \"my-skill\"}}}"
 ```
 
-judge（自由記述の判定観点）も付ける:
+Also add judge (free-text judging viewpoint):
 ```
-python make_eval_case.py --name my-skill --case-id 002_output --turns "[\"発話\"]" --expect "{\"tool_called_any\": [\"run_script\"]}" --judge "出力に〇〇が含まれ、捏造が無いか"
+python make_eval_case.py --name my-skill --case-id 002_output --turns "[\"message\"]" --expect "{\"tool_called_any\": [\"run_script\"]}" --judge "Whether the output contains XX and nothing is fabricated"
 ```
 
-- 評価中のスキル名は `my-skill`（ユーザー名なし）。expect にもスキル名だけを書く。
-- `--expect` の主なキーは `references/schemas.md` を参照。
-- 結果が客観的に決まらない（文章のトーン等）なら judge を使う。
+- The skill name during evaluation is `my-skill` (without the username). Write only the skill name in expect too.
+- For the main keys of `--expect`, see `references/schemas.md`.
+- Use judge when the result cannot be decided objectively (the tone of text, etc.).
+- Write the case messages (turns) in the language the users of the skill will actually use.
 
-## 4. 評価する
+## 4. Evaluate
 
-全ケースを1回ずつ:
+All cases once each:
 ```
 python run_isolated_eval.py start --name my-skill
 ```
 
-比較用にドラフト無しで（新規ならスキル無し、改善案なら正式スキルのまま）:
+Without the draft, for comparison (no skill for new ones, the official skill as is for improvements):
 ```
 python run_isolated_eval.py start --name my-skill --mode without_skill
 ```
 
-一部のケースだけ、3回ずつ:
+Only some cases, 3 times each:
 ```
 python run_isolated_eval.py start --name my-skill --case 001_basic --case 002_output --repeat 3
 ```
 
-スキル安定化トライアウト（各ケース10回。全回合格で合格）:
+Skill stabilization tryout (10 times per case; passes if every run passes):
 ```
 python run_isolated_eval.py start --name my-skill --repeat 10
 ```
 
-結果:
+Results:
 ```
 python run_isolated_eval.py status --name my-skill --job-id <job_id>
 ```
 
-- `verdict` が `pass` なら全回合格、`fail` なら不合格あり、`needs_judge` なら `runs` の `judge` と `final_answer` を読んで自分で判定する。判定の根拠は報告に書く。
-- `stale: true` なら評価中にドラフトが変わっている。結果は使わず、もう一度 `start` する。
-- with_skill と without_skill の比較表: `python aggregate_results.py --name my-skill --input with_skill=<results_path> --input without_skill=<results_path>`
+- `verdict` `pass` means every run passed, `fail` means there were failures, and `needs_judge` means read the `judge` and `final_answer` of `runs` and judge it yourself. Write the grounds for your verdict in the report.
+- `stale: true` means the draft changed during evaluation. Do not use the results; `start` again.
+- Comparison table of with_skill and without_skill: `python aggregate_results.py --name my-skill --input with_skill=<results_path> --input without_skill=<results_path>`
 
-## 5. 直し方
+## 5. How to fix
 
-- フィードバックは一般化して書く。目の前の例だけに効く「必ず〜」を並べない。
-- 冗長な手順は削る。
-- 同じ処理を何度も書くなら scripts/ に1つまとめる。
-- 直したら同じケースで評価し直す。
-- スキル開発者に差し戻されたドラフトは、`list_drafts.py` の `returned_reason` を読んで直す。直すと自動で再提出の状態に戻る。
+- Write feedback in generalized form. Do not pile up "always ..." rules that only work for the example at hand.
+- Remove redundant steps.
+- If the same processing is written several times, put it together once in scripts/.
+- After fixing, evaluate again with the same cases.
+- For drafts sent back by a skill developer, read `returned_reason` from `list_drafts.py` and fix them. Fixing automatically puts them back in the resubmitted state.
 
-## 6.（任意）トリガー精度を上げる
+## 6. (Optional) Improve trigger accuracy
 
-1. 使うべき発話と、紛らわしいが使うべきでない発話を合わせて10〜20件、JSONファイルにする（形式は `references/schemas.md`）。
-2. `python run_trigger_eval.py start --name my-skill --eval-set <JSONファイル> --repeats 3` → `status` で `accuracy` と `per_query` を見る。
-3. `matched: false` の項目をJSONファイルにして `python propose_description.py start --name my-skill --failed-queries <JSONファイル>` → `status` で改善案を受け取る。
-4. 改善案を `write_draft_file.py` で description に反映し、もう一度 2 を回す。
+1. Make a JSON file with 10-20 messages in total, both ones where it should be used and confusing ones where it should not (format in `references/schemas.md`).
+2. `python run_trigger_eval.py start --name my-skill --eval-set <JSON file> --repeats 3` -> look at `accuracy` and `per_query` with `status`.
+3. Put the `matched: false` items in a JSON file and run `python propose_description.py start --name my-skill --failed-queries <JSON file>` -> receive the proposal with `status`.
+4. Apply the proposal to the description with `write_draft_file.py`, and run 2 again.
 
-## 参考資料
+## References
 
-- `references/schemas.md`: 各スクリプトの引数と出力JSON。
-- `skills/SKILLS_README.md`: SKILL.md の書式と scripts/ の規約。
+- `references/schemas.md`: the arguments and output JSON of each script.
+- `skills/SKILLS_README.md`: the format of SKILL.md and the conventions for scripts/.

@@ -68,13 +68,13 @@ _BRACE_GROUP_RE = re.compile(r"\{([^{}]+)\}")
 # NotImplementedError で拒否する。ToolNode の既定エラーハンドラはこれを再送出して
 # ターン全体を落とすため、呼び出し側で捕捉してこのヒントを添えたエラー文字列に変える。
 GLOB_PATTERN_ERRORS = (ValueError, NotImplementedError)
-ABSOLUTE_PATTERN_HINT = "（pattern にはファイル名部分（例: *.jpg）だけを書き、フォルダは path に渡すこと）"
+ABSOLUTE_PATTERN_HINT = "(Write only the file name part (e.g. *.jpg) in pattern, and pass the folder in path)"
 
 
 def glob_pattern_error_message(error: Exception) -> str:
     """GLOB_PATTERN_ERRORS を「パターンが不正です: ...」の文言へ変換する。"""
     hint = ABSOLUTE_PATTERN_HINT if isinstance(error, NotImplementedError) else ""
-    return f"パターンが不正です: {error}{hint}"
+    return f"Invalid pattern: {error}{hint}"
 
 
 def _expand_braces(pattern: str) -> list[str]:
@@ -117,9 +117,9 @@ def glob_search(base: Path, pattern: str, head_limit: int = 200, exclude_names: 
     """
     if not base.exists():
         hint = suggest_similar_dir(base)
-        raise ValueError(f"検索起点ディレクトリが見つかりません: {base}{hint}")
+        raise ValueError(f"Search base directory not found: {base}{hint}")
     if not base.is_dir():
-        raise ValueError(f"検索起点パスがディレクトリではありません: {base}")
+        raise ValueError(f"Search base path is not a directory: {base}")
 
     resolved_base = base.resolve()
     try:
@@ -171,47 +171,49 @@ def glob_search(base: Path, pattern: str, head_limit: int = 200, exclude_names: 
 
 @tool("Glob")
 def glob_tool(pattern: str, path: str = "", head_limit: int = 200) -> str:
-    """指定ディレクトリ直下でglobパターンに一致するファイル・ディレクトリを検索する。
+    """Search for files and directories matching a glob pattern directly under a directory.
 
-    検索は `path` の直下だけが対象で、そのさらに奥のサブディレクトリは
-    探索しない（深い階層まで探すと時間がかかりすぎるため）。奥まで調べたい
-    場合は、目的のサブディレクトリを `path` に指定して改めて呼ぶこと。
+    Only entries directly under `path` are searched; deeper subdirectories are not explored
+    (searching deep levels takes too long). To look deeper, call it again with the target
+    subdirectory as `path`.
 
-    ファイル名検索だけでなく、ディレクトリ階層そのものの調査（対象直下に
-    ファイルが1件も無くサブディレクトリしか無いかもしれない場合等）にも
-    `"*"` で使う。読み取り専用のため、計画の有無に関わらず
-    いつでも呼んでよい。ただしメインエージェント自身が呼べるのは1ターンに
-    つき既定1回のみ（対象ルート直下の確認用の例外）。2回目以降はエラーを
-    返すので、それ以降の調査は `dispatch_agent` へ委譲すること。
+    Use it with `"*"` not only to search file names but also to investigate the directory structure
+    itself (e.g. when there may be no files directly under the target, only subdirectories).
+    It is read-only, so you may call it any time regardless of the plan. However, the main agent
+    itself can call it only once per turn by default (an exception for checking directly under the
+    target root). From the second call on it returns an error, so delegate further investigation to
+    `dispatch_agent`.
 
     Args:
-        pattern: globパターン（例: 直下の全Pythonファイルなら "*.py"）。
-            `**` を書いても直下までしか探索しない。
-            `{a,b,c}` によるシェル同様の選択展開も使える
-            （例: 画像ファイル一括なら "*.{jpg,jpeg,png,gif,bmp,webp}"）。
-            拡張子の大文字・小文字はどちらか一方を書けば両方一致する
-            （Windows上のパス照合は大文字小文字を区別しないため）。
-        path: 検索起点ディレクトリの絶対パス（`@N` 可）。省略時は作業ディレクトリ。
-        head_limit: ファイル・ディレクトリそれぞれに独立に適用する上限件数（既定200）。
+        pattern: A glob pattern (e.g. "*.py" for all Python files directly under path).
+            Writing `**` still only searches directly under path.
+            Shell-like brace expansion `{a,b,c}` is supported
+            (e.g. "*.{jpg,jpeg,png,gif,bmp,webp}" for all image files).
+            Writing either the upper- or lower-case extension matches both
+            (path matching on Windows is case-insensitive).
+        path: The absolute path of the base directory (`@N` allowed). Defaults to the working
+            directory.
+        head_limit: The maximum number of entries, applied separately to files and directories
+            (default 200).
 
     Returns:
-        `{"base", "base_contents", "total_matches", "returned", "truncated",
+        A JSON string with `{"base", "base_contents", "total_matches", "returned", "truncated",
         "files", "file_details", "total_directories", "returned_directories",
-        "directories_truncated", "directories", "path_memory"}` を持つJSON文字列。
-        `files`/`directories` は更新日時降順で `head_limit` 件までそれぞれ独立に
-        打ち切られる（`truncated`/`directories_truncated` で判別）。
-        `file_details` は `files` と同順・同数で、バイナリ判定と総行数
-        （`Read` の `limit` を決める前に確認すること）を持つ。
-        `files`・`file_details[].path`・`directories[].path` は、パスメモリーに
-        登録できた場合は絶対パスそのものではなく `@N` 参照で返る（実体は
-        `path_memory` の対応表を見る）。`@N` はそのまま他ツールの絶対パス引数へ
-        渡せる。
-        起点ディレクトリが存在しない・ディレクトリでない場合は例外を送出せず
-        「エラー: ...」形式の文字列を返す。
+        "directories_truncated", "directories", "path_memory"}`.
+        `files`/`directories` are each truncated to `head_limit` entries, newest first
+        (see `truncated`/`directories_truncated`).
+        `file_details` is in the same order and count as `files`, with the binary check and the
+        total number of lines (check it before deciding the `limit` of `Read`).
+        `files`, `file_details[].path` and `directories[].path` are returned as `@N` references
+        instead of absolute paths when they could be registered in path memory (see the
+        `path_memory` table for the real paths). `@N` can be passed as is to the absolute path
+        argument of other tools.
+        If the base directory does not exist or is not a directory, it returns an "Error: ..."
+        string instead of raising.
     """
     base, error = _resolve_file_tools_path(path)
     if error:
-        return f"エラー: {error}"
+        return f"Error: {error}"
     dup_error = _check_file_tools_duplicate("Glob", f"Glob\x00{pattern}\x00{base}\x00{head_limit}")
     if dup_error:
         return dup_error
@@ -219,7 +221,7 @@ def glob_tool(pattern: str, path: str = "", head_limit: int = 200) -> str:
         result = glob_search(base, pattern, head_limit=head_limit, exclude_names=_foreign_tmp_dir_names())
     except ValueError as e:
         hint = suggest_from_path_memory(str(base)) if not base.exists() else ""
-        return f"エラー: {e}{hint}"
+        return f"Error: {e}{hint}"
     path_memory = _register_path_memory([*result["files"], *[d["path"] for d in result["directories"]]])
     if path_memory:
         # フルパスの重複を `@N` へ畳んでから result に載せる（大量ファイル時に

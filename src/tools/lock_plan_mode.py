@@ -16,14 +16,15 @@ logger = logging.getLogger(__name__)
 
 @tool
 async def lock_plan_mode() -> str:
-    """Edit Automatically から Plan Mode へ手動で戻す（承認状態を取り消す）。
+    """Manually return from Edit Automatically to Plan Mode (revoke the approval).
 
-    全ステップの完了を待たず、途中で自動実行を止めて書き込み系ツールを再びロックしたい
-    場合に、ユーザーの承認を介さず自分の判断で呼んでよい。計画（ステップ一覧）自体は
-    削除されない。再度書き込み系ツールを使うには、改めて approve_plan で承認を得ること。
+    You may call it on your own judgment, without the user's approval, when you want to stop the
+    automatic execution midway and lock the write tools again without waiting for all steps to
+    finish. The plan (list of steps) itself is not deleted. To use the write tools again, get
+    approval again with approve_plan.
 
     Returns:
-        状態変更の結果を伝えるテキスト。
+        A text telling the result of the state change.
     """
     was_approved = bool(cl.user_session.get("plan_approved"))
     cl.user_session.set("plan_approved", False)
@@ -35,10 +36,10 @@ async def lock_plan_mode() -> str:
         finished = all(s["status"] == "completed" for s in plan)
         message.content = _render_plan_payload(plan, finished=finished, approved=False)
         await message.update()
-    logger.info("lock_plan_mode: 呼び出し（元の状態: %s）", "approved" if was_approved else "not approved")
+    logger.info("lock_plan_mode: called (previous state: %s)", "approved" if was_approved else "not approved")
     if not was_approved:
-        return "既に Plan Mode です（変更なし）。"
-    return "Plan Mode へ戻しました。書き込み系ツールは再びブロックされます。" "再開するには approve_plan で改めて承認を得てください。"
+        return "Already in Plan Mode (no change)."
+    return "Returned to Plan Mode. The write tools are blocked again. " "To resume, get approval again with approve_plan."
 
 
 async def toggle_plan_mode_from_ui() -> None:
@@ -56,7 +57,7 @@ async def toggle_plan_mode_from_ui() -> None:
         return
     currently_approved = bool(cl.user_session.get("plan_approved"))
     if not currently_approved and not _state._PLAN_BADGE_ALLOW_UNLOCK:
-        logger.info("toggle_plan_mode_from_ui: allow_badge_unlock=False のため" "ロック解除方向のクリックを無視しました")
+        logger.info("toggle_plan_mode_from_ui: ignored a click in the unlock direction because allow_badge_unlock=False")
         return
     approved = not currently_approved
     cl.user_session.set("plan_approved", approved)
@@ -67,6 +68,6 @@ async def toggle_plan_mode_from_ui() -> None:
         message.content = _render_plan_payload(plan, finished=finished, approved=approved)
         await message.update()
     logger.info(
-        "toggle_plan_mode_from_ui: ユーザーがバッジをクリック（新状態: %s）",
+        "toggle_plan_mode_from_ui: the user clicked the badge (new state: %s)",
         "approved" if approved else "not approved",
     )

@@ -690,6 +690,10 @@
   font-size: 13px;
 }
 
+.ask-file-button {
+  margin-right: 8px;
+}
+
 .composer {
   border-top: 1px solid var(--border);
   padding: 14px 20px 18px;
@@ -1724,6 +1728,29 @@
 .login-submit:disabled {
   opacity: 0.6;
   cursor: default;
+}
+
+.login-language {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.login-language button {
+  padding: 2px 8px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  opacity: 0.6;
+  cursor: pointer;
+}
+
+.login-language button.login-language--active {
+  opacity: 1;
+  color: var(--accent);
+  font-weight: 500;
 }
 
 .step-item-children {

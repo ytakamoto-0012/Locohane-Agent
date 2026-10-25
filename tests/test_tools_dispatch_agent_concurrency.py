@@ -209,7 +209,7 @@ async def test_dispatch_agent_injects_work_dir_hint_into_task(monkeypatch, tmp_p
     # 別スレッドのデータを拾わないための分離）。
     expected_work_dir = tools._workdir._resolve_exec_workdir()
     expected_info = json.dumps({"absolute_path": str(expected_work_dir)}, ensure_ascii=False)
-    assert captured["task"] == f"[作業ディレクトリ]\n{expected_info}\n\ninvestigate"
+    assert captured["task"] == f"[Working directory]\n{expected_info}\n\ninvestigate"
 
 
 @pytest.mark.asyncio

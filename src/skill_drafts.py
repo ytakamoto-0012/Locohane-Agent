@@ -57,7 +57,7 @@ _OTHER_USER_OPS: dict[str, frozenset[str]] = {
     "full": frozenset({"list", "read", "exec", "write"}),
 }
 
-_OP_LABELS = {"list": "一覧表示", "read": "読み取り", "exec": "実行", "write": "書き込み・評価"}
+_OP_LABELS = {"list": "list", "read": "read", "exec": "run", "write": "write or evaluate"}
 
 
 @dataclass(frozen=True)
@@ -155,10 +155,10 @@ def access_error(path: Path, op: DraftOp, config: "Config | None", user: str | N
     if owner is None:
         if op == "read" and "read" in _OTHER_USER_OPS.get(mode, frozenset()):
             return None
-        return "エラー: ドラフトスキル置き場の一覧は参照できません。"
+        return "Error: the list of the draft skill location cannot be viewed."
     if is_allowed(owner, user, mode, op):
         return None
-    return f"エラー: 他ユーザーのドラフトスキル（{owner}）は{_OP_LABELS[op]}できません。"
+    return f"Error: you cannot {_OP_LABELS[op]} another user's draft skills ({owner})."
 
 
 def _other_owner_dirs(config: "Config | None", user: str | None, op: DraftOp) -> list[Path]:
@@ -273,11 +273,11 @@ def _scan_owner_dir(owner_dir: Path) -> list[Skill]:
         except OSError:
             continue
         if fm is None:
-            logger.warning("ドラフト %s/%s: frontmatter を読めないためスキップ", owner_dir.name, entry.name)
+            logger.warning("Draft %s/%s: skipping because the frontmatter cannot be read", owner_dir.name, entry.name)
             continue
         error = _validate(fm.get("name"), fm.get("description"), entry.name)
         if error:
-            logger.warning("ドラフト %s/%s: 仕様違反のためスキップ（%s）", owner_dir.name, entry.name, error)
+            logger.warning("Draft %s/%s: skipping because it violates the spec (%s)", owner_dir.name, entry.name, error)
             continue
         skills.append(
             Skill(
@@ -325,17 +325,17 @@ def render_draft_skills_block(drafts: list[DraftSkill]) -> str:
     """システムプロンプトのスキル一覧の末尾へ足すドラフトの箇条書きを返す（無ければ空文字列）。"""
     if not drafts:
         return ""
-    lines = ["", "ドラフトスキル（未検証。正式スキルと同じ手順で使う）:"]
+    lines = ["", "Draft skills (unverified; use them the same way as official skills):"]
     for d in drafts:
         if d.own:
-            note = "自分のドラフト"
+            note = "your own draft"
         elif d.executable:
-            note = f"{d.owner}のドラフト"
+            note = f"{d.owner}'s draft"
         elif d.readable:
-            note = f"{d.owner}のドラフト・読み取りのみ"
+            note = f"{d.owner}'s draft, read-only"
         else:
-            note = f"{d.owner}のドラフト・使用不可"
-        lines.append(f"- {d.skill.name}: {d.skill.description}（{note}）")
+            note = f"{d.owner}'s draft, not usable"
+        lines.append(f"- {d.skill.name}: {d.skill.description} ({note})")
     return "\n".join(lines)
 
 

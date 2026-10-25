@@ -28,7 +28,8 @@ from pathlib import Path
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
 if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
-from docx_common import backup_before_overwrite, register_output_path, setup_utf8_stdio  # noqa: E402
+from docx_common import backup_before_overwrite, read_text_with_fallback, register_output_path, setup_utf8_stdio  # noqa: E402
+from _blocks import use_latin_fonts_unless_japanese  # noqa: E402
 from _ops import DocEditContext, apply_op  # noqa: E402
 
 
@@ -37,39 +38,36 @@ def _load_json_arg(args: argparse.Namespace) -> str:
         return args.ops_json
     data_path = Path(args.ops_file)
     if not data_path.is_file():
-        raise FileNotFoundError(f"opsファイルが見つかりません: {args.ops_file}")
-    try:
-        return data_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return data_path.read_text(encoding="cp932")
+        raise FileNotFoundError(f"ops file not found: {args.ops_file}")
+    return read_text_with_fallback(data_path)
 
 
 def main() -> int:
     setup_utf8_stdio()
     parser = argparse.ArgumentParser()
-    parser.add_argument("docx_path", help="編集対象の既存.docxファイルのパス")
+    parser.add_argument("docx_path", help="path of the existing .docx file to edit")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--ops-json", help="適用する操作のJSON配列をそのまま渡す")
-    group.add_argument("--ops-file", help="適用する操作のJSON配列を書いたファイルのパス")
-    parser.add_argument("--output", default=None, help="保存先パス（省略時は docx_path へ上書き保存）")
+    group.add_argument("--ops-json", help="pass the JSON array of operations to apply as is")
+    group.add_argument("--ops-file", help="path of a file with the JSON array of operations to apply")
+    parser.add_argument("--output", default=None, help="output path (if omitted, docx_path is overwritten)")
     args = parser.parse_args()
 
     path = Path(args.docx_path)
     if not path.exists():
-        print(f"編集対象のファイルが見つかりません: {args.docx_path}", file=sys.stderr)
+        print(f"File to edit not found: {args.docx_path}", file=sys.stderr)
         return 1
     if path.is_dir():
-        print(f"指定パスはディレクトリです（ファイル専用）: {args.docx_path}", file=sys.stderr)
+        print(f"The specified path is a directory (files only): {args.docx_path}", file=sys.stderr)
         return 1
     if path.suffix.lower() == ".doc":
         print(
-            "拡張子が .doc（レガシーのバイナリ形式）です。このスキルは .docx のみ対応しています。"
-            "Microsoft Wordで開き「名前を付けて保存」で .docx 形式に変換してから再度お試しください。",
+            "The extension is .doc (the legacy binary format). This skill supports only .docx. "
+            "Open it in Microsoft Word, convert it to .docx with \"Save As\", and try again.",
             file=sys.stderr,
         )
         return 1
     if path.suffix.lower() != ".docx":
-        print(f"拡張子が .docx ではありません: {args.docx_path}", file=sys.stderr)
+        print(f"The extension is not .docx: {args.docx_path}", file=sys.stderr)
         return 1
 
     output_path = Path(args.output) if args.output else path
@@ -83,10 +81,10 @@ def main() -> int:
     try:
         ops = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"opsのJSON解析に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to parse the ops JSON: {e}", file=sys.stderr)
         return 1
     if not isinstance(ops, list):
-        print("opsはJSON配列である必要があります", file=sys.stderr)
+        print("ops must be a JSON array", file=sys.stderr)
         return 1
 
     from docx import Document
@@ -95,25 +93,28 @@ def main() -> int:
     try:
         doc = Document(str(path))
     except PackageNotFoundError:
-        print(f".docxとして読み込めませんでした（壊れているか非対応形式の可能性）: {args.docx_path}", file=sys.stderr)
+        print(f"Could not load it as .docx (it may be broken or an unsupported format): {args.docx_path}", file=sys.stderr)
         return 1
     except OSError as e:
-        print(f"ファイル読み込みに失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to read the file: {e}", file=sys.stderr)
         return 1
 
+    # 日本語を含まない文書（既存の本文と ops のどちらにも無い）では、見出し等の既定フォントの欧文側を
+    # 游フォントでなく欧文フォントにする（_blocks.LATIN_FONTS）。
+    use_latin_fonts_unless_japanese(raw + "\n".join(p.text for p in doc.paragraphs))
     ctx = DocEditContext(doc)
     op_results = []
     for idx, op in enumerate(ops):
         if not isinstance(op, dict) or "op" not in op:
-            print(f"ops[{idx}] が不正です（'op'キーを持つオブジェクトである必要があります）: {op!r}", file=sys.stderr)
+            print(f"ops[{idx}] is invalid (it must be an object with an 'op' key): {op!r}", file=sys.stderr)
             return 1
         try:
             result = apply_op(ctx, op)
         except KeyError as e:
-            print(f"ops[{idx}]（op={op.get('op')!r}）に必須キー{e}が指定されていません", file=sys.stderr)
+            print(f"ops[{idx}] (op={op.get('op')!r}) is missing the required key {e}", file=sys.stderr)
             return 1
         except (ValueError, TypeError) as e:
-            print(f"ops[{idx}]（op={op.get('op')!r}）の適用に失敗しました: {e}", file=sys.stderr)
+            print(f"Failed to apply ops[{idx}] (op={op.get('op')!r}): {e}", file=sys.stderr)
             return 1
         op_results.append(result or {"op": op.get("op")})
 
@@ -122,7 +123,7 @@ def main() -> int:
     try:
         doc.save(str(output_path))
     except OSError as e:
-        print(f"ファイルの保存に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to save the file: {e}", file=sys.stderr)
         return 1
 
     result = {
@@ -133,7 +134,7 @@ def main() -> int:
         "applied_ops": len(ops),
         "op_results": op_results,
     }
-    path_memory = register_output_path(output_path, description="edit_docxが生成/更新したDOCX")
+    path_memory = register_output_path(output_path, description="DOCX generated/updated by edit_docx")
     if path_memory:
         result["path_memory"] = path_memory
     print(json.dumps(result, ensure_ascii=False))

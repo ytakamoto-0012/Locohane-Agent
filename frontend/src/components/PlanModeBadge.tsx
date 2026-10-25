@@ -1,6 +1,7 @@
 import { useContext, useState } from 'react';
 import { useRecoilValue } from 'recoil';
 import { ChainlitContext, sessionIdState, type IAction, type IStep } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 import { PLAN_PREFIX } from '../utils/messageTree';
 
 interface PlanPayload {
@@ -16,6 +17,7 @@ interface PlanPayload {
 export function PlanModeBadge({ step }: { step: IStep | undefined }) {
   const client = useContext(ChainlitContext);
   const sessionId = useRecoilValue(sessionIdState);
+  const { t } = useI18n();
   const [pending, setPending] = useState(false);
 
   let approved = false;
@@ -57,10 +59,10 @@ export function PlanModeBadge({ step }: { step: IStep | undefined }) {
       disabled={pending || !hasPlan}
       title={
         !hasPlan
-          ? '計画がまだありません'
+          ? t('plan.noPlan')
           : approved
-          ? 'クリックで Plan Mode に戻す'
-          : 'クリックで Edit Automatically に切り替える'
+          ? t('plan.toPlanMode')
+          : t('plan.toEditAutomatically')
       }
     >
       {approved ? 'Edit Automatically' : 'Plan Mode'}

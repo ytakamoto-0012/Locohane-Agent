@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import locale
 import os
 import sys
 from datetime import datetime
@@ -24,6 +25,24 @@ def setup_utf8_stdio() -> None:
     """
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+
+
+def read_text_with_fallback(path: Path) -> str:
+    """UTF-8 で読めなければ OS の ANSI コードページ（日本語版 Windows なら cp932、英語版なら cp1252 等）、
+    cp932 の順に読む（本体の src/tools/_file_tools_common.py と同じ順）。
+
+    cp1252 の文書の多くは cp932 としてもエラーなく読めて文字化けに気付けないため、ANSI を先に試す。
+    """
+    data = path.read_bytes()
+    error: UnicodeDecodeError | None = None
+    for encoding in dict.fromkeys(("utf-8", locale.getencoding(), "cp932")):
+        try:
+            return data.decode(encoding).replace("\r\n", "\n")
+        except UnicodeDecodeError as e:
+            error = error or e
+        except LookupError:
+            continue
+    raise error or UnicodeDecodeError("utf-8", data, 0, len(data), "undecodable")
 
 
 def register_output_path(path, description: str | None = None) -> dict[str, str] | None:
@@ -67,7 +86,7 @@ def write_json_result(result: dict, category: str, source_path) -> dict:
     out_path = out_dir / f"{digest}_{timestamp}.json"
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     info: dict = {"result_path": str(out_path)}
-    pm = register_output_path(out_path, description=f"{category}の読み込み結果全文JSON")
+    pm = register_output_path(out_path, description=f"full JSON of the {category} read result")
     if pm:
         info["path_memory"] = pm
     return info

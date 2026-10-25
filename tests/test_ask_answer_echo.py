@@ -98,7 +98,7 @@ async def test_single_choice_cancel_echoes_cancel_label(patched) -> None:
 
     result = await tools.ask_user_choice.ainvoke({"question": "色は？", "choices": ["赤", "青"]})
 
-    assert result.startswith("エラー: ユーザーが選択をキャンセル")
+    assert result.startswith("Error: the user cancelled the choice")
     assert _echoed() == ["❌ キャンセル"]
 
 
@@ -133,7 +133,7 @@ async def test_timeout_does_not_echo(patched, monkeypatch) -> None:
 
     result = await tools.ask_user_choice.ainvoke({"question": "色は？", "choices": ["赤", "青"]})
 
-    assert "タイムアウト" in result
+    assert "timeout" in result
     assert _echoed() == []
 
 
@@ -159,7 +159,7 @@ async def test_text_question_cancel_button(patched, monkeypatch) -> None:
 
     result = await tools.ask_user_question.ainvoke({"question": "ファイル名は？"})
 
-    assert result == "エラー: ユーザーが質問への回答をキャンセルしました。"
+    assert result == "Error: the user cancelled answering the question."
 
 
 @pytest.mark.asyncio
@@ -179,7 +179,7 @@ async def test_multi_text_form_cancel_button(patched) -> None:
 
     result = await tools.ask_user_question.ainvoke({"question": "お名前と形式は？", "labels": ["名前", "形式"]})
 
-    assert result == "エラー: ユーザーが質問への回答をキャンセルしました。"
+    assert result == "Error: the user cancelled answering the question."
     assert _echoed() == ["❌ キャンセル"]
 
 
@@ -192,4 +192,4 @@ async def test_single_choice_other_free_text_cancel_button(patched, monkeypatch)
 
     result = await tools.ask_user_choice.ainvoke({"question": "色は？", "choices": ["赤", "青"]})
 
-    assert result == "エラー: ユーザーが選択をキャンセルしました。"
+    assert result == "Error: the user cancelled the choice."

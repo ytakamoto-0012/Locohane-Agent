@@ -1,13 +1,12 @@
 import { useState } from 'react';
 import type { IStep } from '@chainlit/react-client';
+import { useI18n, type MessageKey } from '../i18n';
 
-const TYPE_LABELS: Record<string, string> = {
-  tool: 'ツール',
-  llm: '思考中',
-  embedding: 'embedding',
-  retrieval: '検索',
-  rerank: 'rerank',
-  system_message: 'システム'
+const TYPE_LABELS: Record<string, MessageKey> = {
+  tool: 'step.tool',
+  llm: 'step.llm',
+  retrieval: 'step.retrieval',
+  system_message: 'step.system'
 };
 
 function formatContent(value: unknown): string {
@@ -21,14 +20,15 @@ function formatContent(value: unknown): string {
 }
 
 const STATUS_LABELS = {
-  running: '実行中',
-  done: '完了',
-  error: 'エラー',
-  stopped: '停止',
-  background: 'バックグラウンド'
-} as const;
+  running: 'step.running',
+  done: 'step.done',
+  error: 'step.error',
+  stopped: 'step.stopped',
+  background: 'step.background'
+} as const satisfies Record<string, MessageKey>;
 
 export function StepItem({ step }: { step: IStep }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const hasContent = Boolean(step.input || step.output);
   // dispatch_agent（サブエージェント実行）配下のツール呼び出しは、実際には
@@ -59,18 +59,20 @@ export function StepItem({ step }: { step: IStep }) {
   const subagentOutput = Boolean(step.metadata?.subagent_output);
   // メインエージェントの思考Stepは思考を output に持つため、見出しを「思考」にする
   // （「出力」と表示すると回答本文がバッジへ入ったように見える）。
-  const inputTitle = subagentOutput ? '思考' : '入力';
-  const outputTitle = step.type === 'llm' && !subagentOutput ? '思考' : '出力';
-  const typeLabel = TYPE_LABELS[step.type] ?? step.type;
+  const inputTitle = subagentOutput ? t('step.thinking') : t('step.input');
+  const outputTitle = step.type === 'llm' && !subagentOutput ? t('step.thinking') : t('step.output');
+  const typeKey = TYPE_LABELS[step.type];
+  const typeLabel = typeKey ? t(typeKey) : step.type;
   // dispatch_agent（サブエージェント実行）のStepは、app.py側で name を
   // "SUB: <agent_type>" 形式にして送ってくる。これは「ツール: サブエージェ...」
   // という中身の分からない表示（狭い幅で agent_type 部分が見切れる）を避け、
   // どのサブエージェント種別かひと目で分かるようにするためのもので、
   // 通常のツールと違い typeLabel（"ツール"）を前置しない。
+  // 思考Stepの name はバックエンドが常に「思考中」で送るため、表示言語の文言に置き換える。
   const displayLabel =
     step.name && step.name.startsWith('SUB: ')
       ? step.name
-      : step.name && step.name !== typeLabel
+      : step.type !== 'llm' && step.name && step.name !== typeLabel
         ? `${typeLabel}: ${step.name}`
         : typeLabel;
 
@@ -86,7 +88,7 @@ export function StepItem({ step }: { step: IStep }) {
         <span className="step-item-label">{displayLabel}</span>
         {hasChildren ? <span className="step-item-child-count">{children.length}</span> : null}
         <span className={`step-item-status-badge step-item-status-badge--${status}`}>
-          {STATUS_LABELS[status]}
+          {t(STATUS_LABELS[status])}
         </span>
         {expandable ? <span className="step-item-caret">{open ? '▾' : '▸'}</span> : null}
       </button>

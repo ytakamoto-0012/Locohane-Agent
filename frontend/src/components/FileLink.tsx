@@ -1,4 +1,5 @@
 import { useRef, useState, type MouseEvent } from 'react';
+import { useI18n } from '../i18n';
 import { Icon } from './Icon';
 
 /** ホーム画面に追加した Web アプリ（スタンドアロン表示）として開かれているか。 */
@@ -51,6 +52,7 @@ function mimeTypeFor(name: string, served: string): string {
  * NotAllowedError になる）ため、そのときは取得済みのファイルを持っておき、
  * もう一度タップしてもらう。 */
 export function FileLink({ href, name }: { href: string | undefined; name: string }) {
+  const { t } = useI18n();
   const [state, setState] = useState<ShareState>('idle');
   const fileRef = useRef<File | null>(null);
 
@@ -98,11 +100,11 @@ export function FileLink({ href, name }: { href: string | undefined; name: strin
 
   const label =
     state === 'loading'
-      ? `${name}（準備中...）`
+      ? t('file.preparing', { name })
       : state === 'ready'
-        ? `${name}（もう一度タップで開く）`
+        ? t('file.tapAgain', { name })
         : state === 'error'
-          ? `${name}（開けませんでした。もう一度タップ）`
+          ? t('file.failed', { name })
           : name;
 
   return (

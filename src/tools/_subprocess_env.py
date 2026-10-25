@@ -203,7 +203,7 @@ def _run_script_guard_env(workdir: Path, skill_name: str, script_filename: str) 
         )
         (guard_dir / "sitecustomize.py").write_text(guard_src, encoding="utf-8")
     except OSError:
-        logger.warning("run_script: 書き込みガード用の一時ファイル作成に失敗したため、ガード無しで実行します。")
+        logger.warning("run_script: failed to create the temporary file for the write guard, running without the guard.")
         return env, None
     existing_path = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = str(guard_dir) + (os.pathsep + existing_path if existing_path else "")

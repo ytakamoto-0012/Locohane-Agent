@@ -35,31 +35,31 @@ def _load_json(raw: str | None, label: str):
     try:
         return json.loads(raw)
     except json.JSONDecodeError as e:
-        raise SkillCreatorError(f"{label} がJSONとして解釈できません: {e}") from e
+        raise SkillCreatorError(f"{label} cannot be parsed as JSON: {e}") from e
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True, help="ドラフト名（自分のドラフトはスキル名だけでよい）")
-    parser.add_argument("--case-id", required=True, help="ケースID（ファイル名にも使う。例: 001_basic）")
-    parser.add_argument("--turns", required=True, help='ユーザー発話のJSON配列。例: ["..."]')
-    parser.add_argument("--expect", default=None, help="Expect の一部をJSONオブジェクトで指定")
-    parser.add_argument("--judge", default=None, help="自由記述の判定指示（transcript を読んで判定する）")
+    parser.add_argument("--name", required=True, help="draft name (for your own drafts, just the skill name)")
+    parser.add_argument("--case-id", required=True, help="case ID (also used as the file name; e.g. 001_basic)")
+    parser.add_argument("--turns", required=True, help='JSON array of user messages. Example: ["..."]')
+    parser.add_argument("--expect", default=None, help="part of Expect as a JSON object")
+    parser.add_argument("--judge", default=None, help="free-text judging instructions (judged by reading the transcript)")
     parser.add_argument("--auto-approve", choices=["true", "false"], default="true")
-    parser.add_argument("--scripted-text-answers", default=None, help="JSON配列")
-    parser.add_argument("--work-dir", default=None, help="作業フォルダにするフィクスチャ（プロジェクトルート相対）")
+    parser.add_argument("--scripted-text-answers", default=None, help="JSON array")
+    parser.add_argument("--work-dir", default=None, help="fixture to use as the working folder (relative to the project root)")
     parser.add_argument("--timeout-seconds", type=int, default=None)
     parser.add_argument("--notes", default="")
     args = parser.parse_args()
 
     if not _CASE_ID_RE.match(args.case_id):
-        raise SkillCreatorError(f"--case-id は英数字・_・- で指定してください: {args.case_id!r}")
+        raise SkillCreatorError(f"Specify --case-id with letters, digits, _ and - only: {args.case_id!r}")
     turns = _load_json(args.turns, "--turns")
     if not isinstance(turns, list) or not turns or not all(isinstance(t, str) for t in turns):
-        raise SkillCreatorError("--turns は1件以上の文字列を持つJSON配列にしてください。")
+        raise SkillCreatorError("Make --turns a JSON array with at least 1 string.")
     expect = _load_json(args.expect, "--expect")
     if expect is None and not args.judge:
-        raise SkillCreatorError("--expect と --judge のどちらか（両方でも可）を指定してください。")
+        raise SkillCreatorError("Specify --expect or --judge (or both).")
     scripted = _load_json(args.scripted_text_answers, "--scripted-text-answers") or []
 
     ctx = draft_context()

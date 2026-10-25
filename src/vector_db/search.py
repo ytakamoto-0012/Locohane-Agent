@@ -67,7 +67,7 @@ def search(
         EmbeddingError / StoreError: 埋め込みサーバー・保存先を使えない場合。
     """
     if not query.strip():
-        raise SearchError("検索語を指定してください。")
+        raise SearchError("Specify a search query.")
     limit = top_k if top_k and top_k > 0 else cfg.vector_db_top_k
     result = SearchResult()
     targets = _targets(cfg, collection, result)
@@ -117,7 +117,7 @@ def search_paths(
     パスの導入前に取り込んだコレクションは、次の取り込み（差分）まで結果が出ない。
     """
     if not query.strip():
-        raise SearchError("検索語を指定してください。")
+        raise SearchError("Specify a search query.")
     limit = top_k if top_k and top_k > 0 else cfg.vector_db_top_k
     result = SearchResult()
     targets = _targets(cfg, collection, result, paths=True)
@@ -154,28 +154,28 @@ def _targets(cfg: Config, collection: str | None, result: SearchResult, *, paths
     if collection:
         collections = [c for c in collections if c.name == collection]
         if not collections:
-            raise SearchError(f"コレクション {collection} はありません。list_document_collections で一覧を確認してください。")
+            raise SearchError(f"Collection {collection} does not exist. Check the list with list_document_collections.")
     targets = []
     for c in collections:
         if not c.model or not c.file_count:
-            result.skipped.append((c.name, "まだ文書が取り込まれていません"))
+            result.skipped.append((c.name, "no documents ingested yet"))
         elif not paths and not c.chunk_count:
-            result.skipped.append((c.name, "本文のある文書がありません（ファイル名・フォルダ名は search_document_paths で探せます）"))
+            result.skipped.append((c.name, "no documents with text (file and folder names can be searched with search_document_paths)"))
         elif c.model != model:
-            result.skipped.append((c.name, f"埋め込みモデル {c.model} で作られています（今の設定は {model}。管理者が再構築する必要があります）"))
+            result.skipped.append((c.name, f"built with embedding model {c.model} (current setting: {model}; an administrator needs to rebuild it)"))
         elif c.document_prefix is not None and c.document_prefix != cfg.vector_db_document_prefix:
             result.skipped.append(
                 (
                     c.name,
-                    f"document_prefix {c.document_prefix!r} で取り込まれています"
-                    f"（今の設定は {cfg.vector_db_document_prefix!r}。管理者が再構築する必要があります）",
+                    f"ingested with document_prefix {c.document_prefix!r} "
+                    f"(current setting: {cfg.vector_db_document_prefix!r}; an administrator needs to rebuild it)",
                 )
             )
         else:
             targets.append(c)
     if not targets:
-        reasons = "、".join(f"{n}: {r}" for n, r in result.skipped) or "コレクションがありません"
-        raise SearchError(f"検索できるコレクションがありません（{reasons}）。")
+        reasons = ", ".join(f"{n}: {r}" for n, r in result.skipped) or "no collections"
+        raise SearchError(f"No searchable collections ({reasons}).")
     return targets
 
 

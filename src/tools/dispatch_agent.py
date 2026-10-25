@@ -50,7 +50,7 @@ def _task_with_work_dir_hint(task: str) -> str:
     except RuntimeError:
         return task
     info = json.dumps({"absolute_path": str(work_dir)}, ensure_ascii=False)
-    return f"[作業ディレクトリ]\n{info}\n\n{task}"
+    return f"[Working directory]\n{info}\n\n{task}"
 
 def _task_with_plan_hint(task: str) -> str:
     """dispatch_agent の task 文の先頭に、現在の実行計画を事実として付与する。
@@ -67,7 +67,7 @@ def _task_with_plan_hint(task: str) -> str:
     status = current_plan_status_text()
     if not status:
         return task
-    return f"[実行計画（進行中・最優先タスク）]\n{status}\n\n{task}"
+    return f"[Plan (in progress, highest priority task)]\n{status}\n\n{task}"
 
 def _task_with_orchestrator_skill_hint(task: str, orchestrator_skill: str) -> tuple[str | None, str | None]:
     """orchestrator_skill 指定時、その SKILL.md 全文を task の先頭に機械的に注入する。
@@ -92,14 +92,14 @@ def _task_with_orchestrator_skill_hint(task: str, orchestrator_skill: str) -> tu
     try:
         skill_md = _safe_path(f"{orchestrator_skill}/SKILL.md")
     except ValueError as e:
-        return None, f"エラー: {e}"
+        return None, f"Error: {e}"
     if not skill_md.is_file():
         return None, (
-            f"エラー: オーケストレータースキル '{orchestrator_skill}' の SKILL.md が見つかりません。"
-            "スキル名が間違っている可能性が高いです。"
+            f"Error: SKILL.md of orchestrator skill '{orchestrator_skill}' not found. "
+            "The skill name is very likely wrong."
         )
     content = skill_md.read_text(encoding="utf-8")
-    return f"[オーケストレータースキル: {orchestrator_skill}]\n{content}\n\n{task}", None
+    return f"[Orchestrator skill: {orchestrator_skill}]\n{content}\n\n{task}", None
 
 @tool
 async def dispatch_agent(
@@ -109,61 +109,61 @@ async def dispatch_agent(
     orchestrator_skill: str | None = None,
     model: str | None = None,
 ) -> str:
-    """タスクを独立したサブエージェントへ委譲し、最終回答のみを受け取る。
+    """Delegate a task to an independent sub-agent and receive only its final answer.
 
-    調査や複数ステップの下調べなど、詳細な思考過程やツール呼び出しの
-    経緯までは自分の会話履歴に残す必要が無い作業に使う。サブエージェントは
-    agent_type で選んだ種別のツールセットを使って自律的に作業するが、
-    その内部の思考過程・ツール呼び出しはあなたの会話履歴には一切残らず、最終回答の
-    テキストのみが返る（ログファイルには内部の記録が残る）。run_script が
-    呼ばれた場合、その承認確認はサブエージェントの実行中にそのまま
-    ユーザーへ表示される。数十〜数百件規模のファイル（画像等）を扱う調査は、
-    年・サブフォルダ等の単位でこのツールへ分割委任すると効率的。
-    サブエージェントはさらに別のサブエージェントへ委譲することはできない。
+    Use it for work whose detailed reasoning and tool call history do not need to stay in your
+    own conversation history, such as investigation or multi-step research. The sub-agent works
+    autonomously with the tool set of the type chosen by agent_type, but its internal reasoning and
+    tool calls do not remain in your conversation history at all; only the text of its final
+    answer is returned (internal records remain in the log file). If run_script is called, its
+    approval prompt is shown to the user as is while the sub-agent runs. For investigations
+    involving dozens to hundreds of files (images, etc.), it is efficient to split the work by
+    year, subfolder, etc. and delegate each part to this tool.
+    A sub-agent cannot delegate further to another sub-agent.
 
-    このターン自体は（下記の安全上限に達しない限り）完了までブロックされる。
-    待っている間、人間向けにチャットへ直接進捗（経過時間・反復回数・進捗メモ）が
-    自動で通知されるため、自分から何度も呼び直してポーリングする必要は無い。
+    This turn itself blocks until completion (unless the safety limit below is reached).
+    While waiting, progress (elapsed time, iteration count, progress notes) is automatically
+    posted to the chat for humans, so you do not need to poll by calling it repeatedly.
 
-    設定した安全上限（[subagent].background_inline_wait_max_seconds）を超えても
-    なお完了しない場合に限り、job_id を含む案内文を返してこのターンを終える
-    （ジョブ自体は裏側で動き続ける）。この場合のみ、後続ターンで
-    check_dispatch_agent_job（結果取得）・stop_dispatch_agent_job（明示的な
-    中断指示があった場合のみ）を使う。
+    Only if it still has not finished after the configured safety limit
+    ([subagent].background_inline_wait_max_seconds), it returns a notice including the job_id and
+    ends this turn (the job itself keeps running in the background). Only in that case, use
+    check_dispatch_agent_job (to get the result) and stop_dispatch_agent_job (only when explicitly
+    told to interrupt) in later turns.
 
     Args:
-        task: サブエージェントに依頼したいタスクの説明。必要な背景情報・
-            期待する出力形式を過不足なく書くこと（サブエージェントは
-            この会話の文脈を一切知らない）。対象パスは記憶から書き起こさず、
-            直前の glob_file.py 等で得た `@N`（パスメモリー参照）をそのまま
-            文中に埋め込んでよい（解決できるものは実パスへ自動置換される）。
-        agent_type: 使用するサブエージェントの種別名（必須、暗黙の既定値は
-            無い）。利用可能な種別とそれぞれの用途はシステムプロンプトの
-            一覧を参照し、タスクの内容に合った種別を毎回明示的に選ぶこと。
-        orchestrator_skill: 複数のSKILLを横断的に使うよう指示するオーケストレーター
-            役のSKILL.md（本文冒頭で「本スキルはオーケストレータースキルです」等と
-            自己申告している）の文脈で作業している場合にのみ、そのスキル名を指定する。
-            指定すると、そのSKILL.md本文全体がtaskの先頭にそのまま埋め込まれ、
-            必須ルール・禁止事項を要約せずサブエージェントへ渡せる。通常の委譲では
-            省略してよい。存在しないスキル名を指定した場合は起動前に「エラー: ...」
-            を返す（この場合 job は作られない）。
-        model: サブエージェントに使わせるモデル名。ユーザーがモデルを指定した
-            場合のみ指定し、通常は省略する（省略時は agent_type の既定）。
-            存在しないモデル名は無視される。
+        task: A description of the task for the sub-agent. Include the necessary background and
+            the expected output format, neither too much nor too little (the sub-agent knows
+            nothing about this conversation). Do not write target paths from memory; you may embed
+            the `@N` (path memory reference) obtained from a previous glob etc. as is in the text
+            (resolvable ones are replaced with the real paths automatically).
+        agent_type: The name of the sub-agent type to use (required; there is no implicit
+            default). See the list in the system prompt for the available types and their uses,
+            and explicitly choose the type that fits the task every time.
+        orchestrator_skill: Specify the skill name only when you are working in the context of
+            an orchestrator SKILL.md that instructs using several skills across the board (one
+            that declares itself, e.g. "This skill is an orchestrator skill", at the beginning of
+            its body). The whole body of that SKILL.md is then embedded as is at the top of task,
+            so the mandatory rules and prohibitions reach the sub-agent without being summarized.
+            Omit it for normal delegation. If the skill name does not exist, it returns
+            "Error: ..." before starting (no job is created in that case).
+        model: The model name for the sub-agent to use. Specify it only when the user specified
+            a model; normally omit it (the agent_type default is used). Unknown model names are
+            ignored.
 
     Returns:
-        通常はサブエージェントの最終回答テキスト。安全上限に達した場合のみ
-        job_id を含む案内文字列。init_tools() が未実行の場合、agent_type が
-        不明な場合は起動前に「エラー: ...」を返す（この場合 job は作られない）。
-        サブエージェントの実行自体に失敗した場合も、例外を送出せず
-        「エラー: ...」形式の文字列を返す。
+        Normally the sub-agent's final answer text. Only when the safety limit is reached, a
+        notice string including the job_id. If init_tools() has not been run or agent_type is
+        unknown, it returns "Error: ..." before starting (no job is created in that case).
+        If running the sub-agent itself fails, it also returns an "Error: ..." string instead
+        of raising.
     """
     if _state._LLM_CONFIG is None:
-        return "エラー: init_tools() が未実行です"
+        return "Error: init_tools() has not been run"
     resolved = _state._AGENT_TYPES.get(agent_type)
     if resolved is None:
-        available = ", ".join(sorted(_state._AGENT_TYPES)) or "（登録なし）"
-        return f"エラー: 不明な agent_type '{agent_type}' です。利用可能: {available}"
+        available = ", ".join(sorted(_state._AGENT_TYPES)) or "(none registered)"
+        return f"Error: unknown agent_type '{agent_type}'. Available: {available}"
     task = _resolve_path_memory_tokens_in_text(task)
     task = _task_with_work_dir_hint(task)
     task = _task_with_plan_hint(task)
@@ -217,7 +217,7 @@ async def dispatch_agent(
         # 代入が間に合う。
         job.turn_still_waiting = False
         logger.warning(
-            "dispatch_agent: 安全上限(%s秒)に達したため job_id を返してターンを終えます: job_id=%s",
+            "dispatch_agent: reached the safety limit (%s seconds), returning job_id and ending the turn: job_id=%s",
             wait_timeout,
             job_id,
         )

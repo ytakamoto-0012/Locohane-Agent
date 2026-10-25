@@ -98,7 +98,7 @@ async def test_force_write_thread_note_success(monkeypatch, tmp_path: Path) -> N
     assert ai_message.tool_calls[0]["name"] == "write_thread_note"
     assert len(tool_messages) == 1
     assert tool_messages[0].tool_call_id == "call_1"
-    assert "書き込みました" in tool_messages[0].content
+    assert "Written" in tool_messages[0].content
 
     # tool_choice="required" かつ write_thread_note のみへ絞って bind_tools していること。
     assert len(model.bind_tools_calls) == 1
@@ -196,7 +196,7 @@ async def test_force_write_thread_note_answers_failed_call_to_avoid_orphan(
     answered = {m.tool_call_id for m in tool_messages}
     assert issued == answered
     failed = next(m for m in tool_messages if m.tool_call_id == "call_2")
-    assert failed.content.startswith("エラー:")
+    assert failed.content.startswith("Error:")
 
 
 @pytest.mark.asyncio

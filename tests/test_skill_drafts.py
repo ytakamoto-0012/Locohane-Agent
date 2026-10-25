@@ -178,8 +178,8 @@ def test_no_session_user_sees_no_drafts(env):
 def test_render_block_marks_owner_and_usability(env):
     env.config.skill_other_users_drafts = "listed"
     block = skill_drafts.render_draft_skills_block(skill_drafts.scan_visible_drafts(env.config, "tanaka"))
-    assert "tanaka/my-tool" in block and "自分のドラフト" in block
-    assert "suzuki/their-tool" in block and "使用不可" in block
+    assert "tanaka/my-tool" in block and "your own draft" in block
+    assert "suzuki/their-tool" in block and "not usable" in block
 
 
 # --- パス解決 ---------------------------------------------------------------
@@ -198,7 +198,7 @@ def test_safe_path_rejects_other_users_draft_when_hidden(env):
 def test_safe_path_read_vs_exec_in_readable_mode(env):
     env.config.skill_other_users_drafts = "readable"
     assert _safe_path("suzuki/their-tool/SKILL.md").is_file()
-    with pytest.raises(ValueError, match="実行"):
+    with pytest.raises(ValueError, match="run"):
         _safe_path("suzuki/their-tool/scripts", op="exec")
 
 
@@ -250,7 +250,7 @@ def test_main_agent_guard_lets_draft_scripts_through(env):
 
     assert _guard_main_agent_tool_limit(call("tanaka/my-tool")) is None
     blocked = _guard_main_agent_tool_limit(call("official"))
-    assert blocked is not None and "許可されていません" in blocked["messages"][0].content
+    assert blocked is not None and "is not allowed" in blocked["messages"][0].content
 
 
 # --- skill-creator の書き込み許可と読み取り禁止ガード -------------------------

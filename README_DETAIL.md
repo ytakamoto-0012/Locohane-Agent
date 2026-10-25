@@ -33,6 +33,8 @@
 - **パスメモリー機能**（`src/path_memory.py`、`system_prompt.md` の
   Tool Usage Guidelines）: `Glob`/`Grep`/`Read` の結果に短い参照番号 `@N`
   を自動付与し、LLM が長い絶対パスを自分で組み立て直して失敗を繰り返すことを防ぐ。
+  フォルダの `@N` の後ろに子パスを続けた `@N/photo_01.png`（`\` 区切りも可）は、そのフォルダ内のパスとして解決する
+  （ファイルの `@N` に子パスを続けるとエラー）。
 - **ループ検知・ガード・リトライ**（`config.ini` の `[thinking_loop_guard]`、
   `src/llm/chat_model.py` の `ChatLlamaCpp`、`src/llm/loop_guard.py` の
   `ThinkingLoopDetected`）: 応答が反復ループに
@@ -211,7 +213,8 @@ model: Qwen3.6-35B-A3B
   `"enum": [...]` が載り、一覧外の名前はツール本体に届く前に検証エラーとして LLM へ返る。
 - **返す内容**: frontmatter を除いた本文を `<skill_content name="...">` で囲み、`references/` があれば
   ファイル一覧を `@N`（パスメモリー）付きで末尾に添える（中身は読まない）。`read_skill_file` は
-  この `@N` をそのまま受け付ける（skills ルート外を指す `@N` は拒否）。
+  この `@N` をそのまま受け付ける（skills ルート外を指す `@N` は拒否）。フォルダの `@N` に子パスを続けた
+  `@N/xxx.md` も受け付ける。
 - **コンテキスト削減からの保護**: スキル名ごとに最後に読んだ `read_skill` 結果は `[context_trim]` で
   切り詰めない（`src/context_trim.py`）。`[context_compaction]` で要約対象に入った場合も要約させず、
   要約の後ろへ原文のまま再添付する（`src/context_compaction.py` の `_render_reattached_skills`、
@@ -269,7 +272,7 @@ LLM は `read_skill`/`read_skill_file`/`run_script` という**ビルトイン�
 | `check_work_dir_status` | 現在の作業ディレクトリの実際のアクセス状況を確認する |
 | `Read` / `Glob` / `Grep` | ローカルファイルシステム上の任意の絶対パスに対する読込・ファイル名検索・全文検索（ClaudeCode の同名ツールに合わせた名前。読み取り専用のため計画未承認でも常に呼べる。ロジックは `src/tools/read_tool.py`/`glob_tool.py`/`grep_tool.py`、共通処理は `_file_tools_common.py`） |
 | `json_query` | JSON/dict に対する JMESPath クエリ（読み取り専用） |
-| `search_path_memory` | 現在の会話のパスメモリー（`@N`）から、ファイル名等に似たパスを類似検索する（文字bigram＋コサイン類似度、読み取り専用） |
+| `search_path_memory` | 現在の会話のパスメモリー（`@N`）から、ファイル名等に似たパスを類似検索する（文字bigram＋コサイン類似度、読み取り専用）。パスを受け取る各ツールは `@N` 単体に加え、フォルダの `@N` に子パスを続けた `@N/ファイル名` も解決する |
 | `provide_download` | 既存のファイルをチャット画面にダウンロードボタンとして提示する |
 | `analyze_image` | 画像ファイルをLLMへ視覚情報として見せ、LLM自身が内容を解析・説明・判断する（Vision対応モデル向け）。`show_in_chat=True` を指定すると、解析と同時にチャット画面へもプレビュー表示する（「表示して」「見せて」にはこちらを使う。表示だけして中身を見ない、という呼び方はできない）。回答本文（Markdownテーブルのセル等）の中に画像を組み込みたい場合は、ツールを使わず回答テキストへ直接 `![説明](絶対パス)` と書けばよい（送信直前に自動でブラウザから取得可能なURLへ変換される。`app.py` の `_embed_local_images_as_session_urls`） |
 | `dispatch_agent` | タスクをサブエージェント（`src/subagent.py`）へ委譲し最終回答のみ受け取る。`agent_type` 引数でサブエージェントの種別を必ず指定する（暗黙の既定値は無い）。種別定義は `agents/*.md`（ClaudeCode の `.claude/agents/*.md` 相当）。`.locohane/agents/*.md` ともマージ走査され、同名は `.locohane/agents` 側が優先される。任意の `orchestrator_skill` 引数（複数SKILLを横断的に使うオーケストレーター役SKILL.mdのスキル名）を指定すると、そのSKILL.md本文全体がtaskの先頭へ機械的に注入され、必須ルール・禁止事項の要約時の脱落を防ぐ（詳細は `skills/SKILLS_README.md` 7節）。任意の `model` 引数で `[llm].sub_url` のモデル名を指定でき、`agents/*.md` の frontmatter `model` より優先される（存在しないモデル名は無視）。完了までの間、進捗（経過時間・反復回数）をチャットへ直接通知しながら待つため、LLM自身がポーリングする必要は無い。設定した安全上限（`[subagent].background_inline_wait_max_seconds`）を超えてもなお完了しない場合のみ `job_id` を返してターンを終える |
@@ -316,6 +319,7 @@ Locohane/
 │   ├── instances.py          # instances/ の作成・削除・複製・整合性チェック
 │   ├── supervisor.py         # インスタンスごとの子プロセス起動・停止・再起動
 │   ├── ini_catalog.py        # config.ini の読み取り専用パーサー（書き換えない）
+│   ├── ini_catalog_en.py     # config.ini の説明の英訳カタログ（ダッシュボードの英語表示用）
 │   ├── overrides.py          # config_overrides.json の検証・保存・バックアップ・監査記録
 │   ├── env_files.py          # instances/<name>/.env の読み書き
 │   ├── env_overrides.py      # 環境変数で上書き中のキーの検出
@@ -323,6 +327,10 @@ Locohane/
 │   ├── audit.py              # 変更履歴ログ（JSON Lines）
 │   ├── monitor.py            # モニター画面の読み取り処理（稼働状況・会話・トークン推移・ログ・LLM接続先）
 │   ├── knowledge.py          # ナレッジ画面の HTTP API（ベクターDB のコレクション管理・取り込みジョブ）
+│   ├── assistant.py          # 管理アシスタント（右上の「AIに相談」。設定を読んで助言するだけ）の HTTP API
+│   ├── assistant_index.py    # 管理アシスタントの検索（config.ini・README_DETAIL.md・API リファレンスの簡易 RAG）
+│   ├── i18n.py               # サーバー側の表示言語（エラーメッセージの英訳・X-Locohane-Lang を読むミドルウェア）
+│   ├── ASSISTANT_GUIDE.md    # 管理アシスタントが毎回読み直す画面ガイド（編集すれば再起動不要で反映）
 │   ├── skill_lab/            # スキル研究室（「設定ダッシュボード」の「スキル研究室」節）
 │   │   ├── api.py             # 研究室の HTTP API（/api/instances/{name}/skill-lab/...）
 │   │   ├── themes.py          # 研究テーマの置き場・ファイル操作・状態（対象インスタンスの data/<名前>/skill_lab/themes/）
@@ -331,11 +339,13 @@ Locohane/
 │   │   ├── llm.py / fixer.py / judge.py / drafting.py  # 研究室の LLM による AI 修正・AI judge・下書き
 │   │   ├── worker.py          # スキル調整ワーカーとして起動されるワーカー（評価 → AI 修正 → 再評価 → トライアウト）
 │   │   └── promotion.py       # 昇格（インスタンス専用の置き場へ）・差し戻し・ドラフトのアーカイブ
-│   └── static/                # フロントエンド（ビルド不要の素のHTML/JS。研究室の画面は skill_lab.js、ナレッジ画面は knowledge.js）
+│   └── static/                # フロントエンド（ビルド不要の素のHTML/JS。研究室の画面は skill_lab.js、ナレッジ画面は knowledge.js、表示言語は i18n.js・英訳は i18n_en.js）
 ├── instances/               # 管理ツールが管理するインスタンス別ディレクトリ（.gitignore済み、実行時生成）
 │   └── <name>/               # インスタンス別の設定フォルダ。既定ではインスタンス専用の拡張ディレクトリ（[skill_lab] instance_locohane_dir。研究室で昇格した skills/・agents/・回帰テスト用の evals/）も兼ねる
 ├── Locohane.lnk            # 起動用ショートカット（admin.batへリンク）
 ├── chainlit.md             # Chainlit ウェルカム画面
+├── README.en.md            # README.md の英語版
+├── README_DETAIL.en.md     # README_DETAIL.md（本書）の英語版
 ├── CLAUDE.md               # プロジェクト固有の追加指示（Claude Code 形式）
 ├── QWEN.md                 # プロジェクト固有の追加指示（Qwen Code 形式、内容はCLAUDE.md参照の1行）
 ├── VERSION                 # バージョン番号の正本（1行。「バージョン管理とリリース手順」節）
@@ -369,6 +379,7 @@ Locohane/
 ├── frontend/                # カスタムReactフロントエンド
 │   ├── src/
 │   │   ├── components/      # UIコンポーネント（AskFormBar, PlanCard, SidePanel等）
+│   │   ├── i18n/            # 表示言語（日本語/英語の文言・LanguageProvider・useI18n）
 │   │   └── utils/           # ユーティリティ
 │   └── public/
 ├── public/                  # Chainlit公開ファイル
@@ -379,7 +390,7 @@ Locohane/
 │   └── UI変更ガイド.md      # UIカスタマイズガイド
 ├── system_prompt/
 │   ├── system_prompt.md     # メインエージェント用システムプロンプト
-│   ├── help.md              # help ツールが返すユーザー向けヘルプ
+│   ├── help.md              # help ツールが返すユーザー向けヘルプ（英語。LLM が利用者の言語で伝える）
 │   ├── compaction_prompt.md # 会話履歴の自動要約指示
 │   ├── subagent_common.md   # サブエージェント共通プロンプト
 │   ├── handoff_prompt.md    # トークン上限接近時にLLMへ注入する打ち切り・引き継ぎ指示
@@ -459,6 +470,7 @@ Locohane/
 │   ├── files.py             # ファイルアップロード処理
 │   ├── images.py            # 画像処理・Data URL変換
 │   ├── tool_labels.py       # ツールの表示名（UIのStepバッジとサブエージェントの進捗表示で共有）
+│   ├── i18n.py              # チャット画面向けの表示言語（システム通知・ボタン等の文言、応答言語の指示）
 │   ├── log_rotation.py      # app.log の日時ローテーション
 ├── agents/
 │   ├── README/AGENTS_README.md # エージェント種別定義（frontmatter）の書き方ガイド（*.mdスキャン時の警告を避けるためREADME/配下に退避）
@@ -567,6 +579,7 @@ Locohane/
 | `data/skill_lab/themes/<テーマID>/` | スキル研究室の研究テーマ（仕様・開発中の資産・ケース・入力ファイル・評価と AI 修正の記録 `runs/`）。対象インスタンスごとに分かれる | テーマが終わり、記録が不要になったとき | テーマのフォルダを削除（実行中でないこと） |
 | `data/temp/_tmp_<作成時刻>_<短縮ID>/` | `execute_python_code`/`run_script` の中間生成物・`write_scratch_note`/`write_thread_note` の書き出し先。チャットでアップロードしたファイル（`uploads/<送信日時>/`。作業フォルダを指定していてもここ）。自セッション専用（`[default_workdir]` 参照）。フォルダ名先頭の作成時刻（`YYMMDDHHMMSS`）はファイラー上で作成順に並べるためのもの。短縮IDは thread_id の SHA-1 先頭10桁（パス長上限 260文字を超えにくくするため、thread_id をそのまま使わない。旧形式 `_tmp_<作成時刻>_<thread_id>` のフォルダも再開時にそのまま使われる） | セッション終了後、不要になったとき | フォルダ内を削除（`[default_workdir] retention_days`/`cleanup_interval_hours` により自動削除もされる） |
 | `data/elements/<thread_id>/` | 添付ファイル（`provide_download`/`analyze_image`の`show_in_chat=True`等）・回答本文への画像埋め込みの永続化先。スレッド再開・プロセス再起動後も表示できるようここへ実体をコピー保存する（`[elements]`参照、`src/thread_store.py`） | 添付ファイルが不要になったとき | フォルダ内を削除 |
+| `instances/_assistant_index/` | 管理ツールの「AIに相談」が検索に使う、config.ini・README_DETAIL.md・API リファレンスの段落の埋め込みのキャッシュ（埋め込みの接続先・モデルごとに1ファイル。`data/` 配下ではない） | いつでも（次の相談で作り直す。初回は数十秒かかる） | フォルダを削除 |
 | `.files/` | Chainlit自身のセッションファイル配信ディレクトリ（送信直後のライブ表示にのみ使う一時配信。プロジェクト直下、`data/`配下ではない） | いつでも | フォルダ内を削除 |
 | `data/app.lock` | 同一データディレクトリへの多重起動を防ぐプロセス排他ロック（`src/instance_lock.py`）。空ファイルにOSのファイルロックをかけるだけで中身は使わない | アプリ停止中、削除しても実害はない | ファイルを削除（アプリ起動中は削除不可） |
 | `data/runtime_status.json` | 接続中セッション・生成中スレッドのスナップショット（設定ダッシュボードのモニター表示用、`src/runtime_status.py`）。本体が数秒ごとに更新し、正常終了時に削除する | 異常終了で残った場合 | ファイルを削除（次回起動時に作り直される） |
@@ -609,6 +622,8 @@ set PYTHON_DIR=C:\DT_Python\Python311\env_local_agent_system
 | 変数 | 設定する値 |
 |---|---|
 | `PYTHON_DIR` | Locohane を実行する Python 仮想環境のディレクトリ。`admin.bat`・`app.bat`・`mcp_server.bat`（`.mcp.json` から起動）はこのファイルを `call` して使う。**管理ツールから起動する各インスタンスも同じ Python（`sys.executable`）で起動され**（`admin/supervisor.py` 参照）、`config.ini` の `[scripts].python` が空欄（既定）なら `run_script`/`execute_python_code` もこの Python を使う |
+
+`python_env.bat` は `PYTHONUTF8=1` も設定し、英語版など日本語以外の Windows でも標準入出力と `open()` の既定を UTF-8 にする。
 
 続けて、その環境に依存パッケージをインストールする（コマンドプロンプトで実行）。
 
@@ -997,7 +1012,7 @@ Anthropic公式のModel Context Protocol（[仕様](https://modelcontextprotocol
   （64文字以内に正規化）としてLLMに公開する。
 - **エラー時の挙動**: 個別サーバーへの接続失敗・タイムアウトはそのサーバーのみ
   警告ログを出してスキップし、アプリ全体の起動は継続する。ツール呼び出し自体の
-  失敗も例外を送出せず `"エラー: ..."` 形式の文字列として返す。
+  失敗も例外を送出せず `"Error: ..."` 形式の文字列として返す。
 - **既知の限界**: 接続後にサーバープロセスがクラッシュした場合の自動再接続は
   行わない。応答はテキストブロックのみ抽出する（画像等のリソースは未対応）。
 - **`[main_agent_tool_guard]`との関係**: MCP動的ツールは名前が実行時にしか
@@ -1030,6 +1045,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
 - **4種類の type**: `user`（ユーザーの役割・選好）／`feedback`（訂正・確認済みの
   アプローチ）／`project`（進行中の作業の背景）／`reference`（外部リソースの所在）。
   それぞれ `data/memory/<type>/` 配下に `<name>.md` として1ファイル保存される。
+  `name` はファイル名になるため ASCII のスラッグ（英数字・`-`・`_`、64文字まで）に限る。日本語は `description` に書く。
 - **索引 `MEMORY.md`**: 保存されている全メモリーの `name`+`description` 一覧。
   create/update/delete のたびに全再構築される（差分更新はしない設計）。
   この索引はシステムプロンプトの `{{memory}}` に常時差し込まれ、LLM は起動時から
@@ -1120,7 +1136,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   ファイル全体）ごとに1件にまとめる**。1つの一覧の中では同じ位置のチャンクは最上位の1つだけを数えるため、1ページに
   大量のチャンクがあっても点数はチャンク数で増えず、複数の検索（本文・キーワード・画像）で一致した位置が上に来る。
   埋め込み・索引はチャンク（`chunk_size`）単位のままで、抜粋には最も一致したチャンクを使い、同じ位置で他に一致した
-  チャンクは数だけ添える。各結果にはどの検索で一致したか（`一致: 本文・キーワード` 等）を載せ、出典のファイルパスをパスメモリー（`@N`）付きで添えるため、原文は
+  チャンクは数だけ添える。各結果にはどの検索で一致したか（`matched: text/keyword` 等）を載せ、出典のファイルパスをパスメモリー（`@N`）付きで添えるため、原文は
   `@N` を `Read`（メインエージェントは `explore` への委譲）に渡して確認できる。結果全体は `max_result_chars` 文字で切り詰める。
   結果が小さく抑えられるため、メインエージェント自身も直接呼べる（`[main_agent_tool_guard] allow_entries` に登録済み）。
   サブエージェントは `explore`・`worker`・`verifier` が持つ。
@@ -1134,7 +1150,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   検索ではパスの埋め込み（類似度 `path_min_score` 以上）とパスのキーワード（BM25。型番・品番・日付等の完全一致を拾う。
   語の区切り方は本文のキーワード検索と同じ）を別々に探し、`search_documents` と同じ式で順位を統合して（重みは埋め込みが 1.0、
   キーワードが `rrf_weight_path_keyword`。0 でキーワードを使わない）上位 `top_k` 件を、どちらで一致したか
-  （`一致: 意味・キーワード` 等）・出典のパス（`@N`）・相対パスを添えて返す（`search_documents` の結果には混ぜない）。パスが変わる（ファイル・フォルダの名前の変更・移動）と別のファイルとして
+  （`matched: meaning/keyword` 等）・出典のパス（`@N`）・相対パスを添えて返す（`search_documents` の結果には混ぜない）。パスが変わる（ファイル・フォルダの名前の変更・移動）と別のファイルとして
   取り込み直されるため、パスのベクターも追従する。取り込みの対象は対応形式のファイルで、本文の無い PDF・`image_input = false` の
   画像ファイルもパスだけは入る（読めずに失敗一覧に載ったファイルは入らない）。本文のチャンクが無くてもファイルがあれば
   検索の対象にする（画像ファイルだけのコレクションでも探せる。`search_documents` はそのコレクションを「本文のある文書がありません」として外す）。この機能の導入前に取り込んだコレクションは、次の「取り込み（差分）」で内容を埋め込み直さずに
@@ -1510,7 +1526,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[log]` | `retention_days` | ローテーション済み app_*.log の保持日数 | `LOG_RETENTION_DAYS` |
 | `[log]` | `cleanup_interval_hours` | app_*.log 自動削除チェック間隔（時間） | `LOG_CLEANUP_INTERVAL_HOURS` |
 | `[thinking_loop_guard]` | `enabled` | ループ検知＆ループガード＆リトライ機能の有効/無効 | `THINKING_LOOP_GUARD_ENABLED` |
-| `[thinking_loop_guard]` | `target` | ループ検知の監視対象（`all`: 思考と本文の両方 / `content_only`: 本文だけを監視し、思考のループは`[llm].reasoning_budget`での打ち切りに任せる。`thinking_only`: 思考だけを監視し、本文は対象外。`content_only`で思考予算が無制限なら起動時に警告） | `THINKING_LOOP_GUARD_TARGET` |
+| `[thinking_loop_guard]` | `target` | ループ検知の監視対象（`all`: 思考と本文の両方 / `content_only`: 本文だけを監視し、思考のループは`[llm].reasoning_budget`での打ち切りに任せる。`thinking_only`: 思考だけを監視し、本文は対象外。`content_only`で思考予算が無制限なら起動時に警告）。比較は同じチャネル（思考／本文）の中で行うため、思考の内容を本文へそのまま書き写してもループとは判定しない | `THINKING_LOOP_GUARD_TARGET` |
 | `[thinking_loop_guard]` | `window_chars` | ループ判定対象とする直近テキストのウィンドウ文字数 | `THINKING_LOOP_GUARD_WINDOW_CHARS` |
 | `[thinking_loop_guard]` | `check_interval_chars` | 何文字増えるごとに再チェックするか | `THINKING_LOOP_GUARD_CHECK_INTERVAL_CHARS` |
 | `[thinking_loop_guard]` | `confirm_count` | ループ確定と判定するまでの連続成立回数（誤検知防止） | `THINKING_LOOP_GUARD_CONFIRM_COUNT` |
@@ -1600,6 +1616,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[thread_store]` | `retention_days` | スレッド一覧の保持日数（0以下で無期限保持、既定）。削除してもLangGraph側の会話状態自体は消えない | `THREAD_STORE_RETENTION_DAYS` |
 | `[thread_store]` | `cleanup_interval_hours` | 上記の自動削除チェックの実行間隔（時間） | `THREAD_STORE_CLEANUP_INTERVAL_HOURS` |
 | `[chat_starters]` | `prompts` | チャット開始時に表示する定型文ボタン（クリックでそのまま送信、複数指定可） | `CHAT_STARTER_PROMPTS` |
+| `[chat_starters]` | `prompts_en` | 英語表示のセッションで使う定型文ボタン（書式は `prompts` と同じ。空なら `prompts` を使う） | `CHAT_STARTER_PROMPTS_EN` |
 | `[checkpointer]` | `op_timeout_seconds` | LangGraphの会話状態SQLite（`[paths].checkpoint_db`）に対する1回あたりの操作（aget_tuple/aput_writes等）タイムアウト秒数。超過時はcheckpointer再構築へフォールバック | `CHECKPOINTER_OP_TIMEOUT_SECONDS` |
 | `[checkpointer]` | `close_timeout_seconds` | checkpointer再構築時に旧DB接続をクローズする際のタイムアウト秒数 | `CHECKPOINTER_CLOSE_TIMEOUT_SECONDS` |
 | `[checkpointer]` | `shutdown_drain_timeout_seconds` | アプリシャットダウン時、保留中の非同期タスクの完了を待つ最大秒数 | `CHECKPOINTER_SHUTDOWN_DRAIN_TIMEOUT_SECONDS` |
@@ -1613,7 +1630,15 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[admin]` | `session_timeout_minutes` | 管理ツールへのログインセッションの有効時間（分） | `ADMIN_SESSION_TIMEOUT_MINUTES` |
 | `[admin]` | `backup_keep` | インスタンスごとの設定バックアップの保持世代数 | `ADMIN_BACKUP_KEEP` |
 | `[admin]` | `stop_apps_on_exit` | 管理ツール終了時に、子プロセスとして起動した本体インスタンスも道連れで停止するか | `ADMIN_STOP_APPS_ON_EXIT` |
+| `[admin]` | `assistant_enabled` | ダッシュボード右上の「AIに相談」（管理アシスタント）を有効にするか。false でボタンを出さず API も 404 | `ADMIN_ASSISTANT_ENABLED` |
+| `[admin]` | `assistant_llm_instance` | 管理アシスタントの回答に使う LLM 接続先を取るインスタンス名。空欄なら相談対象インスタンス自身の `[llm]` | `ADMIN_ASSISTANT_LLM_INSTANCE` |
+| `[admin]` | `assistant_max_keys` | 相談内容に近い config.ini のキーを AI に渡す最大件数 | `ADMIN_ASSISTANT_MAX_KEYS` |
+| `[admin]` | `assistant_max_docs` | 相談内容に近い README_DETAIL.md・API リファレンスの段落を AI に渡す最大件数（0 で渡さない） | `ADMIN_ASSISTANT_MAX_DOCS` |
+| `[admin]` | `assistant_use_embedding` | 相談内容に近いキー・段落を選ぶのに埋め込み（`[vector_db] embedding_url`）を使うか。false なら文字2-gram だけ | `ADMIN_ASSISTANT_USE_EMBEDDING` |
+| `[admin]` | `assistant_embedding_instance` | 埋め込みの接続先を取るインスタンス名。空欄なら自動で探す | `ADMIN_ASSISTANT_EMBEDDING_INSTANCE` |
+| `[admin]` | `assistant_max_history_messages` | AI に渡す直近の会話の最大メッセージ数 | `ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES` |
 | `[admin]` | `instances_dir` | インスタンス別ディレクトリのルート（既定 `./instances`）。app.bat直接起動時のdefaultインスタンスの`.env`・`config_overrides.json`の読み込み先にも使われる。変更時は既存の中身を手動で移動する | `INSTANCES_DIR` |
+| `[ui]` | `default_language` | 表示言語の既定値（`auto`＝ブラウザの言語 / `ja` / `en`）。利用者が画面で言語を選ぶとそちらが優先される。AI も選んだ言語で回答する（「言語切り替え（日本語 / 英語）」節） | `UI_DEFAULT_LANGUAGE` |
 | `[ui]` | `max_display_messages` | チャット画面に描画するメッセージの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_MESSAGES` |
 | `[ui]` | `max_display_side_steps` | サイドパネルに描画するツール呼び出し等のStepの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_SIDE_STEPS` |
 | `[ui]` | `paste_as_attachment_threshold_chars` | 入力欄へこの文字数以上のテキストを貼り付けると、入力欄へ展開せず「貼り付けテキスト」カード（`pasted-text-*.txt` 添付）にする。送信時はパスではなく本文としてLLMへ渡す（`0`以下で無効） | `UI_PASTE_AS_ATTACHMENT_THRESHOLD_CHARS` |
@@ -1668,7 +1693,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - 1つの会話（thread_id）につき1ファイルへ追記し続ける（日をまたいでも
   ファイルは変わらない）。左サイドバーからスレッドを再開した場合も、同じ
   thread_id の既存ファイルへ追記を継続する（新規ファイルには分割しない）。
-  再開したタイミングは `----- 再開 YYYY-MM-DD HH:MM:SS -----` という区切り行で
+  再開したタイミングは `----- resumed YYYY-MM-DD HH:MM:SS -----` という区切り行で
   ファイル内に記録される。
 
 ## 会話スレッド一覧・再開（左サイドバー）
@@ -1733,6 +1758,50 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
   判定結果は `check_work_dir_status` ツールでも確認できる。
 - **スコープ**: `cl.user_session`（会話単位）に保存されるだけで、
   `config.ini` 自体は変更されない。他の会話・他ユーザーには影響しない。
+
+---
+
+## 言語切り替え（日本語 / 英語）
+
+チャット画面・設定ダッシュボード・AI の応答を、利用者ごとに日本語と英語で切り替えられる。
+
+- **選び方**: チャット画面は右上の表示設定（パレットアイコン）→「言語 / Language」、またはログイン画面の下部。
+  設定ダッシュボードは右上（ログイン画面は下部）の選択欄（切り替えると再読み込みする）。選んだ言語はブラウザの
+  localStorage（`la-language`）に保存される。チャット画面と設定ダッシュボードはポートが違う（別オリジン）ため、
+  それぞれで選ぶ。
+- **既定値**: まだ選んでいない利用者は `[ui] default_language`（`auto` ならブラウザの言語。英語なら英語、それ以外は日本語）。
+  設定ダッシュボードの config.ini 画面では選択式で変更できる。
+- **LLM 向けの文言は英語ベース**: `system_prompt/` 配下のプロンプト・`agents/*.md`・ツールの docstring と戻り値
+  （エラーの接頭辞は `Error:`、スクリプトの出力は `[exit code]`・`[stdout]`・`[stderr]`）・同梱スキル（SKILL.md・
+  references・スクリプトのメッセージ）・管理アシスタントとスキル研究室のプロンプトは英語で書く。
+- **AI の応答言語**: セッションの表示言語に合わせ、`system_prompt.md` の末尾に応答言語の指示（`src/i18n.py` の
+  `response_language_directive()`。日本語・英語とも付ける）を足してグラフを組み直す。会話の途中で切り替えた場合は、
+  次の送信から切り替わる（生成中の応答はそのまま）。管理アシスタントも同様に、ダッシュボードの表示言語で回答する
+  （`admin/i18n.py` の `response_language_instruction()`）。evals はセッション外で動くため、既定の言語（日本語）の指示が付く。
+- **ログは英語**: アプリログ（`app_*.log`）・管理ツールのログは英語で出す。モニターはローテーション前の日本語のログ形式も読める。
+- **config.ini の説明**: 正本は config.ini の日本語コメント。設定ダッシュボードを英語で表示すると、英訳カタログ
+  （`admin/ini_catalog_en.py`）の説明・グループ見出しを返す。config.ini のキーを追加・説明を変更したら、カタログも
+  合わせて更新する（`tests/test_admin_ini_catalog_en.py` が全キーの英訳の有無を確かめる）。
+- **翻訳されないもの**: 送信済みのメッセージ（送った時点の言語のまま残る）、開発者向けのコードコメントと Python の
+  docstring、`skills/SKILLS_README.md` などの開発者向けドキュメント。
+- **ウェルカムメッセージとヘルプ**: `public/settings/welcome.md`・`system_prompt/help.md` は言語別のファイルを持たず、
+  英語の1本だけ（help は LLM が利用者の言語で伝える）。日本語にしたい場合は設定ダッシュボードの「表示設定」で
+  welcome.md を書き換える。英語の定型文ボタンは `[chat_starters] prompts_en`。
+
+### 文言の置き場所と翻訳の追加方法
+
+| 対象 | 置き場所 | 書き方 |
+|------|----------|--------|
+| チャット画面（React） | `frontend/src/i18n/messages.ts` | キー（`'composer.placeholder'` 等）ごとに `ja`・`en` を書き、コンポーネントで `useI18n().t('キー')`。変更後は `npm run build` |
+| チャットのシステム通知・ボタン・Step 名（Python） | `src/i18n.py` の `MESSAGES` | キーごとに `ja`・`en` を書き、`i18n.t("キー")`。セッションの言語は `cl.user_session` の `lang` |
+| 設定ダッシュボード（画面） | `admin/static/i18n_en.js` | 日本語の原文をそのままキーにする。JS では `_t("原文")`（可変部分は `_t("{0} を停止します", name)`）、`index.html` のテンプレートは `clone()` が自動で訳す |
+| 設定ダッシュボード（サーバーのエラー） | `admin/i18n.py` の `EN` | 日本語の原文をキーにし、`_t("インスタンス {0!r} が見つかりません。", name)`。言語は `X-Locohane-Lang` ヘッダー（`admin.js` の `api()` が付ける） |
+
+訳を書き忘れた文言は日本語のまま表示される（落ちはしない）。`tests/test_i18n.py`・`tests/test_admin_i18n.py`・`tests/test_admin_ini_catalog_en.py` が、
+キーの英訳の有無とプレースホルダー（`{0}` 等）の一致を確かめる。
+
+`🔢 トークン使用量` などのメッセージの接頭辞（`app.py` の `*_PREFIX` と `frontend/src/utils/messageTree.ts`）や
+`SUBAGENT_MESSAGE_AUTHOR` は、メッセージの種類を見分ける目印なので翻訳しない（表示はフロントエンドで訳す）。
 
 ---
 
@@ -1960,12 +2029,62 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 |---|---|
 | 接続中セッション・生成中スレッド | `<common_data_dir>/runtime_status.json`（本体が3秒ごとに変化があれば書き出し、終了時に削除。`src/runtime_status.py`） |
 | スレッド一覧・会話内容 | `[thread_store] db`（`[thread_store] enabled=false` だと閲覧できない） |
-| トークン推移 | `app_*.log` の `トークン使用量 thread_id=...` 行（会話本体の呼び出し）、`圧縮処理トークン使用量` 行（要約・write_thread_note 強制実行。`src/context_compaction.py`）、`コンテキスト圧縮を実行しました` 行（破線の位置）。`[llm] track_token_usage=true` の場合のみ出力され、ログがローテーション・削除された分は表示されない |
+| トークン推移 | `app_*.log` の `token usage thread_id=...` 行（会話本体の呼び出し）、`compaction token usage` 行（要約・write_thread_note 強制実行。`src/context_compaction.py`）、`context compacted` 行（破線の位置）。ローテーション前の日本語の行（`トークン使用量`・`圧縮処理トークン使用量`・`コンテキスト圧縮を実行しました`）も読む。`[llm] track_token_usage=true` の場合のみ出力され、ログがローテーション・削除された分は表示されない |
 
 本体と HTTP で通信せずファイルを読む方式にしているのは、`app.bat` で直接
 起動した（管理ツールが起動に関与しない）インスタンスでも同じように見える
 ようにするためと、管理ツールと本体の間に認証用の秘密を共有する仕組みが
 無いため（本体は `0.0.0.0` で公開されうる）。
+
+### 管理アシスタント（AIに相談）
+
+ダッシュボード右上の「AIに相談」から、管理者の困りごと（「2人同時に使うと待たされる」「チャット画面にログインできない」等）を
+相談すると、**どの画面のどこを開き、どの設定キーをどう変えればよいか**を AI が助言する（`admin/assistant.py`・`admin/static/assistant.js`）。
+
+- **AI は設定を読むだけ**で、保存・起動停止・ユーザー操作などは一切行わない（そのための API を AI に渡していない）。操作は管理者が画面で行う。
+- 回答に出てきた設定キーには「`[section] key` を開く」ボタンが付き、押すとそのインスタンスの config.ini 画面を、検索欄にキーを入れた状態で開く。
+- パネル上部の「対象」で相談対象のインスタンスを選ぶ（開いた時点でインスタンス詳細を見ていればそのインスタンス、無ければ前回の選択か `default`）。
+- 会話履歴はブラウザのタブ（sessionStorage）にだけ残り、サーバーには保存しない。変更履歴（監査ログ）にも記録しない。
+- AI へのプロンプトと画面ガイドは英語で書き、末尾の応答言語の指示（`admin/i18n.py` の `response_language_instruction()`）でダッシュボードの表示言語に合わせて回答させる。
+
+AI に渡すもの（回答のたびに組み立て直す）:
+
+| 内容 | 出どころ |
+|---|---|
+| 画面ガイド（タブ・サブタブの役割、よくある困りごとと見る場所） | `admin/ASSISTANT_GUIDE.md`（毎回読み直すため、編集すれば再起動不要で反映） |
+| 相談内容に近い config.ini のキー（説明・既定値・現在値・選べる値・環境変数で上書き中か） | 相談対象インスタンスの実効値。`[admin] assistant_max_keys` 件まで（下の検索で選ぶ。会話中で `[section] key` と名指しされたキーは必ず含める） |
+| 相談内容に近いドキュメントの段落 | README_DETAIL.md（ライセンス・ファイル構成など管理の相談に関係しない節は除く）と API リファレンスを見出しごと（最大1200文字程度）に分けたもの。`[admin] assistant_max_docs` 件まで。回答の下の「参考にした説明」に一覧が出る |
+| 管理者が今開いている画面、インスタンス一覧（種類・稼働状態） | 画面の状態 |
+
+config.ini の説明文やドキュメントは全部で数十万字あり、ローカルの小さめのモデルにそのまま渡すと入力が長すぎるため、
+相談内容で検索して絞って渡す（簡易 RAG、`admin/assistant_index.py`）。索引は config.ini の全キー（キーの説明に、
+セクション冒頭の説明と「設定リファレンス」表の説明も付ける）と上の段落で、元のファイルが変われば次の相談で作り直す。
+ダッシュボードを英語で表示しているときは、英語の相談と文字・意味が重なるよう、`README_DETAIL.en.md`・`admin/API_REFERENCE.en.md`・
+キーの説明の英訳（`admin/ini_catalog_en.py`）で作った別の索引を使う（埋め込みのキャッシュも言語ごとに別ファイル）。
+
+- **埋め込み**（既定）: ナレッジと同じ埋め込みサーバー（`[vector_db] embedding_url`）で相談内容と各キー・段落の意味の近さを測り、
+  文字2-gram の類似度（下記）を 0.2 倍して足す。「ナレッジのファイル容量」と `[vector_db] max_file_mb`（1ファイルあたりの最大サイズ）の
+  ように、言い回しが違って文字が重ならない相談にも当たる。接続先は `[admin] assistant_embedding_instance` のインスタンスの
+  `embedding_url`（空欄なら、回答に使う LLM のインスタンス → 相談対象 → それ以外の名前順で、`embedding_url` が設定されている最初のもの。
+  `[vector_db] enabled` が false でも `embedding_url` があれば使う）。文書側の埋め込みは `instances/_assistant_index/` に保存し、
+  変わった段落だけを埋め込み直す（初回だけ全段落の埋め込みに数十秒かかる）。
+- **文字2-gram**（埋め込みサーバーが無い・接続できない・`[admin] assistant_use_embedding = false` のとき）: パスメモリーの類似度検索
+  （`src/path_memory.py`）と同じく、文字を2文字ずつに分けた出現頻度のコサイン類似度で選ぶ（多くの段落に出る2文字ほど軽くする TF-IDF の重み付き）。
+  言い回しが違う相談は漏れやすい。
+
+困りごと→正解のキーの評価（開発用33問・作成時に見ていない20問）では、上位12件に正解が入った割合が、
+文字2-gram だけで 27/33・16/20、埋め込みで 31/33・20/20 だった。
+
+AI には「キーの一覧は検索で選んだ一部なので、一覧に無いことを理由に『その設定は無い』と言い切らない」
+「相談内容とキーの意味（例: ファイルの容量と件数）が合っているかを説明で確かめる」よう指示している。
+`[llm] main_url`/`sub_url` や `api_key`・`password`・`secret`・`token` を含むキーの値は、変更履歴と同じ規則でマスクしてから渡す。
+
+回答に使う LLM は、既定では相談対象インスタンスの `[llm]` 接続先（メイン）。`[admin] assistant_llm_instance` にインスタンス名を
+指定すると、常にそのインスタンスの接続先を使う（相談対象の LLM が止まっていても相談できるようにしたい場合や、本番の利用者を
+待たせたくない場合に、スキル調整ワーカー等を指定する）。思考（thinking）を有効にしたモデルでは、最初の文字が出るまで数分かかることがある
+（待っている間は経過秒数を表示し、「停止」で打ち切れる）。思考部分（`<think>…</think>`）は表示しない。
+
+使わない場合は `[admin] assistant_enabled = false` にすると、ボタンを出さず API も 404 を返す（`[admin]` は config.ini か環境変数で変え、管理ツールを再起動する）。
 
 ### スキル研究室
 
@@ -2001,7 +2120,7 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 
 | 画面（テーマの詳細） | できること |
 |---|---|
-| 研究内容 | 上から順に埋めれば開始できる1ページ（【必須】は ①②③、足りない間は開始ボタンを押せず、足りないものを見出しの下に表示）。**① 研究対象**（スキルかサブエージェントを1つ以上）：A. 利用者のドラフトの取り込み／B. 正式スキル・正式サブエージェントの複製（改善）／C. 新規作成（注文文から AI が作る／白紙のひな形）、ファイルの編集・追加・削除。サブエージェントは frontmatter（説明・tools の選択・model）と本文、run_script で呼んでよいスキル（`[subagent] agent_type_run_script_allowlist` へ足す分）をフォームで編集できる。**② やってほしいこと**（`spec.md`、必須は「目的」）：目的・使う場面・期待する出力・やってはいけないことを欄ごとに書く採点の基準。AI judge の判定と AI 修正の基準で、AI は変えない。③ の試験問題は例にすぎないため、② が無いと AI が試験にだけ通る直し方をしても見分けられない。見出しだけ・「要確認:」だけの「目的」は未記入とみなす。決まった見出し以外を含む spec.md はそのまま編集する。AI による下書き（① の一覧・入手元・注文と中身を読んで書き、人が書いた所は残して空いている所を埋める）。**③ 試験問題**（ケース、1問以上）：② を実際に試す問題。必須は利用者の指示と合格の決め方（回答に入るべき・入ってはいけない言葉、AI が判断する点のどれか）で、問題の名前は空欄なら `case_001` 等を自動で付け、ほかは「細かい設定」に折りたたむ。YAML の直接編集、AI による下書き（① の中身と ② をもとに、期待する出力を合格の条件、やってはいけないことを不合格の条件にする）、試験で使うファイルのアップロード（`cases/fixtures/<フォルダ>/`。ケースの `work_dir: fixtures/<フォルダ>`）、1回試行。**設定パッチ**（`config_patch.json`、折りたたみ）の編集、**AI への依頼**の状況 |
+| 研究内容 | 上から順に埋めれば開始できる1ページ（【必須】は ①②③、足りない間は開始ボタンを押せず、足りないものを見出しの下に表示）。**① 研究対象**（スキルかサブエージェントを1つ以上）：A. 利用者のドラフトの取り込み／B. 正式スキル・正式サブエージェントの複製（改善）／C. 新規作成（注文文から AI が作る／白紙のひな形）、ファイルの編集・追加・削除。サブエージェントは frontmatter（説明・tools の選択・model）と本文、run_script で呼んでよいスキル（`[subagent] agent_type_run_script_allowlist` へ足す分）をフォームで編集できる。**② やってほしいこと**（`spec.md`、必須は「目的」）：目的・使う場面・期待する出力・やってはいけないことを欄ごとに書く採点の基準。AI judge の判定と AI 修正の基準で、AI は変えない。③ の試験問題は例にすぎないため、② が無いと AI が試験にだけ通る直し方をしても見分けられない。spec.md の見出しは英語圏でも打ちやすい半角の `## Purpose`（目的）・`## When to use`（使う場面）・`## Expected output`（期待する出力）・`## Must not do`（やってはいけないこと）で、AI が資料から読み取れなかった点は `TODO:` で始まる行になる（日本語の旧見出し・「要確認:」で書かれた spec.md も読め、画面で保存すると英語の見出しに揃う）。見出しだけ・`TODO:` だけの Purpose は未記入とみなす。決まった見出し以外を含む spec.md はそのまま編集する。AI による下書き（① の一覧・入手元・注文と中身を読んで書き、人が書いた所は残して空いている所を埋める）。**③ 試験問題**（ケース、1問以上）：② を実際に試す問題。必須は利用者の指示と合格の決め方（回答に入るべき・入ってはいけない言葉、AI が判断する点のどれか）で、問題の名前は空欄なら `case_001` 等を自動で付け、ほかは「細かい設定」に折りたたむ。YAML の直接編集、AI による下書き（① の中身と ② をもとに、期待する出力を合格の条件、やってはいけないことを不合格の条件にする）、試験で使うファイルのアップロード（`cases/fixtures/<フォルダ>/`。ケースの `work_dir: fixtures/<フォルダ>`）、1回試行。**設定パッチ**（`config_patch.json`、折りたたみ）の編集、**AI への依頼**の状況 |
 | 実行の記録 | 反復ごとのケース別合格数、AI の分析と直したファイル、各回の最終回答・実行の記録・AI judge の理由 |
 | レビュー・昇格 | トライアウトの結果、取り込み・複製した時点からの差分（スクリプトの変更・AI によるケースの変更は強調）、昇格前の確認（配置先・登録する設定・同梱スキルの置き換え）、承認して昇格、差し戻し・不採用 |
 | 履歴 | 人・AI の操作の記録 |
@@ -2060,8 +2179,9 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 画面の操作はすべて HTTP API（`/api/...`）でも行える。curl での呼び出し方は
 [admin/API_REFERENCE.md](admin/API_REFERENCE.md) にまとめてあり、同じ内容を
 管理ツールの「APIリファレンス」タブでも表示する（表示のたびに md を読み直すため、
-md を編集すれば管理ツールを再起動せずに反映される）。API を追加・変更した場合は
-この md も更新すること。
+md を編集すれば管理ツールを再起動せずに反映される）。表示言語が英語のときは英訳の
+[admin/API_REFERENCE.en.md](admin/API_REFERENCE.en.md) を表示する。API を追加・変更した場合は
+この md（日本語版が正本）と英訳の両方を更新すること。
 
 ### セキュリティ上の注意
 
@@ -2087,7 +2207,7 @@ md を編集すれば管理ツールを再起動せずに反映される）。AP
 | チャット画面 | ヘッダーのタイトルにマウスを乗せたときのツールチップ（`GET /locohane/version`） |
 | 設定ダッシュボード | 上部バーのタイトル横（`GET /api/me`・`POST /api/login` の `version`） |
 | MCP サーバー | `initialize` 応答の `serverInfo.version` |
-| ログ | 本体起動時の `app_*.log` に `Locohane vX.Y.Z を起動しました。` |
+| ログ | 本体起動時の `app_*.log` に `Locohane vX.Y.Z started.` |
 
 ### 番号の上げ方
 
@@ -2188,6 +2308,10 @@ MCPサーバー機能（`.locohane/settings.json`、上記「MCPサーバー接�
 `backend = qdrant` 時のベクターは `qdrant_url` の Qdrant サーバーへ送る（取り込んだ文書のチャンク本文を含む）。
 どちらもローカルまたは LAN 内のサーバーを指定する前提で、既定の `backend = sqlite_vec` ではローカルファイルにだけ保存する。
 
+管理ツールの「AIに相談」（管理アシスタント）は、インスタンスの `[llm]` 接続先（上と同じ LLM サーバー）へ、相談内容と
+関係する設定キーの説明・値（機密値はマスク済み）・ドキュメントの段落を送り、検索のために相談内容とドキュメントの段落を
+`[vector_db] embedding_url` の埋め込みサーバーへ送るだけで、それ以外の外部通信は行わない。
+
 `web-search` スキル（Tavily APIによるWeb検索）は、スキル専用の
 `skills/web-search/scripts/.env` に `TAVILY_API_KEY` を設定した場合のみ、
 ユーザーがこのスキルを実行した時に限り `https://api.tavily.com` へ通信します。
@@ -2233,4 +2357,5 @@ LICENSEファイル・SKILL.mdのfrontmatter（`license`キー）を確認し、
 
 見出し（`##`/`###`）を追加・変更・削除した場合は、`CLAUDE.md`・`QWEN.md` の「ClaudeCode実行時ルール」に記載している README_DETAIL.md 見出し一覧も必ず合わせて更新すること。
 利用者の操作手順や画面の見え方が変わる変更は、利用者向けの [README.md](README.md) にも反映すること（README.md には設定キーやディレクトリ構造の詳細は書かず、本書へのリンクで済ませる）。
+本書を更新したら、英語版の [README_DETAIL.en.md](README_DETAIL.en.md) も合わせて更新すること（日本語版が正本）。README.md を更新したら [README.en.md](README.en.md) も同様に更新する。
 

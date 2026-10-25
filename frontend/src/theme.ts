@@ -1,17 +1,16 @@
 export interface AccentPreset {
   id: string;
-  label: string;
   accent: string;
   accentSoft: string;
 }
 
 export const ACCENT_PRESETS: AccentPreset[] = [
-  { id: 'purple', label: 'パープル', accent: '#6d5ef8', accentSoft: 'rgba(109, 94, 248, 0.14)' },
-  { id: 'blue', label: 'ブルー', accent: '#3b82f6', accentSoft: 'rgba(59, 130, 246, 0.14)' },
-  { id: 'green', label: 'グリーン', accent: '#10b981', accentSoft: 'rgba(16, 185, 129, 0.14)' },
-  { id: 'orange', label: 'オレンジ', accent: '#f97316', accentSoft: 'rgba(249, 115, 22, 0.14)' },
-  { id: 'pink', label: 'ピンク', accent: '#ec4899', accentSoft: 'rgba(236, 72, 153, 0.14)' },
-  { id: 'teal', label: 'ティール', accent: '#0ea5a4', accentSoft: 'rgba(14, 165, 164, 0.14)' }
+  { id: 'purple', accent: '#6d5ef8', accentSoft: 'rgba(109, 94, 248, 0.14)' },
+  { id: 'blue', accent: '#3b82f6', accentSoft: 'rgba(59, 130, 246, 0.14)' },
+  { id: 'green', accent: '#10b981', accentSoft: 'rgba(16, 185, 129, 0.14)' },
+  { id: 'orange', accent: '#f97316', accentSoft: 'rgba(249, 115, 22, 0.14)' },
+  { id: 'pink', accent: '#ec4899', accentSoft: 'rgba(236, 72, 153, 0.14)' },
+  { id: 'teal', accent: '#0ea5a4', accentSoft: 'rgba(14, 165, 164, 0.14)' }
 ];
 
 const STORAGE_KEY = 'la-accent-preset';

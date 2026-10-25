@@ -139,13 +139,13 @@ def test_tool_loop_nudge_text_uses_own_messages_and_appends_detail():
     assert tool_loop_nudge_text(["注意A", "注意B"], 1, exc) == "注意B\n\n（自動検知: 詳細）"
     # 空なら組み込みの既定文言＋詳細
     text = tool_loop_nudge_text([], 0, exc)
-    assert text.startswith("全く同じツール呼び出しを繰り返しています") and text.endswith("（自動検知: 詳細）")
+    assert text.startswith("You are repeating the exact same tool call") and text.endswith("（自動検知: 詳細）")
 
 
 def test_detail_has_no_instruction_only_facts():
     loop = detect_tool_call_loop(_history(_err(), _err(), _err()), _Cfg())
-    assert loop.detail().startswith("（自動検知: 直近3回、全く同じツール呼び出し（dispatch_agent）を繰り返しています。")
-    assert "切り替えて" not in loop.detail()
+    assert loop.detail().startswith("(Auto-detected: you repeated the exact same tool call (dispatch_agent) in the last 3 attempts.")
+    assert "switch" not in loop.detail()
 
 
 def _with_ids(messages: list) -> list:
@@ -160,8 +160,8 @@ def test_loop_reports_the_repeated_tail_for_removal():
     # SystemMessage・HumanMessage・_err("a")（2件）の後ろ、繰り返した3回分（AIMessage+ToolMessage ×3）
     assert loop.start_index == 4
     assert loop.message_ids == tuple(m.id for m in messages[4:])
-    assert "取り除きました" in loop.detail(removed=True)
-    assert "取り除きました" not in loop.detail()
+    assert "were removed" in loop.detail(removed=True)
+    assert "were removed" not in loop.detail()
 
 
 def test_loop_tail_includes_image_followups():
@@ -184,11 +184,11 @@ def test_raise_if_tool_call_loop_carries_remove_ids():
     with pytest.raises(ToolCallLoopDetected) as info:
         raise_if_tool_call_loop(messages, _Cfg())
     assert info.value.remove_ids == tuple(m.id for m in messages[2:])
-    assert "取り除きました" in info.value.detail
+    assert "were removed" in info.value.detail
     # id が無ければ取り除かず、その旨も書かない
     with pytest.raises(ToolCallLoopDetected) as info:
         raise_if_tool_call_loop(_history(_err(), _err(), _err()), _Cfg())
-    assert info.value.remove_ids == () and "取り除きました" not in info.value.detail
+    assert info.value.remove_ids == () and "were removed" not in info.value.detail
 
 
 # 2026-10-04 本番ログで write_thread_note の content に漏れていた値
@@ -276,13 +276,13 @@ async def test_subagent_nudges_then_truncates(monkeypatch):
     result = await subagent.run_subagent(task="t", tools=[_ErrorTool()], system_prompt="sp", config=config, max_iterations=20)
 
     # 3回目の後に注意メッセージ（詳細付き）が入り、また3回繰り返したところで打ち切られる
-    nudged = [i for i, msgs in enumerate(model.inputs) if isinstance(msgs[-1], HumanMessage) and "自動検知" in msgs[-1].content]
+    nudged = [i for i, msgs in enumerate(model.inputs) if isinstance(msgs[-1], HumanMessage) and "Auto-detected" in msgs[-1].content]
     assert nudged == [3]
     assert model.inputs[3][-1].content.startswith("ツールループ用1")
     # 繰り返した応答は取り除かれ、注意メッセージの直前にはもう無い
     assert not any(isinstance(m, AIMessage) for m in model.inputs[3])
     assert len(model.inputs) == 6
-    assert "全く同じツール呼び出し（dispatch_agent）が繰り返され" in result
+    assert "the exact same tool call (dispatch_agent) kept repeating" in result
 
 
 @pytest.mark.asyncio

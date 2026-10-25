@@ -10,7 +10,11 @@ import dataclasses
 import json
 
 import app
-from app import MAIN_CALL_USAGE_LABEL, TOKEN_USAGE_PREFIX, _format_token_usage, _is_subagent_call, _token_usage_level
+from app import TOKEN_USAGE_PREFIX, _format_token_usage, _is_subagent_call, _token_usage_level
+from src import i18n
+
+# セッション文脈の外では既定言語（日本語）の表示名になる。
+MAIN_CALL_USAGE_LABEL = i18n.t("usage.main")
 
 
 def _with_thresholds(monkeypatch, warn: int, alert: int) -> None:

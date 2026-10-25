@@ -1,10 +1,12 @@
 import { useRef, useState } from 'react';
 import { useChatData, useChatInteract } from '@chainlit/react-client';
+import { useI18n } from '../i18n';
 
 /** ask_user系のファイル要求(spec.type==='file')に応答するドロップゾーン。 */
 export function AskFileDropzone() {
   const { askUser } = useChatData();
   const { uploadFile } = useChatInteract();
+  const { t } = useI18n();
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -40,18 +42,23 @@ export function AskFileDropzone() {
   return (
     <div className="ask-file-dropzone">
       <p>
-        ファイルを選択してください
-        {askUser.spec.max_size_mb ? `（最大 ${askUser.spec.max_size_mb}MB）` : ''}
+        {t('ask.selectFile')}
+        {askUser.spec.max_size_mb ? t('ask.maxSize', { size: askUser.spec.max_size_mb }) : ''}
       </p>
+      {/* ブラウザ標準のファイル選択の表示は OS・ブラウザの言語で出るため、隠して自前のボタンで開く */}
       <input
         ref={inputRef}
         type="file"
         accept={accept}
         multiple={(askUser.spec.max_files ?? 1) > 1}
         disabled={uploading}
+        hidden
         onChange={(e) => handleFiles(e.target.files)}
       />
-      {uploading ? <span>アップロード中... {Math.round(progress)}%</span> : null}
+      <button type="button" className="ask-action-button ask-file-button" disabled={uploading} onClick={() => inputRef.current?.click()}>
+        {t('ask.chooseFile')}
+      </button>
+      {uploading ? <span>{t('ask.uploading', { percent: Math.round(progress) })}</span> : null}
     </div>
   );
 }

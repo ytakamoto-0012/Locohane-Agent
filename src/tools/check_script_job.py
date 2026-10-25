@@ -11,38 +11,35 @@ from ._script_job import _finalize_script_job_result, _format_background_job_pro
 
 @tool
 async def check_script_job(job_id: str) -> str:
-    """run_script_background/execute_python_code_background で起動したジョブの
-    状況・結果を確認する。
+    """Check the status and result of a job started by run_script_background/execute_python_code_background.
 
-    通常は run_script_background/execute_python_code_background 自身が
-    ジョブ完了まで待ってから最終結果を直接返すため、このツールを呼ぶ必要は
-    無い。呼ぶのは、それらが安全上限に達して job_id を返した場合
-    （＝よほど長時間のジョブ）のみ。
+    Normally run_script_background/execute_python_code_background itself waits until the job
+    finishes and returns the final result directly, so you do not need to call this tool. Call it
+    only when they reached the safety limit and returned a job_id
+    (that is, a very long job).
 
-    実行中であれば経過秒数と直近の出力（標準出力・標準エラー末尾、最大4000文字）
-    を返す。完了・失敗・タイムアウト・強制終了のいずれかで終わっていれば、
-    run_script と同じ形式（"[終了コード] N" に続けて "[標準出力]"/"[標準エラー]"）
-    で最終結果を返し、以降は同じ job_id を指定できなくなる（登録から削除される）。
-    他セッションが起動した job_id は参照できない。
+    While running, it returns the elapsed seconds and the latest output (the tail of stdout and
+    stderr, 4000 characters at most). If it ended as done, failed, timed out or killed, it returns
+    the final result in the same form as run_script ("[exit code] N" followed by
+    "[stdout]"/"[stderr]"), and the same job_id can no longer be used afterwards (it is removed
+    from the registry). job_ids started by other sessions cannot be viewed.
 
-    実行中（"実行中です（経過 N 秒）。"）が返ってきた場合、数秒間隔で連続
-    して呼び直さないこと。経過をユーザーへ一言伝えたらそのターンを終えて
-    次のユーザー発言を待つか、十分な間隔（数十秒〜）を空けてから改めて
-    呼ぶこと。処理に時間がかかっていること自体は異常でも打ち切る理由でもない。
-    なお、この指示に反して短い間隔で呼び直した場合はサーバー側で拒否され、
-    「まだ確認間隔が短すぎます」のような拒否メッセージが返る（既定の最小
-    間隔は20秒）。
+    When it returns "running" ("Running (elapsed N s, ...)."), do not call it again every few
+    seconds. Tell the user the progress in a word and end the turn to wait for the user's next
+    message, or call it again after a sufficient interval (tens of seconds or more). Taking a long
+    time is neither abnormal nor a reason to stop it. If you call it again too soon against this
+    instruction, the server rejects it and returns a message like "Checked too soon" (the default
+    minimum interval is 20 seconds).
 
     Args:
-        job_id: run_script_background/execute_python_code_background の
-            戻り値に含まれるID。
+        job_id: The ID included in the return value of
+            run_script_background/execute_python_code_background.
 
     Returns:
-        状況または最終結果を表す文字列。job_id が不明・他セッションのもので
-        ある場合、または直前の「実行中」応答から
-        background_min_poll_interval_seconds 未満しか経っていない場合は
-        「エラー: ...」/拒否メッセージ（[scripts].background_min_poll_message、
-        既定は「まだ確認間隔が短すぎます...」）形式の文字列。
+        A string with the status or the final result. If the job_id is unknown or belongs to
+        another session, or less than background_min_poll_interval_seconds has passed since the
+        previous "running" response, an "Error: ..." / rejection message
+        ([scripts].background_min_poll_message, "Checked too soon..." by default) string.
     """
     resolved = _resolve_job(job_id)
     if isinstance(resolved, str):

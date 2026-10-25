@@ -119,7 +119,7 @@ async def _resilient_ask_call(session, data: dict, timeout: float) -> Any:
                         await call_task
             if not call_task.cancelled():
                 return call_task.result()
-            logger.info("WebSocket再接続: 回答待ちの質問を新しい接続へ送り直します [session_id=%s]", session.id)
+            logger.info("WebSocket reconnect: resending pending questions to the new connection [session_id=%s]", session.id)
             resend = True
     finally:
         for key in spec.get("keys") or []:
@@ -171,4 +171,4 @@ def install() -> None:
     Action.send = _action_send
     Action.remove = _action_remove
     _installed = True
-    logger.info("ask系プロンプトを WebSocket 再接続後に送り直すパッチを適用しました。")
+    logger.info("Applied the patch resending ask prompts after a WebSocket reconnect.")

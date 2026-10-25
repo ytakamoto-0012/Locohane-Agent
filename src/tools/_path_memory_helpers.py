@@ -4,17 +4,23 @@ from __future__ import annotations
 
 import chainlit as cl
 import re
+from pathlib import Path
 
 from .. import path_memory
 
 from . import _state
 
 
-_PATH_MEMORY_TOKEN_RE = re.compile(r"^@(\d+)$")
+# `@N` 単体、または `@N/子パス`・`@N\子パス`（モデルはフォルダの `@N` の中のファイルをこう書く）。
+_PATH_MEMORY_TOKEN_RE = re.compile(r"^@(\d+)(?:[\\/](.+))?$")
 
 
 def _resolve_path_memory_token(value: str) -> tuple[str, str | None]:
-    """value が `@N` 形式のパスメモリー参照なら実パスへ解決する。
+    """value が `@N`（または `@N/子パス`・`@N\\子パス`）なら実パスへ解決する。
+
+    子パスの結合はこのヘルパーで行う。path_memory.resolve() は `@N` 単体だけを扱うため、
+    execute_python_code のスクリプト側から呼ぶ path_memory.resolve() は引き続き `@N` 単体しか
+    解決しない（skills/SKILLS_README.md 4-7-2 参照）。
 
     Args:
         value: analyze_image の relative_path や run_script の args の
@@ -23,20 +29,31 @@ def _resolve_path_memory_token(value: str) -> tuple[str, str | None]:
     Returns:
         (解決後の値, エラーメッセージ) のタプル。
         - `@N` 形式でなければ (value, None)（従来通りそのまま使う）。
-        - `@N` 形式で解決できれば (実パス, None)。
-        - `@N` 形式だがパスメモリーが利用できない・未登録の場合は
-          (value, "パスメモリー ... は登録されていません。..." というエラー文)。
+        - 登録済み `@N` なら実パスを返す。子パスがあれば、エントリがフォルダの
+          場合に限り結合した実パスを返す。エントリがファイルなのに子パスを
+          続けた場合はエラー（黙って結合すると「存在しないパス」扱いになり、
+          suggest_from_path_memory の類似候補＝別のファイルで処理が進みうるため）。
+        - パスメモリーが利用できない・未登録の場合は (value, エラー文)。
+          エラー文は常に基となる `@N` の名前で述べる（`@2/photo_01.png` の
+          ような文字列全体をそのまま載せない）。
           呼び出し側はこのエラー文をそのまま「エラー: ...」として返すこと。
     """
-    if not _PATH_MEMORY_TOKEN_RE.match(value):
+    match = _PATH_MEMORY_TOKEN_RE.match(value)
+    if not match:
         return value, None
+    token, rest = f"@{match.group(1)}", match.group(2)
     if _state._PATH_MEMORY_DIR is None:
-        return value, f"パスメモリー機能が利用できません: {value}"
+        return value, f"Path memory is not available: {token}"
     thread_id = cl.user_session.get("thread_id") or "_no_session"
-    resolved = path_memory.resolve(thread_id, value, _state._PATH_MEMORY_DIR)
+    resolved = path_memory.resolve(thread_id, token, _state._PATH_MEMORY_DIR)
     if resolved is None:
-        return value, (f"パスメモリー {value} は登録されていません。" "search_path_memory にファイル名を渡すと登録済みの @N を探せます。")
-    return resolved, None
+        return value, (f"Path memory {token} is not registered. " "Pass a file name to search_path_memory to find a registered @N.")
+    if not rest:
+        return resolved, None
+    entry = Path(resolved)
+    if not entry.is_dir():
+        return value, f"Path memory {token} is a file ({resolved}); cannot append a path after it. Pass {token} alone."
+    return str(entry / rest), None
 
 
 def suggest_from_path_memory(query: str, top_k: int = 3) -> str:
@@ -73,10 +90,10 @@ def suggest_from_path_memory(query: str, top_k: int = 3) -> str:
     )
     if not hits:
         return ""
-    candidates = ", ".join(f"@{e['index']}（{path_memory.difference_label(query, e['path'])}: {e['path']}）" for e in hits)
+    candidates = ", ".join(f"@{e['index']} ({path_memory.difference_label(query, e['path'])}: {e['path']})" for e in hits)
     return (
-        f" パスメモリーに似た登録があります: {candidates}。"
-        "記憶から書いたパスの誤りならその @N を使う。task・ユーザーが指定したパスなら置き換えず、見つからないと報告する。"
+        f" There are similar entries in path memory: {candidates}. "
+        "If the path you wrote from memory was wrong, use that @N. If it is a path given by the task or the user, do not replace it; report that it was not found."
     )
 
 
@@ -145,7 +162,7 @@ def register_raw_unc_paths_in_text(text: str) -> str:
             path,
             _state._PATH_MEMORY_DIR,
             _state._PATH_MEMORY_MAX_ENTRIES,
-            description="ユーザー入力",
+            description="user input",
         )
         return f"@{index}" if index is not None else path
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import locale
 import os
 import sys
 import shutil
@@ -32,6 +33,24 @@ def setup_utf8_stdio() -> None:
     """
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+
+
+def read_text_with_fallback(path: Path) -> str:
+    """UTF-8 で読めなければ OS の ANSI コードページ（日本語版 Windows なら cp932、英語版なら cp1252 等）、
+    cp932 の順に読む（本体の src/tools/_file_tools_common.py と同じ順）。
+
+    cp1252 の文書の多くは cp932 としてもエラーなく読めて文字化けに気付けないため、ANSI を先に試す。
+    """
+    data = path.read_bytes()
+    error: UnicodeDecodeError | None = None
+    for encoding in dict.fromkeys(("utf-8", locale.getencoding(), "cp932")):
+        try:
+            return data.decode(encoding).replace("\r\n", "\n")
+        except UnicodeDecodeError as e:
+            error = error or e
+        except LookupError:
+            continue
+    raise error or UnicodeDecodeError("utf-8", data, 0, len(data), "undecodable")
 
 
 def backup_before_overwrite(path: Path) -> Path | None:
@@ -302,10 +321,10 @@ def resolve_sheet_name(names: list[str], sheet_arg: str) -> str:
     try:
         idx = int(sheet_arg)
     except ValueError:
-        raise ValueError(f"シートが見つかりません: {sheet_arg}（存在するシート: {names}）")
+        raise ValueError(f"Sheet not found: {sheet_arg} (existing sheets: {names})")
     if 0 <= idx < len(names):
         return names[idx]
-    raise ValueError(f"シートインデックスが範囲外です: {sheet_arg}（シート数: {len(names)}）")
+    raise ValueError(f"Sheet index out of range: {sheet_arg} (number of sheets: {len(names)})")
 
 
 def register_output_path(path, description: str | None = None) -> dict[str, str] | None:
@@ -350,7 +369,7 @@ def write_json_result(result: dict, category: str, source_path) -> dict:
     out_path = out_dir / f"{digest}_{timestamp}.json"
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     info: dict = {"result_path": str(out_path)}
-    pm = register_output_path(out_path, description=f"{category}の読み込み結果全文JSON")
+    pm = register_output_path(out_path, description=f"full JSON of the {category} read result")
     if pm:
         info["path_memory"] = pm
     return info
@@ -403,7 +422,7 @@ def column_index(column: str) -> int:
     except ValueError:
         idx = int(column)
     if idx < 1:
-        raise ValueError(f"列番号は1以上を指定してください（列アルファベットも使えます）: {column!r}")
+        raise ValueError(f"Specify a column number of 1 or more (column letters also work): {column!r}")
     return idx
 
 
@@ -418,12 +437,12 @@ def parse_column_selection(columns_arg: str | None, total_columns: int) -> list[
         return None
     tokens = [t.strip() for t in columns_arg.split(",") if t.strip()]
     if not tokens:
-        raise ValueError("--columns は有効な列（列アルファベットまたは1始まり列番号）を1つ以上指定してください")
+        raise ValueError("--columns needs at least one valid column (a column letter or a 1-based column number)")
     indices: set[int] = set()
     for token in tokens:
         idx = column_index(token)
         if idx > total_columns:
-            raise ValueError(f"指定列が範囲外です: {token!r}（このシートの列数: {total_columns}）")
+            raise ValueError(f"Specified column out of range: {token!r} (number of columns in this sheet: {total_columns})")
         indices.add(idx)
     return sorted(indices)
 

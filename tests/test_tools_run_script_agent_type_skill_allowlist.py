@@ -73,7 +73,7 @@ def test_explore_blocked_from_write_skill():
         tools._state._SUBAGENT_AGENT_TYPE.reset(token)
 
     assert isinstance(result, str)
-    assert result.startswith("エラー")
+    assert result.startswith("Error")
     assert "explore" in result
 
 
@@ -99,7 +99,7 @@ def test_explore_blocked_from_pdf_tools_write_script():
         tools._state._SUBAGENT_AGENT_TYPE.reset(token)
 
     assert isinstance(result, str)
-    assert result.startswith("エラー")
+    assert result.startswith("Error")
 
 
 def test_verifier_allowed_read_only_skill_passes_allowlist_guard():
@@ -120,7 +120,7 @@ def test_verifier_blocked_from_write_skill():
         tools._state._SUBAGENT_AGENT_TYPE.reset(token)
 
     assert isinstance(result, str)
-    assert result.startswith("エラー")
+    assert result.startswith("Error")
     assert "verifier" in result
 
 
@@ -132,4 +132,4 @@ def test_verifier_blocked_from_pdf_tools_write_script():
         tools._state._SUBAGENT_AGENT_TYPE.reset(token)
 
     assert isinstance(result, str)
-    assert result.startswith("エラー")
+    assert result.startswith("Error")

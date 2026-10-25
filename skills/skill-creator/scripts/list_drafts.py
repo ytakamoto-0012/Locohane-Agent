@@ -27,9 +27,9 @@ def _lab_note(lab: object) -> dict | None:
     """スキル研究室に取り込まれていれば、その旨（作成者向けの説明つき）。"""
     if not isinstance(lab, dict) or not lab.get("theme_id"):
         return None
-    note = "スキル開発者が研究室で仕上げています（取り込んだ後の編集は、昇格時に開発者が確認します）。"
+    note = "A skill developer is finishing it in the lab (edits after it was imported are checked by the developer at promotion)."
     if lab.get("applied_fixes"):
-        note = "研究室での修正がこのドラフトに反映されています。差し戻しの理由を読んで直してください。"
+        note = "Fixes made in the lab have been applied to this draft. Read the reason it was sent back and fix it."
     return {**lab, "note": note}
 
 

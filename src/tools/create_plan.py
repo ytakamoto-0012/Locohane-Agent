@@ -17,58 +17,55 @@ logger = logging.getLogger(__name__)
 
 @tool
 async def create_plan(steps: list[dict[str, str]], detail_markdown: str | None = None) -> str:
-    """複数ステップの実行計画を作成し、ユーザーへチェックリストとして表示する。
+    """Create a multi-step plan and show it to the user as a checklist.
 
-    書き込み系ツール（run_script、run_script_background、execute_python_code、
-    execute_python_code_background）を1回でも使うタスクに着手する前に、まず
-    このツールでステップ一覧を提示する。作成しただけでは書き込み系ツールの
-    ブロックは解除されない。承認を得るには続けて approve_plan を呼ぶこと。
+    Before starting any task that uses a write tool (run_script, run_script_background,
+    execute_python_code, execute_python_code_background) even once, first present the list of
+    steps with this tool. Creating it does not lift the block on the write tools.
+    To get approval, call approve_plan next.
 
-    steps/detail_markdown は調査で得た具体的事実に基づいて書くこと。
-    自分の記憶・推測だけでsteps文言（行番号・セル位置等の具体的数値を
-    含む）を作らない。
+    Write steps/detail_markdown based on concrete facts found in your investigation.
+    Do not make up step text (including concrete numbers such as line numbers or cell positions)
+    from memory or guesswork alone.
 
-    既に approve_plan で承認済み（Edit Automatically）の状態でこのツールを
-    再度呼んで steps を差し替えると、config.ini の
-    [plan].reset_approval_on_recreate の設定によっては承認状態が失われ
-    Plan Mode（未承認）へ戻る（既定は失われる側）。その場合、続けて
-    approve_plan を呼び直さない限り書き込み系ツールは再びブロックされる。
+    If you call this tool again to replace steps while already approved by approve_plan
+    (Edit Automatically), depending on [plan].reset_approval_on_recreate in config.ini the approval
+    may be lost and it returns to Plan Mode (not approved) (lost by default). In that case the write
+    tools are blocked again unless you call approve_plan again.
 
-    run_script_background/execute_python_code_background でバックグラウンド
-    ジョブを扱う場合、「起動」と「完了確認」を同じステップにまとめないこと。
-    ジョブを起動しただけではまだ処理は終わっていないため、起動ステップを
-    completed にしてよいのは check_script_job で最終結果（running 以外の
-    状態）を取得できてから。起動ステップとは別に「結果を確認する」ステップを
-    設けること。
+    When handling background jobs with run_script_background/execute_python_code_background, do not
+    combine "start" and "check completion" in the same step. Starting a job does not mean the work
+    is finished, so mark the start step completed only after you got the final result (a state other
+    than running) with check_script_job. Add a separate "check the result" step besides the start
+    step.
 
-    detail_markdown を渡すと、steps とは別にメインチャットへそのまま表示され、
-    かつ data/plans/ 配下へ詳細な計画Markdownファイルとしても保存される
-    （会話スレッドごとに1ファイル、呼ぶたびに上書き更新。update_task_progress
-    では更新されない）。パネル表示のチェックリストに収まらない背景・設計判断・
-    調査結果等をユーザーに見せたい複雑なタスクでは、この引数も渡すことを
-    推奨する（省略してもエラーにはならない）。
+    If you pass detail_markdown, it is shown as is in the main chat separately from steps,
+    and is also saved as a detailed plan Markdown file under data/plans/
+    (one file per conversation thread, overwritten on every call; update_task_progress does not
+    update it). For complex tasks where you want to show the user background, design decisions or
+    findings that do not fit in the checklist panel, passing this argument is recommended
+    (omitting it is not an error).
 
     Args:
-        steps: 実行計画の各ステップを表す辞書のリスト（1件以上、実行順）。
-            各辞書は次の2キーを持つこと。
-            - content: ステップの内容（例: "設定ファイルを読み込む"）。
-            - activeForm: 実行中（in_progress）の間だけチェックリストに
-              表示する現在進行形の説明（例: "設定ファイルを読み込み中"）。
-        detail_markdown: 詳細な実行計画を記した任意のMarkdown本文
-            （背景・設計判断・調査結果等、自由形式）。省略時（None または
-            空文字）はファイルを保存しない。
+        steps: A list of dicts, one per plan step (at least one, in execution order).
+            Each dict must have these two keys.
+            - content: What the step does (e.g. "Read the settings file").
+            - activeForm: A present-progressive description shown in the checklist only while
+              the step is in_progress (e.g. "Reading the settings file").
+        detail_markdown: An optional Markdown body describing the detailed plan
+            (background, design decisions, findings, etc., free form). If omitted (None or an
+            empty string), no file is saved.
 
     Returns:
-        計画を作成した旨とステップ件数を伝えるテキスト。detail_markdown を
-        渡した場合は保存先の絶対パスも併記する。steps が空、または
-        いずれかの要素に content / activeForm が欠けている場合は、例外を
-        送出せず「エラー: ...」形式の文字列を返す。
+        A text saying the plan was created and how many steps it has. If detail_markdown was
+        passed, the absolute path where it was saved is included too. If steps is empty, or any
+        element lacks content / activeForm, it returns an "Error: ..." string instead of raising.
     """
     if not steps:
-        return "エラー: steps が空です。1件以上のステップを指定してください。"
+        return "Error: steps is empty. Specify at least one step."
     for i, s in enumerate(steps):
         if not isinstance(s, dict) or not s.get("content") or not s.get("activeForm"):
-            return f"エラー: steps[{i}] には content と activeForm の両方を" f"文字列で指定してください: {s!r}"
+            return f"Error: steps[{i}] needs both content and activeForm " f"as strings: {s!r}"
     plan = [{"content": s["content"], "activeForm": s["activeForm"], "status": "pending"} for s in steps]
     # 既に承認済み（Edit Automatically）だった場合にこの呼び出しでも承認状態を
     # 維持するかは config.ini の [plan].reset_approval_on_recreate で切り替え可能
@@ -105,9 +102,9 @@ async def create_plan(steps: list[dict[str, str]], detail_markdown: str | None =
     )
 
     if still_approved:
-        result = f"計画を更新しました（全{len(steps)}件）。承認済み状態を維持しているため、approve_plan を呼ばずに書き込み系ツールを続行できます。"
+        result = f"Updated the plan ({len(steps)} steps). It stays approved, so you can continue with the write tools without calling approve_plan."
     else:
-        result = f"計画を作成しました（全{len(steps)}件）。approve_plan でユーザーの承認を得てください。"
+        result = f"Created the plan ({len(steps)} steps). Get the user's approval with approve_plan."
     if detail_markdown and detail_markdown.strip():
         # プレフィックス無しの通常メッセージとして送る（PLAN_PREFIX 付きの
         # チェックリストと違い、messageTree.ts の selectMainThread でサイドパネル
@@ -116,8 +113,8 @@ async def create_plan(steps: list[dict[str, str]], detail_markdown: str | None =
         try:
             plan_path = _write_plan_detail(plan, detail_markdown)
         except OSError as e:
-            result += f"\n（詳細計画の保存に失敗しました: {e}）"
+            result += f"\n(Failed to save the detailed plan: {e})"
         else:
             if plan_path is not None:
-                result += f"\n詳細計画を保存しました: {plan_path}"
+                result += f"\nSaved the detailed plan: {plan_path}"
     return result

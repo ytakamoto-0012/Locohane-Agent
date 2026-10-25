@@ -36,26 +36,26 @@ description: {description}
 
 # {name}
 
-（このスキルが何をするかを1〜2文で書く）
+(Write in 1-2 sentences what this skill does)
 
-## 手順
+## Procedure
 
-1. （最初にやること）
-2. 次のコマンドを実行する:
+1. (What to do first)
+2. Run the following command:
    ```
-   python run.py --input <入力ファイル>
+   python run.py --input <input file>
    ```
-3. 出力JSONのキーの意味と、ユーザーへの報告のしかたを書く。
+3. Write what the keys of the output JSON mean and how to report to the user.
 
-## 注意
+## Notes
 
-- （入力が不正な場合の扱い、やってはいけないこと）
+- (How to handle invalid input, what not to do)
 """
 
-SAMPLE_SCRIPT_TEMPLATE = '''"""{name} スキルの実行スクリプト。
+SAMPLE_SCRIPT_TEMPLATE = '''"""Script that runs the {name} skill.
 
-標準ライブラリのみで自己完結させる（依存が必要なら SKILL.md に明記する）。
-正常時は終了コード0で標準出力に1行のJSON、異常時は終了コード1で標準エラーに理由を出す。
+Keep it self-contained with the standard library only (if dependencies are needed, state them in SKILL.md).
+On success, print one line of JSON to stdout with exit code 0; on failure, print the reason to stderr with exit code 1.
 """
 
 import argparse
@@ -78,9 +78,9 @@ if __name__ == "__main__":
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--name", required=True, help="スキル名（小文字英数字とハイフン）")
-    parser.add_argument("--description", required=True, help="何をするか・どんな発話で使うか")
-    parser.add_argument("--with-script", action="store_true", help="scripts/run.py の見本も作る")
+    parser.add_argument("--name", required=True, help="skill name (lowercase letters, digits and hyphens)")
+    parser.add_argument("--description", required=True, help="what it does and for what kind of messages it is used")
+    parser.add_argument("--with-script", action="store_true", help="also create a sample scripts/run.py")
     args = parser.parse_args()
 
     error = validate_name_description(args.name, args.description)
@@ -88,12 +88,12 @@ def main() -> int:
         raise SkillCreatorError(error)
     if find_official_skill(args.name) is not None:
         raise SkillCreatorError(
-            f"正式スキル '{args.name}' と同じ名前です。別の名前にするか、既存スキルを直すなら fork_skill.py を使ってください。"
+            f"It has the same name as the official skill '{args.name}'. Use another name, or use fork_skill.py to fix the existing skill."
         )
     ctx = draft_context()
     ref = resolve_draft(ctx, args.name, "write", must_exist=False)
     if ref.dir.exists():
-        raise SkillCreatorError(f"同じ名前のドラフトが既にあります: {ref.full_name}")
+        raise SkillCreatorError(f"A draft with the same name already exists: {ref.full_name}")
 
     ref.dir.mkdir(parents=True)
     (ref.dir / "SKILL.md").write_text(SKILL_MD_TEMPLATE.format(name=args.name, description=args.description), encoding="utf-8")
@@ -119,7 +119,7 @@ def main() -> int:
         {
             "draft": ref.full_name,
             "skill_dir": str(ref.dir),
-            "note": "次のメッセージから、自分の会話でこのスキルが使えます。本文は write_draft_file.py で書き直してください。",
+            "note": "From the next message, you can use this skill in your own conversations. Rewrite the body with write_draft_file.py.",
         }
     )
     return 0

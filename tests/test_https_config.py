@@ -43,7 +43,7 @@ def test_both_set_returns_absolute_paths(tmp_path):
 def test_only_one_set_is_rejected(tmp_path):
     cert = tmp_path / "server.crt"
     cert.write_text("c", encoding="utf-8")
-    with pytest.raises(ValueError, match="両方"):
+    with pytest.raises(ValueError, match="Specify both"):
         resolve_ssl_files(_write_ini(tmp_path, str(cert), ""))
 
 

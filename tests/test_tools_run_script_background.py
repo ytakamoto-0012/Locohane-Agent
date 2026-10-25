@@ -203,8 +203,8 @@ async def test_run_script_background_normal_completion_returns_final_result_dire
     result = await tools.run_script_background.ainvoke({"skill_name": "demo", "script_filename": "count.py"})
 
     assert "job_id=" not in result
-    assert "[終了コード] 0" in result
-    assert "[標準出力]\nhello" in result
+    assert "[exit code] 0" in result
+    assert "[stdout]\nhello" in result
     assert tools._script_job._BACKGROUND_JOBS == {}
 
 
@@ -229,7 +229,7 @@ async def test_execute_python_code_background_normal_completion_registers_output
     result = await task
 
     assert "job_id=" not in result
-    assert "[生成/更新ファイル]" in result
+    assert "[Created/updated files]" in result
     assert not tmp_py_path.exists()  # 完了時に一時.pyファイルが削除される
 
 
@@ -254,7 +254,7 @@ async def test_safety_cap_fallback_returns_job_id_and_keeps_job_running(monkeypa
     fake_process.finish(0)
     await job.runner_task
     result = await tools.check_script_job.ainvoke({"job_id": job_id})
-    assert "[終了コード] 0" in result
+    assert "[exit code] 0" in result
 
 
 @pytest.mark.asyncio
@@ -284,7 +284,7 @@ async def test_progress_is_pushed_without_llm_and_stops_after_completion(monkeyp
     assert len(sent) == 1
     assert len(updated) >= 1
     assert all(kwargs.get("type") == "system_message" for _, kwargs in sent)
-    assert any("経過" in content for content, _ in updated)
+    assert any("elapsed" in content for content, _ in updated)
 
     updated_count_after_completion = len(updated)
     await asyncio.sleep(0.06)  # push間隔を跨いでも増えないことを確認
@@ -306,9 +306,9 @@ async def test_cross_session_access_is_rejected(monkeypatch, tmp_path) -> None:
 
     monkeypatch.setattr(tools.cl, "user_session", _FakeUserSession("session-b"))
     check_result = await tools.check_script_job.ainvoke({"job_id": job_id})
-    assert "現在のセッションのものではありません" in check_result
+    assert "does not belong to the current session" in check_result
     stop_result = await tools.stop_script_job.ainvoke({"job_id": job_id})
-    assert "現在のセッションのものではありません" in stop_result
+    assert "does not belong to the current session" in stop_result
 
     fake_process.finish(0)
     await tools._script_job._BACKGROUND_JOBS[job_id].runner_task
@@ -328,10 +328,10 @@ async def test_poll_rate_limiting_rejects_too_soon(monkeypatch, tmp_path) -> Non
     job_id = _extract_job_id(started)
 
     first = await tools.check_script_job.ainvoke({"job_id": job_id})
-    assert "実行中です" in first
+    assert "Running" in first
 
     second = await tools.check_script_job.ainvoke({"job_id": job_id})
-    assert "確認間隔" in second
+    assert "Checked too soon" in second
     assert job_id in second
 
     fake_process.finish(0)
@@ -353,7 +353,7 @@ async def test_stop_script_job_cancels_running_job_cleanly(monkeypatch, tmp_path
 
     result = await tools.stop_script_job.ainvoke({"job_id": job_id})
 
-    assert result.startswith("強制終了しました。")
+    assert result.startswith("Forcibly stopped")
     assert job.status == "killed"
     assert fake_process.killed is True
     assert job_id not in tools._script_job._BACKGROUND_JOBS
@@ -427,7 +427,7 @@ async def test_exception_inside_job_is_returned_as_error_not_lost(monkeypatch, t
 
     result = await tools.run_script_background.ainvoke({"skill_name": "demo", "script_filename": "count.py"})
 
-    assert result.startswith("エラー: バックグラウンド実行中に問題が発生しました: boom")
+    assert result.startswith("Error: a problem occurred during the background run: boom")
     assert "Traceback (most recent call last)" in result
     assert tools._script_job._BACKGROUND_JOBS == {}
 
@@ -446,7 +446,7 @@ async def test_timeout_kills_process_and_returns_timeout_prefixed_result(monkeyp
     result = await tools.run_script_background.ainvoke({"skill_name": "demo", "script_filename": "count.py"})
 
     assert "job_id=" not in result
-    assert "秒の上限に達したため強制終了しました" in result
+    assert "seconds and was forcibly stopped" in result
     assert fake_process.killed is True
     assert tools._script_job._BACKGROUND_JOBS == {}
 
@@ -459,7 +459,7 @@ async def test_run_script_background_unknown_skill_creates_no_job(monkeypatch, t
 
     result = await tools.run_script_background.ainvoke({"skill_name": "no-such-skill", "script_filename": "x.py"})
 
-    assert result.startswith("エラー:")
+    assert result.startswith("Error:")
     assert tools._script_job._BACKGROUND_JOBS == {}
     assert "cmd" not in captured
 
@@ -471,7 +471,7 @@ async def test_execute_python_code_background_without_plan_approval_creates_no_j
 
     result = await tools.execute_python_code_background.ainvoke({"code": "print(1)"})
 
-    assert result.startswith("エラー:")
+    assert result.startswith("Error:")
     assert tools._script_job._BACKGROUND_JOBS == {}
     assert "cmd" not in captured
 
@@ -484,6 +484,6 @@ async def test_execute_python_code_background_empty_code_creates_no_job(monkeypa
 
     result = await tools.execute_python_code_background.ainvoke({"code": "   "})
 
-    assert result.startswith("エラー:")
+    assert result.startswith("Error:")
     assert tools._script_job._BACKGROUND_JOBS == {}
     assert "cmd" not in captured

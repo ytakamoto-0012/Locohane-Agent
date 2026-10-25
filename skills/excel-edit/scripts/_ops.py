@@ -80,7 +80,7 @@ def _apply_col_widths(ws, widths: dict[str, float]) -> None:
 def op_add_sheet(wb, op: dict) -> None:
     name = str(op["name"])[:31]
     if name in wb.sheetnames:
-        raise ValueError(f"シート'{name}'は既に存在します（rename_sheetで別名にするか、" "既存シートへの書き込みに切り替えてください）")
+        raise ValueError(f"Sheet '{name}' already exists (give it another name with rename_sheet, " "or switch to writing to the existing sheet)")
     wb.create_sheet(title=name, index=op.get("index"))
 
 
@@ -142,18 +142,18 @@ def _write_rows(ws, min_row: int, min_col: int, op: dict) -> None:
         write_max_col = min_col + max(len(row) for row in rows) - 1
         if existing_max_col > write_max_col:
             print(
-                f"警告: set_range/insert_row_groupは{min_col}〜{write_max_col}列目のみを"
-                f"書き込みますが、シートには{existing_max_col}列目までデータが存在します。"
-                "delete_rows等で行を削除した直後にこの呼び出しをした場合、渡さなかった列の"
-                "元データ・書式が失われている可能性があります。表の一部列だけを直したい場合は"
-                "set_cell/set_styleで対象セルのみ操作してください。",
+                f"Warning: set_range/insert_row_group writes only columns {min_col}-{write_max_col}, "
+                f"but the sheet has data up to column {existing_max_col}. "
+                "If you made this call right after deleting rows with delete_rows etc., the original data and formatting of the columns "
+                "you did not pass may have been lost. To fix only some columns of a table, "
+                "operate only on the target cells with set_cell/set_style.",
                 file=sys.stderr,
             )
     style = op.get("style")
     header_style = op.get("header_style", style)
     row_styles = op.get("row_styles")
     if row_styles is not None and len(row_styles) != len(rows):
-        raise ValueError(f"row_stylesの要素数({len(row_styles)})はrowsの行数({len(rows)})と" "一致させてください（見出し行分も含めて1要素=1行）")
+        raise ValueError(f"Make the number of elements in row_styles ({len(row_styles)}) match the number of rows in rows ({len(rows)}) " "(including the header row; 1 element = 1 row)")
     for r_offset, row in enumerate(rows):
         if row_styles is not None:
             row_style = row_styles[r_offset]
@@ -197,7 +197,7 @@ def op_insert_row_group(wb, op: dict) -> None:
         matches = [g for g in group_column_values(ws, anchor["column"]) if g["value"] == anchor["equals"]]
         if not matches:
             raise ValueError(
-                "insert_row_groupのanchorに一致する値が見つかりません: " f"column={anchor.get('column')!r} equals={anchor.get('equals')!r}"
+                "No value matches the anchor of insert_row_group: " f"column={anchor.get('column')!r} equals={anchor.get('equals')!r}"
             )
         target = matches[0]
         position = op.get("position", "before")
@@ -206,7 +206,7 @@ def op_insert_row_group(wb, op: dict) -> None:
         elif position == "after":
             index = target["end_row"] + 1
         else:
-            raise ValueError(f"insert_row_groupのpositionは'before'/'after'のみ対応です: {position!r}")
+            raise ValueError(f"position of insert_row_group supports only 'before'/'after': {position!r}")
         min_col = column_index(op["start_column"]) if op.get("start_column") else column_index(anchor["column"])
     else:
         index = (ws.max_row or 0) + 1
@@ -420,8 +420,8 @@ def op_merge_cells(wb, op: dict) -> None:
     ]
     if conflicts:
         raise ValueError(
-            f"merge_cellsの範囲 {op['range']!r} は既存の結合範囲 {conflicts} と重複しています。"
-            "先にunmerge_cellsで解除するか、範囲を見直してください。"
+            f"The merge_cells range {op['range']!r} overlaps the existing merged ranges {conflicts}. "
+            "Unmerge them first with unmerge_cells, or review the range."
         )
     ws.merge_cells(op["range"])
 
@@ -447,7 +447,7 @@ def op_update_table(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     tbl = ws.tables.get(op["name"])
     if tbl is None:
-        raise KeyError(f"テーブルが見つかりません: {op['name']!r}")
+        raise KeyError(f"Table not found: {op['name']!r}")
     if op.get("range"):
         tbl.ref = op["range"]
     if op.get("style"):
@@ -459,7 +459,7 @@ def op_update_table(wb, op: dict) -> None:
 def op_remove_table(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     if op["name"] not in ws.tables:
-        raise KeyError(f"テーブルが見つかりません: {op['name']!r}")
+        raise KeyError(f"Table not found: {op['name']!r}")
     del ws.tables[op["name"]]
 
 
@@ -481,9 +481,9 @@ def _apply_grouping(chart, grouping) -> None:
     if grouping is None:
         return
     if not isinstance(chart, BarChart):
-        raise ValueError("'grouping' はtype=barのグラフにのみ指定できます")
+        raise ValueError("'grouping' can be specified only for charts with type=bar")
     if grouping not in _CHART_GROUPINGS:
-        raise ValueError(f"未対応のgroupingです（{sorted(_CHART_GROUPINGS)}のみ対応）: {grouping}")
+        raise ValueError(f"Unsupported grouping (only {sorted(_CHART_GROUPINGS)} are supported): {grouping}")
     chart.grouping = grouping
     chart.overlap = 100 if grouping in ("stacked", "percentStacked") else None
 
@@ -492,7 +492,7 @@ def op_add_chart(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     chart_cls = _CHART_CLASSES.get(op["type"])
     if chart_cls is None:
-        raise ValueError(f"未対応のグラフ種別です（bar/line/pie/scatterのみ対応）: {op['type']}")
+        raise ValueError(f"Unsupported chart type (only bar/line/pie/scatter are supported): {op['type']}")
     chart = chart_cls()
     _apply_grouping(chart, op.get("grouping"))
     if op.get("title"):
@@ -532,13 +532,13 @@ def op_add_image(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     image_path = op.get("image_path")
     if not image_path:
-        raise ValueError("'image_path' が必要です")
+        raise ValueError("'image_path' is required")
     image_file = Path(str(image_path))
     if not image_file.is_file():
-        raise ValueError(f"image_path が見つかりません: {image_path}")
+        raise ValueError(f"image_path not found: {image_path}")
     left_cm, top_cm = op.get("left_cm"), op.get("top_cm")
     if left_cm is None or top_cm is None:
-        raise ValueError("'left_cm'/'top_cm' が必要です")
+        raise ValueError("'left_cm'/'top_cm' are required")
 
     img = Image(str(image_file))
     native_w_px, native_h_px = img.width, img.height
@@ -566,7 +566,7 @@ def _get_image(ws, image_index):
     images = ws._images
     idx = int(image_index)
     if idx < 0 or idx >= len(images):
-        raise ValueError(f"存在しないimage_indexです: {image_index}（このシートの画像数: {len(images)}）")
+        raise ValueError(f"image_index does not exist: {image_index} (number of images in this sheet: {len(images)})")
     return images[idx]
 
 
@@ -574,13 +574,13 @@ def op_set_image_position(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     image_index = op.get("image_index")
     if image_index is None:
-        raise ValueError("'image_index' が必要です")
+        raise ValueError("'image_index' is required")
     img = _get_image(ws, image_index)
 
     left_cm, top_cm = op.get("left_cm"), op.get("top_cm")
     width_cm, height_cm = op.get("width_cm"), op.get("height_cm")
     if left_cm is None and top_cm is None and width_cm is None and height_cm is None:
-        raise ValueError("left_cm/top_cm/width_cm/height_cm のいずれか1つ以上の指定が必要です")
+        raise ValueError("At least one of left_cm/top_cm/width_cm/height_cm is required")
 
     anchor = img.anchor
     if not isinstance(anchor, AbsoluteAnchor):
@@ -607,7 +607,7 @@ def _get_chart(ws, chart_index):
     charts = ws._charts
     idx = int(chart_index)
     if idx < 0 or idx >= len(charts):
-        raise ValueError(f"存在しないchart_indexです: {chart_index}（このシートのグラフ数: {len(charts)}）")
+        raise ValueError(f"chart_index does not exist: {chart_index} (number of charts in this sheet: {len(charts)})")
     return charts[idx]
 
 
@@ -630,16 +630,16 @@ def op_delete_chart(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     chart_index, title = op.get("chart_index"), op.get("title")
     if chart_index is None and title is None:
-        raise ValueError("'chart_index' または 'title' のいずれかが必要です")
+        raise ValueError("Either 'chart_index' or 'title' is required")
     if chart_index is not None:
         _get_chart(ws, chart_index)  # 範囲チェックのみ（存在しなければValueError）
         idx = int(chart_index)
     else:
         matches = [i for i, c in enumerate(ws._charts) if _chart_title_text(c) == str(title)]
         if not matches:
-            raise ValueError(f"titleが一致するグラフが見つかりません: {title!r}")
+            raise ValueError(f"No chart with a matching title: {title!r}")
         if len(matches) > 1:
-            raise ValueError(f"titleが一致するグラフが複数あります（{len(matches)}件）。chart_indexで指定してください: {title!r}")
+            raise ValueError(f"Several charts ({len(matches)}) have a matching title. Specify chart_index: {title!r}")
         idx = matches[0]
     del ws._charts[idx]
 
@@ -648,7 +648,7 @@ def op_update_chart(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     chart_index = op.get("chart_index")
     if chart_index is None:
-        raise ValueError("'chart_index' が必要です")
+        raise ValueError("'chart_index' is required")
     chart = _get_chart(ws, chart_index)
 
     anchor = op.get("anchor")
@@ -656,7 +656,7 @@ def op_update_chart(wb, op: dict) -> None:
     data_range, categories_range = op.get("data_range"), op.get("categories_range")
     title, theme, grouping = op.get("title"), op.get("theme"), op.get("grouping")
     if not any([anchor, width_cm is not None, height_cm is not None, data_range, title, theme, grouping]):
-        raise ValueError("anchor/width_cm/height_cm/data_range/title/theme/grouping のいずれか1つ以上の指定が必要です")
+        raise ValueError("At least one of anchor/width_cm/height_cm/data_range/title/theme/grouping is required")
 
     _apply_grouping(chart, grouping)
     if anchor:
@@ -692,11 +692,11 @@ def op_add_conditional_format(wb, op: dict) -> None:
     ws = _sheet(wb, op["sheet"])
     builder = _CF_BUILDERS.get(op["rule_type"])
     if builder is None:
-        raise ValueError(f"未対応のrule_typeです（color_scale/cell_is/formula/data_bar/icon_setのみ対応）: {op['rule_type']}")
+        raise ValueError(f"Unsupported rule_type (only color_scale/cell_is/formula/data_bar/icon_set are supported): {op['rule_type']}")
     try:
         rule = builder(op.get("params") or {})
     except TypeError as e:
-        raise ValueError(f"params が rule_type={op['rule_type']!r} に対して不正です: {e}")
+        raise ValueError(f"params are invalid for rule_type={op['rule_type']!r}: {e}")
     ws.conditional_formatting.add(op["range"], rule)
 
 
@@ -757,5 +757,5 @@ def apply_op(wb, op: dict) -> None:
     op_name = op.get("op")
     handler = OP_HANDLERS.get(op_name)
     if handler is None:
-        raise ValueError(f"未対応のopです: {op_name!r}（対応op: {sorted(OP_HANDLERS)}）")
+        raise ValueError(f"Unsupported op: {op_name!r} (supported ops: {sorted(OP_HANDLERS)})")
     handler(wb, op)

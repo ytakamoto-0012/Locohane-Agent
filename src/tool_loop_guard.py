@@ -61,11 +61,11 @@ class ToolLoop:
         Args:
             removed: 繰り返した応答を会話履歴から取り除いた場合は True。
         """
-        names = "、".join(self.tool_names)
-        note = "繰り返した呼び出しは会話履歴から取り除きました。" if removed else ""
+        names = ", ".join(self.tool_names)
+        note = "The repeated calls were removed from the conversation history. " if removed else ""
         return (
-            f"（自動検知: 直近{self.repeats}回、全く同じツール呼び出し（{names}）を繰り返しています。"
-            f"{note}その結果: {self.result_excerpt}）"
+            f"(Auto-detected: you repeated the exact same tool call ({names}) in the last {self.repeats} attempts. "
+            f"{note}Its result: {self.result_excerpt})"
         )
 
 
@@ -212,6 +212,6 @@ def find_leaked_tool_markup(args) -> str | None:
 def leaked_tool_markup_error(name: str, key: str) -> str:
     """find_leaked_tool_markup が見つけた場合に返すエラー文。"""
     return (
-        f"エラー: {name} の引数 {key} に、ツール呼び出しの書式（</parameter> など）が混ざっています。"
-        "ツールは実行されませんでした。引数を1つずつ正しく分けて、呼び出しをやり直してください。"
+        f"Error: the argument {key} of {name} contains tool call syntax (such as </parameter>). "
+        "The tool was not run. Split the arguments correctly one by one and call it again."
     )

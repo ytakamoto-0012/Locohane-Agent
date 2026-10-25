@@ -91,13 +91,13 @@ class TestReadTool:
     def test_unregistered_token_returns_error(self, file_tools_env) -> None:
         result = tools.read_tool.func(file_path="@99")
 
-        assert result.startswith("エラー:")
-        assert "登録されていません" in result
+        assert result.startswith("Error:")
+        assert "is not registered" in result
 
     def test_missing_file_returns_error(self, file_tools_env) -> None:
         result = tools.read_tool.func(file_path=str(file_tools_env / "nope.txt"))
 
-        assert result.startswith("エラー:")
+        assert result.startswith("Error:")
 
     def test_duplicate_call_is_blocked(self, file_tools_env) -> None:
         f = file_tools_env / "notes.txt"
@@ -106,9 +106,9 @@ class TestReadTool:
         first = tools.read_tool.func(file_path=str(f))
         second = tools.read_tool.func(file_path=str(f))
 
-        assert not first.startswith("エラー:")
-        assert second.startswith("エラー:")
-        assert "上限" in second
+        assert not first.startswith("Error:")
+        assert second.startswith("Error:")
+        assert "up to the limit" in second
 
 
 class TestGlobTool:
@@ -137,7 +137,7 @@ class TestGlobTool:
     def test_missing_base_returns_error(self, file_tools_env) -> None:
         result = tools.glob_tool.func(pattern="*.py", path=str(file_tools_env / "nope"))
 
-        assert result.startswith("エラー:")
+        assert result.startswith("Error:")
 
 
 class TestGrepTool:
@@ -205,15 +205,15 @@ class TestJsonQuery:
         both = tools.json_query.func(query="a", file_path=str(f), json_text="{}")
         neither = tools.json_query.func(query="a")
 
-        assert both.startswith("エラー:")
-        assert neither.startswith("エラー:")
+        assert both.startswith("Error:")
+        assert neither.startswith("Error:")
 
     def test_different_json_text_are_not_treated_as_duplicate(self, file_tools_env) -> None:
         first = tools.json_query.func(query="a.b", json_text='{"a": {"b": 1}}')
         second = tools.json_query.func(query="a.b", json_text='{"a": {"b": 2}}')
 
-        assert not first.startswith("エラー:")
-        assert not second.startswith("エラー:")
+        assert not first.startswith("Error:")
+        assert not second.startswith("Error:")
 
 
 class TestForeignTmpDirGuard:
@@ -233,8 +233,8 @@ class TestForeignTmpDirGuard:
 
         result = tools.read_tool.func(file_path=str(leaked))
 
-        assert result.startswith("エラー:")
-        assert "他セッション" in result
+        assert result.startswith("Error:")
+        assert "another session" in result
 
     def test_read_own_tmp_dir_still_succeeds(self, file_tools_env) -> None:
         own = file_tools_env / f"_tmp_{tools._workdir._exec_tmp_name()}"
@@ -310,9 +310,9 @@ class TestReadSkillDuplicateGuard:
         first = tools.read_skill.func(skill_name="demo-skill")
         second = tools.read_skill.func(skill_name="demo-skill")
 
-        assert not first.startswith("エラー:")
-        assert second.startswith("エラー:")
-        assert "上限" in second
+        assert not first.startswith("Error:")
+        assert second.startswith("Error:")
+        assert "up to the limit" in second
 
     def test_different_skill_name_is_not_treated_as_duplicate(self, skill_tools_env) -> None:
         for name in ("skill-a", "skill-b"):
@@ -323,8 +323,8 @@ class TestReadSkillDuplicateGuard:
         first = tools.read_skill.func(skill_name="skill-a")
         second = tools.read_skill.func(skill_name="skill-b")
 
-        assert not first.startswith("エラー:")
-        assert not second.startswith("エラー:")
+        assert not first.startswith("Error:")
+        assert not second.startswith("Error:")
 
 
 class TestReadSkillFileDuplicateGuard:
@@ -337,9 +337,9 @@ class TestReadSkillFileDuplicateGuard:
         first = tools.read_skill_file.func(relative_path="demo-skill/references/notes.md")
         second = tools.read_skill_file.func(relative_path="demo-skill/references/notes.md")
 
-        assert not first.startswith("エラー:")
-        assert second.startswith("エラー:")
-        assert "上限" in second
+        assert not first.startswith("Error:")
+        assert second.startswith("Error:")
+        assert "up to the limit" in second
 
     def test_missing_skill_prefix_gets_hint(self, skill_tools_env) -> None:
         skill_dir = skill_tools_env / "demo-skill"
@@ -349,8 +349,8 @@ class TestReadSkillFileDuplicateGuard:
 
         result = tools.read_skill_file.func(relative_path="references/notes.md")
 
-        assert result.startswith("エラー:")
-        assert "スキルフォルダ名" in result
+        assert result.startswith("Error:")
+        assert "skill folder name" in result
 
     def test_valid_skill_prefix_but_missing_file_gets_default_error(self, skill_tools_env) -> None:
         skill_dir = skill_tools_env / "demo-skill"
@@ -358,8 +358,8 @@ class TestReadSkillFileDuplicateGuard:
 
         result = tools.read_skill_file.func(relative_path="demo-skill/references/missing.md")
 
-        assert result.startswith("エラー:")
-        assert "スキルフォルダ名" not in result
+        assert result.startswith("Error:")
+        assert "skill folder name" not in result
 
 
 class TestGetToolSourceDuplicateGuard:
@@ -371,9 +371,9 @@ class TestGetToolSourceDuplicateGuard:
         first = tools.get_tool_source.func(skill_name="demo-skill", script_filename="count.py")
         second = tools.get_tool_source.func(skill_name="demo-skill", script_filename="count.py")
 
-        assert not first.startswith("エラー:")
-        assert second.startswith("エラー:")
-        assert "上限" in second
+        assert not first.startswith("Error:")
+        assert second.startswith("Error:")
+        assert "up to the limit" in second
 
 
 class TestSearchPathMemory:
@@ -433,15 +433,15 @@ class TestSearchPathMemory:
 
         result = tools.read_tool.func(file_path=str(file_tools_env / "月次報告署.txt"))
 
-        assert result.startswith("エラー: ファイルが見つかりません")
-        assert f"@1（ファイル名違い: {target.resolve()}）" in result
-        assert "置き換えず" in result
+        assert result.startswith("Error: File not found")
+        assert f"@1 (different file name: {target.resolve()})" in result
+        assert "do not replace it" in result
 
     def test_read_not_found_without_similar_entry_has_no_hint(self, file_tools_env) -> None:
         result = tools.read_tool.func(file_path=str(file_tools_env / "missing.txt"))
 
-        assert result.startswith("エラー: ファイルが見つかりません")
-        assert "パスメモリーに似た登録" not in result
+        assert result.startswith("Error: File not found")
+        assert "similar entries in path memory" not in result
 
     def test_read_not_found_does_not_suggest_deleted_registered_path(self, file_tools_env) -> None:
         target = file_tools_env / "月次報告書.txt"
@@ -452,8 +452,8 @@ class TestSearchPathMemory:
         # 同一引数だと重複ガードに止められるため offset を変える
         result = tools.read_tool.func(file_path=str(target), offset=1)
 
-        assert result.startswith("エラー: ファイルが見つかりません")
-        assert "パスメモリーに似た登録" not in result
+        assert result.startswith("Error: File not found")
+        assert "similar entries in path memory" not in result
 
     def test_empty_query_excludes_deleted_entries(self, file_tools_env) -> None:
         kept = file_tools_env / "a.txt"

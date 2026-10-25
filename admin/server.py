@@ -13,10 +13,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import secrets as _secrets
 import sqlite3
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -28,12 +30,19 @@ from pydantic import BaseModel
 from src.config import PROJECT_ROOT, load_config, resolve_instances_root, resolve_ssl_files
 from src.version import __version__
 
-from . import api_docs, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
+from . import api_docs, assistant, assistant_index, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
+from . import ini_catalog_en
 from . import instances as inst
 from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
 from .ini_catalog import parse_file as parse_ini_file
+from admin import i18n as admin_i18n
+from admin.i18n import t as _t
 
+# コンソールのコードページで表せない文字（英語版 Windows の cp437 で日本語のパス等）を
+# ログに出しても UnicodeEncodeError にしない（admin.bat 経由なら PYTHONUTF8=1 で UTF-8）。
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(errors="backslashreplace")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
@@ -54,9 +63,9 @@ _cfg = load_config()
 _admin_users = auth.load_admin_users(PROJECT_ENV_PATH)
 if not _admin_users:
     raise RuntimeError(
-        "ADMIN_USERS が設定されていません。プロジェクト直下の .env に "
-        'ADMIN_USERS=[["ユーザー名","パスワード"]] を設定してから、管理ツールを起動し直してください'
-        "（.env.example 参照）。"
+        "ADMIN_USERS is not set. Set "
+        'ADMIN_USERS=[["username","password"]] in .env at the project root, then restart the admin tool'
+        " (see .env.example)."
     )
 
 _sessions = auth.SessionStore(timeout_minutes=_cfg.admin_session_timeout_minutes)
@@ -81,9 +90,9 @@ async def _lifespan(_app: FastAPI):
         if status.state == supervisor.InstanceState.STOPPED:
             try:
                 _supervisor.start(name)
-                logger.info("autostart: インスタンス %r を起動しました。", name)
+                logger.info("autostart: started instance %r.", name)
             except supervisor.SupervisorError as exc:
-                logger.warning("autostart: インスタンス %r の起動に失敗しました: %s", name, exc)
+                logger.warning("autostart: failed to start instance %r: %s", name, exc)
     _knowledge_router.ingest_scheduler.start()
     yield
     _knowledge_router.ingest_scheduler.stop()
@@ -91,7 +100,20 @@ async def _lifespan(_app: FastAPI):
         _supervisor.stop_all()
 
 
-app = FastAPI(title="Locohane 設定ダッシュボード", version=__version__, lifespan=_lifespan)
+app = FastAPI(title="Locohane Settings Dashboard", version=__version__, lifespan=_lifespan)
+# X-Locohane-Lang ヘッダー（admin/static/admin.js の api()）でエラーメッセージ等の言語を決める。
+app.add_middleware(admin_i18n.LanguageMiddleware)
+
+
+@app.get("/ui-config.js", include_in_schema=False)
+async def ui_config_js() -> Response:
+    """表示言語の既定値（[ui].default_language）を返すスクリプト。
+
+    admin/static/i18n.js が読み込み時に同期的に使うため、JSON ではなく script として返す
+    （ログイン画面でも使うため認証なし）。
+    """
+    body = f"window.LOCOHANE_DEFAULT_LANGUAGE = {json.dumps(_cfg.ui_default_language)};\n"
+    return Response(content=body, media_type="application/javascript")
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +142,7 @@ def require_login(
 ) -> str:
     username = _sessions.validate(locohane_admin_session)
     if username is None:
-        raise HTTPException(status_code=401, detail="ログインが必要です。")
+        raise HTTPException(status_code=401, detail=_t("ログインが必要です。"))
     # サーバー側のスライディングタイムアウト（SessionStore.validate）に合わせて
     # Cookie の max_age も毎回延ばす（2026-09-29 レビューで発見：ログイン時に
     # 1回設定するだけだと、操作中でもログインから一定時間でCookieが失効していた）。
@@ -130,7 +152,7 @@ def require_login(
 
 def require_csrf(request: Request) -> None:
     if not auth.has_csrf_header(request.headers):
-        raise HTTPException(status_code=403, detail="CSRFヘッダ（X-Locohane-Admin: 1）がありません。")
+        raise HTTPException(status_code=403, detail=_t("CSRFヘッダ（X-Locohane-Admin: 1）がありません。"))
 
 
 def _require_instance(name: str) -> inst.InstanceMeta:
@@ -150,10 +172,10 @@ class LoginBody(BaseModel):
 def login(body: LoginBody, request: Request, response: Response):
     ip = _client_ip(request)
     if _throttle.is_locked_out(ip):
-        raise HTTPException(status_code=429, detail="ログイン試行回数が上限を超えました。しばらく待ってから再試行してください。")
+        raise HTTPException(status_code=429, detail=_t("ログイン試行回数が上限を超えました。しばらく待ってから再試行してください。"))
     if not auth.verify_password(_admin_users, body.username, body.password):
         _throttle.record_failure(ip)
-        raise HTTPException(status_code=401, detail="ユーザー名またはパスワードが違います。")
+        raise HTTPException(status_code=401, detail=_t("ユーザー名またはパスワードが違います。"))
     _throttle.record_success(ip)
     token = _sessions.create(body.username)
     _set_session_cookie(response, token)
@@ -327,7 +349,7 @@ def delete_instance(
     _require_instance(name)
     status = _supervisor.status(name)
     if status.state in (supervisor.InstanceState.RUNNING, supervisor.InstanceState.EXTERNAL):
-        raise HTTPException(status_code=409, detail="稼働中のインスタンスは削除できません。先に停止してください。")
+        raise HTTPException(status_code=409, detail=_t("稼働中のインスタンスは削除できません。先に停止してください。"))
     delete_data = body.delete_data if body else []
     try:
         deleted = inst.delete_instance(INSTANCES_ROOT, name, CONFIG_INI_PATH, delete_data)
@@ -401,6 +423,18 @@ _SKILL_LAB_SCOPE_NOTE = (
 )
 
 
+def _localize_schema(schema: Any) -> Any:
+    """リスト編集用スキーマ（admin/ini_catalog.py の _KEY_SCHEMAS）の表示ラベル・入力例を表示言語に訳す。"""
+    if isinstance(schema, list):
+        return [_localize_schema(item) for item in schema]
+    if not isinstance(schema, dict):
+        return schema
+    return {
+        k: _t(v) if k in ("label", "placeholder", "group_placeholder") and isinstance(v, str) else _localize_schema(v)
+        for k, v in schema.items()
+    }
+
+
 def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     catalog = parse_ini_file(CONFIG_INI_PATH)
     ov_path = inst.overrides_path(INSTANCES_ROOT, name)
@@ -416,6 +450,8 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     }
     active_env = env_overrides.active_overrides(_env_var_mapping, effective_env)
     keys = []
+    # 英語表示では説明・見出しを英訳カタログ（admin/ini_catalog_en.py）から返す（日本語の正本は config.ini のコメント）。
+    english = admin_i18n.current_lang() == "en"
     for info in catalog.keys:
         if not inst.config_key_applies(kind, info.section, info.key):
             continue
@@ -427,11 +463,11 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
                 "default": info.default_value,
                 "override": override_value,
                 "effective": override_value if override_value is not None else info.default_value,
-                "description": info.description,
-                "group_heading": info.group_heading,
+                "description": ini_catalog_en.DESCRIPTIONS.get(f"{info.section}.{info.key}", info.description) if english else info.description,
+                "group_heading": ini_catalog_en.HEADINGS.get(info.group_heading or "", info.group_heading) if english else info.group_heading,
                 "ui_kind": info.ui_kind,
                 "choices": list(info.choices),
-                "schema": info.schema,
+                "schema": _localize_schema(info.schema),
                 "env_name": _env_var_mapping.get((info.section, info.key)),
                 "env_override_active": (info.section, info.key) in active_env,
                 "is_admin_section": info.section == "admin",
@@ -440,7 +476,7 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     return {
         "keys": keys,
         "mtime": overrides.mtime_or_none(ov_path),
-        "scope_note": _SKILL_LAB_SCOPE_NOTE if kind == inst.KIND_SKILL_LAB else None,
+        "scope_note": _t(_SKILL_LAB_SCOPE_NOTE) if kind == inst.KIND_SKILL_LAB else None,
     }
 
 
@@ -461,8 +497,8 @@ def _flatten_updates(updates: dict[str, dict[str, str]], kind: str) -> dict[tupl
     # 画面に出していないキー（その種類のインスタンスでは効かない設定）は、API を直接叩いても保存させない。
     rejected = [f"[{section}].{key}" for section, key in flat if not inst.config_key_applies(kind, section, key)]
     if rejected:
-        target = "スキル調整ワーカー" if kind == inst.KIND_SKILL_LAB else "本体のインスタンス"
-        raise HTTPException(status_code=400, detail=f"{target}では効かない設定のため変更できません: {', '.join(rejected)}")
+        target = _t("スキル調整ワーカー") if kind == inst.KIND_SKILL_LAB else _t("本体のインスタンス")
+        raise HTTPException(status_code=400, detail=_t("{0}では効かない設定のため変更できません: {1}", target, ', '.join(rejected)))
     return flat
 
 
@@ -470,7 +506,7 @@ def _flatten_resets(resets: list[list[str]]) -> list[tuple[str, str]]:
     result = []
     for pair in resets:
         if len(pair) != 2:
-            raise HTTPException(status_code=400, detail=f"resets の要素は [section, key] の2要素にしてください: {pair!r}")
+            raise HTTPException(status_code=400, detail=_t("resets の要素は [section, key] の2要素にしてください: {0!r}", pair))
         result.append((pair[0], pair[1]))
     return result
 
@@ -550,7 +586,7 @@ def restore_backup(
     backup_dir = inst.backups_dir(INSTANCES_ROOT, name)
     src = backup_dir / filename
     if "/" in filename or "\\" in filename or ".." in filename or src.parent != backup_dir:
-        raise HTTPException(status_code=400, detail="不正なファイル名です。")
+        raise HTTPException(status_code=400, detail=_t("不正なファイル名です。"))
     try:
         result = overrides.restore(
             path=inst.overrides_path(INSTANCES_ROOT, name),
@@ -610,7 +646,7 @@ def add_user(
     env_path = inst.env_path(INSTANCES_ROOT, name)
     users = env_files.read_users(env_path)
     if body.username in users:
-        raise HTTPException(status_code=400, detail="既に存在するユーザー名です。")
+        raise HTTPException(status_code=400, detail=_t("既に存在するユーザー名です。"))
     users[body.username] = body.password
     env_files.write_users(env_path, users)
     audit.append(
@@ -634,7 +670,7 @@ def _reject_if_project_env_user(name: str, target_username: str) -> None:
     if target_username in env_files.read_users(PROJECT_ENV_PATH):
         raise HTTPException(
             status_code=403,
-            detail="プロジェクト直下 .env のユーザー（管理者設定）はこの画面から変更・削除できません。",
+            detail=_t("プロジェクト直下 .env のユーザー（管理者設定）はこの画面から変更・削除できません。"),
         )
 
 
@@ -656,7 +692,7 @@ def set_user_password(
     env_path = inst.env_path(INSTANCES_ROOT, name)
     users = env_files.read_users(env_path)
     if target_username not in users:
-        raise HTTPException(status_code=404, detail="ユーザーが見つかりません（継承中の場合は先にユーザーを追加してください）。")
+        raise HTTPException(status_code=404, detail=_t("ユーザーが見つかりません（継承中の場合は先にユーザーを追加してください）。"))
     users[target_username] = body.password
     env_files.write_users(env_path, users)
     audit.append(
@@ -685,7 +721,7 @@ def delete_user(
     env_path = inst.env_path(INSTANCES_ROOT, name)
     users = env_files.read_users(env_path)
     if target_username not in users:
-        raise HTTPException(status_code=404, detail="ユーザーが見つかりません。")
+        raise HTTPException(status_code=404, detail=_t("ユーザーが見つかりません。"))
     del users[target_username]
     env_files.write_users(env_path, users)
     audit.append(
@@ -836,7 +872,7 @@ def put_setting_image(
     try:
         content = base64.b64decode(body.content_base64, validate=True)
     except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=f"base64のデコードに失敗しました: {exc}") from exc
+        raise HTTPException(status_code=400, detail=_t("base64のデコードに失敗しました: {0}", exc)) from exc
     try:
         saved_name = settings_files.write_image(target_dir, kind, body.filename, content, backup_dir, _cfg.admin_backup_keep)
     except settings_files.SettingsFileError as exc:
@@ -856,7 +892,7 @@ def delete_setting_image(
     """インスタンス専用の画像を削除し、共通設定に戻す。"""
     target_dir, backup_dir = _settings_target(instance)
     if kind not in ("icon", "favicon"):
-        raise HTTPException(status_code=400, detail=f"不正な種別です: {kind}")
+        raise HTTPException(status_code=400, detail=_t("不正な種別です: {0}", kind))
     settings_files.delete_file(target_dir, kind, backup_dir, _cfg.admin_backup_keep)
     _audit_settings(request, user, instance, "settings_reset_to_shared", kind)
     return {"success": True}
@@ -939,7 +975,7 @@ def get_monitor_overview(user: str = Depends(require_login)):
         try:
             series = monitor.live_context_series(cfg.log_dir, view["generating"])
         except Exception:  # noqa: BLE001 - グラフ用の付帯情報のため、失敗してもカードの稼働状況は返す
-            logger.warning("インスタンス %s の入力トークン推移を取得できませんでした", name, exc_info=True)
+            logger.warning("Could not get the input token history of instance %s", name, exc_info=True)
             series = []
         context_series = [
             {**s, "thread_name": generating[s["thread_id"]].get("thread_name"), "owner": generating[s["thread_id"]].get("owner")}
@@ -1011,7 +1047,7 @@ def get_monitor_thread(
     except (monitor.MonitorError, sqlite3.Error) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     if detail is None:
-        raise HTTPException(status_code=404, detail="スレッドが見つかりません。")
+        raise HTTPException(status_code=404, detail=_t("スレッドが見つかりません。"))
     audit.append(
         AUDIT_LOG_PATH,
         {
@@ -1069,10 +1105,11 @@ def get_audit(instance: str | None = None, limit: int = 200, user: str = Depends
 
 @app.get("/api/docs/api-reference")
 def get_api_reference(user: str = Depends(require_login)):
+    path = api_docs.reference_path(admin_i18n.current_lang())
     try:
-        return api_docs.render()
+        return api_docs.render(path)
     except FileNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=f"{api_docs.API_REFERENCE_PATH.name} が見つかりません。") from exc
+        raise HTTPException(status_code=404, detail=_t("{0} が見つかりません。", path.name)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -1105,6 +1142,81 @@ _knowledge_router = knowledge_api.build_router(
     client_ip=_client_ip,
 )
 app.include_router(_knowledge_router)
+
+
+# ---------------------------------------------------------------------------
+# 管理アシスタント（右上の「AIに相談」。admin/assistant.py。設定は読むだけで変更しない）
+# ---------------------------------------------------------------------------
+
+
+def _assistant_catalog_keys(name: str):
+    kind = _require_instance(name).kind
+    return [k for k in parse_ini_file(CONFIG_INI_PATH).keys if inst.config_key_applies(kind, k.section, k.key)]
+
+
+def _assistant_config_view(name: str) -> dict[str, Any]:
+    return _config_key_view(name, _require_instance(name).kind)
+
+
+def _assistant_instances() -> list[dict[str, str]]:
+    return [
+        {k: str(v) for k, v in _instance_summary(name).items() if k in ("name", "display_name", "kind", "state")}
+        for name in inst.list_instance_names(INSTANCES_ROOT)
+    ]
+
+
+# config.ini・README_DETAIL.md・API_REFERENCE.md の索引（元ファイルが変われば次の相談で作り直す）。
+# 文書側の埋め込みは instances/_assistant_index/ にキャッシュする。
+# 英語表示の相談は英訳の文書・説明で作った索引で探す（日本語の索引では英語の質問と文字が重ならない）。
+_assistant_index = {
+    "ja": assistant_index.AssistantIndex(
+        config_ini_path=CONFIG_INI_PATH,
+        readme_path=PROJECT_ROOT / "README_DETAIL.md",
+        api_reference_path=api_docs.API_REFERENCE_PATH,
+        cache_dir=INSTANCES_ROOT / "_assistant_index",
+    ),
+    "en": assistant_index.AssistantIndex(
+        config_ini_path=CONFIG_INI_PATH,
+        readme_path=PROJECT_ROOT / "README_DETAIL.en.md",
+        api_reference_path=api_docs.API_REFERENCE_EN_PATH,
+        cache_dir=INSTANCES_ROOT / "_assistant_index",
+        language="en",
+    ),
+}
+
+
+def _assistant_embedding(target: str, llm_instance: str):
+    """検索に使う埋め込み（[admin] assistant_use_embedding・assistant_embedding_instance）。無ければ None。"""
+    if not _cfg.admin_assistant_use_embedding:
+        return None
+    fixed = _cfg.admin_assistant_embedding_instance
+    others = sorted(inst.list_instance_names(INSTANCES_ROOT))
+    for name in dict.fromkeys([fixed] if fixed else [llm_instance, target, *others]):
+        try:
+            cfg = monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name)
+        except monitor.MonitorError as exc:
+            logger.warning("Admin assistant: cannot read the settings of instance %r, excluding it from embedding endpoint candidates: %s", name, exc)
+            continue
+        provider = assistant_index.provider_from_config(cfg, name)
+        if provider is not None:
+            return provider
+    return None
+
+
+app.include_router(
+    assistant.build_router(
+        require_login=require_login,
+        require_csrf=require_csrf,
+        admin_config=_cfg,
+        catalog_keys=_assistant_catalog_keys,
+        config_view=_assistant_config_view,
+        list_instances=_assistant_instances,
+        instance_kind=lambda name: _require_instance(name).kind,
+        config_loader=lambda name: monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name),
+        index=_assistant_index,
+        embedding_provider=_assistant_embedding,
+    )
+)
 
 
 # ---------------------------------------------------------------------------

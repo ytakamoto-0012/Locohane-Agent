@@ -44,7 +44,7 @@ def test_render_pages_renders_each_pdf_page_with_text(tmp_path):
 
 def test_render_pages_rejects_unsupported_and_broken_files(tmp_path):
     (tmp_path / "a.md").write_text("x", encoding="utf-8")
-    with pytest.raises(ExtractError, match="対応していない"):
+    with pytest.raises(ExtractError, match="Unsupported format"):
         render_pages(tmp_path / "a.md", dpi=50)
     (tmp_path / "broken.pdf").write_bytes(b"not a pdf")
     with pytest.raises(ExtractError):
@@ -128,7 +128,7 @@ def test_ingest_embeds_text_and_page_images(env):
     scored = dataclasses.replace(cfg, vector_db_min_score=0.5, vector_db_image_min_score=0.5)
     [hit] = search.search(scored, "外観検査の写真", top_k=1, **kwargs).hits
     assert (hit.locator, hit.matched) == ("p.2", ("image",))
-    assert hit.text.startswith("（文字情報の無いページです") and hit.source_path.endswith("manual.pdf")
+    assert hit.text.startswith("(This page has no text") and hit.source_path.endswith("manual.pdf")
     text_hit = search.search(scored, "会議室の予約はポータルから行う。", top_k=1, **kwargs).hits[0]
     assert text_hit.source_path.endswith("note.md") and text_hit.matched == ("text",)
 
@@ -271,7 +271,7 @@ def test_render_pages_converts_image_files_to_png(tmp_path):
     # 透過 PNG は白で埋め、大きすぎる画像は A4 を dpi で画像化したときの長辺まで縮小する。
     Image.new("RGBA", (3000, 1000), (255, 0, 0, 0)).save(tmp_path / "big.png")
     [page] = render_pages(tmp_path / "big.png", dpi=50)
-    assert (page.locator, page.text) == ("画像", "")
+    assert (page.locator, page.text) == ("image", "")
     with Image.open(io.BytesIO(page.png)) as img:
         assert img.format == "PNG" and img.mode == "RGB"
         assert img.size == (585, 195)  # 297mm / 25.4 * 50dpi ≒ 585px

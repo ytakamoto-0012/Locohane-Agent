@@ -38,6 +38,7 @@ if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
 from excel_common import (  # noqa: E402
     backup_before_overwrite,
+    read_text_with_fallback,
     record_excel_pid,
     register_output_path,
     release_excel_pid,
@@ -55,23 +56,20 @@ def _load_json_arg(args: argparse.Namespace) -> str:
         return args.ops_json
     data_path = Path(args.ops_file)
     if not data_path.is_file():
-        raise FileNotFoundError(f"opsファイルが見つかりません: {args.ops_file}")
-    try:
-        return data_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return data_path.read_text(encoding="cp932")
+        raise FileNotFoundError(f"ops file not found: {args.ops_file}")
+    return read_text_with_fallback(data_path)
 
 
 def _trust_center_error_message() -> str:
     return (
-        "VBAプロジェクトへアクセスできませんでした。Excelのトラストセンター設定で"
-        "「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」が"
-        "有効になっていない可能性があります。\n"
-        "設定手順: Excelを開く → ファイル → オプション → トラストセンター → "
-        "「トラストセンターの設定」→「マクロの設定」→"
-        "「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」にチェックを入れる。\n"
-        "この設定はセキュリティ上の理由からプログラムからは自動的に有効化できないため、"
-        "ユーザー自身での設定が必要です。"
+        "Could not access the VBA project. In Excel's Trust Center settings, "
+        "\"Trust access to the VBA project object model\" "
+        "may not be enabled.\n"
+        "How to set it: open Excel -> File -> Options -> Trust Center -> "
+        "\"Trust Center Settings\" -> \"Macro Settings\" -> "
+        "check \"Trust access to the VBA project object model\".\n"
+        "For security reasons this setting cannot be enabled automatically by a program, "
+        "so the user needs to set it themselves."
     )
 
 
@@ -102,11 +100,11 @@ def _edit_vba(path: Path, output_path: Path, ops: list, is_new: bool, overwrite:
 
         if is_new:
             if output_path.exists() and not overwrite:
-                raise FileExistsError(f"作成先が既に存在します（上書きするには --overwrite を指定）: {output_path}")
+                raise FileExistsError(f"The output already exists (specify --overwrite to overwrite it): {output_path}")
             workbook = excel.Workbooks.Add()
         else:
             if not path.is_file():
-                raise FileNotFoundError(f"編集対象のファイルが見つかりません（新規作成する場合は --new を指定）: {path}")
+                raise FileNotFoundError(f"File to edit not found (specify --new to create a new one): {path}")
             workbook = excel.Workbooks.Open(str(path), UpdateLinks=0, IgnoreReadOnlyRecommended=True)
 
         try:
@@ -117,13 +115,13 @@ def _edit_vba(path: Path, output_path: Path, ops: list, is_new: bool, overwrite:
         results = []
         for idx, op in enumerate(ops):
             if not isinstance(op, dict) or "op" not in op:
-                raise ValueError(f"ops[{idx}] が不正です（'op'キーを持つオブジェクトである必要があります）: {op!r}")
+                raise ValueError(f"ops[{idx}] is invalid (it must be an object with an 'op' key): {op!r}")
             try:
                 result = apply_op(workbook, vb_project, op)
             except KeyError as e:
-                raise ValueError(f"ops[{idx}]（op={op.get('op')!r}）に必須キー{e}が指定されていません")
+                raise ValueError(f"ops[{idx}] (op={op.get('op')!r}) is missing the required key {e}")
             except (ValueError, TypeError) as e:
-                raise ValueError(f"ops[{idx}]（op={op.get('op')!r}）の適用に失敗しました: {e}")
+                raise ValueError(f"Failed to apply ops[{idx}] (op={op.get('op')!r}): {e}")
             if result is not None:
                 results.append(result)
 
@@ -143,10 +141,10 @@ def _edit_vba(path: Path, output_path: Path, ops: list, is_new: bool, overwrite:
 
         if pre_save_mtime is not None and output_path.exists() and output_path.stat().st_mtime == pre_save_mtime:
             raise ValueError(
-                "保存処理は例外を出さずに完了しましたが、ファイルの更新時刻が変化していません。"
-                "別のExcelプロセスが対象ファイルをロックしている可能性があります。"
-                "--recover-locks で自セッションが残留させたExcelプロセスを終了できないか確認するか、"
-                "tasklistで無関係なEXCEL.EXEが起動していないか確認してください。"
+                "Saving finished without an exception, but the file's modification time did not change. "
+                "Another Excel process may be locking the target file. "
+                "Check whether --recover-locks can terminate Excel processes left behind by this session, "
+                "or check with tasklist whether an unrelated EXCEL.EXE is running."
             )
 
         result = {
@@ -155,7 +153,7 @@ def _edit_vba(path: Path, output_path: Path, ops: list, is_new: bool, overwrite:
             "applied_ops": len(ops),
             "results": results,
         }
-        path_memory = register_output_path(output_path, description="edit_vbaが生成/更新したファイル")
+        path_memory = register_output_path(output_path, description="file generated/updated by edit_vba")
         if path_memory:
             result["path_memory"] = path_memory
         return result
@@ -183,20 +181,20 @@ def _edit_vba(path: Path, output_path: Path, ops: list, is_new: bool, overwrite:
 def main() -> int:
     setup_utf8_stdio()
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", nargs="?", default=None, help="編集対象（--new時は作成先）のxlsmパス（--recover-locks指定時は不要）")
+    parser.add_argument("path", nargs="?", default=None, help="xlsm path to edit (the path to create with --new) (not needed with --recover-locks)")
     group = parser.add_mutually_exclusive_group()
-    group.add_argument("--ops-json", help="適用する操作のJSON配列をそのまま渡す")
-    group.add_argument("--ops-file", help="適用する操作のJSON配列を書いたファイルのパス")
-    parser.add_argument("--new", action="store_true", help="既存ファイルを読まず新規マクロ有効ブックとして作成する")
-    parser.add_argument("--overwrite", action="store_true", help="--new時に出力先が既に存在する場合の上書きを許可する")
-    parser.add_argument("--output", default=None, help="保存先パス（省略時は path へ上書き保存。.xlsmのみ指定可）")
+    group.add_argument("--ops-json", help="pass the JSON array of operations to apply as is")
+    group.add_argument("--ops-file", help="path of a file with the JSON array of operations to apply")
+    parser.add_argument("--new", action="store_true", help="create a new macro-enabled workbook without reading an existing file")
+    parser.add_argument("--overwrite", action="store_true", help="with --new, allow overwriting if the output already exists")
+    parser.add_argument("--output", default=None, help="output path (if omitted, path is overwritten; only .xlsm can be specified)")
     parser.add_argument(
         "--recover-locks",
         action="store_true",
         help=(
-            "path/opsを指定せず、自セッションが起動して残留したExcelプロセスのうち"
-            "まだ生存しているものだけを終了する。PID番号は受け取らない"
-            "（自セッションが記録した対象のみが操作対象になる）。"
+            "without path/ops, terminate only the Excel processes started by this session that were left behind "
+            "and are still alive. Does not take PID numbers "
+            "(only targets recorded by this session are operated on)."
         ),
     )
     args = parser.parse_args()
@@ -207,24 +205,24 @@ def main() -> int:
         return 0
 
     if not args.path:
-        print("pathは必須です（--recover-locks指定時を除く）", file=sys.stderr)
+        print("path is required (except with --recover-locks)", file=sys.stderr)
         return 1
     # --newのみ（ops無しでVBAプロジェクトを持つ器だけ先に作りたい）は頻出の
     # 正当な使い方のため、--ops-json/--ops-file省略時はops=[]として扱う
     # （--newなし時は編集対象への操作が無いと無意味なので従来通り必須のまま）。
     if args.ops_json is None and args.ops_file is None and not args.new:
-        print("--ops-jsonまたは--ops-fileのいずれかが必要です（--new指定時を除く）", file=sys.stderr)
+        print("Either --ops-json or --ops-file is required (except with --new)", file=sys.stderr)
         return 1
 
     path = Path(args.path)
     ext = path.suffix.lower()
     if ext != ".xlsm":
-        print(f"VBAの書き込み・実行は .xlsm のみ対応です: {ext}", file=sys.stderr)
+        print(f"Writing and running VBA supports only .xlsm: {ext}", file=sys.stderr)
         return 1
 
     output_path = Path(args.output) if args.output else path
     if output_path.suffix.lower() != ".xlsm":
-        print(f"保存先の拡張子は .xlsm である必要があります: {output_path.suffix}", file=sys.stderr)
+        print(f"The extension of the output must be .xlsm: {output_path.suffix}", file=sys.stderr)
         return 1
 
     if args.ops_json is None and args.ops_file is None:
@@ -239,10 +237,10 @@ def main() -> int:
     try:
         ops = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"opsのJSON解析に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to parse the ops JSON: {e}", file=sys.stderr)
         return 1
     if not isinstance(ops, list):
-        print("opsはJSON配列である必要があります", file=sys.stderr)
+        print("ops must be a JSON array", file=sys.stderr)
         return 1
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -253,10 +251,10 @@ def main() -> int:
         print(str(e), file=sys.stderr)
         return 1
     except ImportError as e:
-        print(f"必要なライブラリが見つかりません（pywin32が必要です）: {e}", file=sys.stderr)
+        print(f"A required library was not found (pywin32 is required): {e}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - COMエラーはExcelのバージョン・状態により多様なため丸めて報告する
-        print(f"VBAの編集に失敗しました: {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"Editing VBA failed: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return 1
 
     print(json.dumps(result, ensure_ascii=False))

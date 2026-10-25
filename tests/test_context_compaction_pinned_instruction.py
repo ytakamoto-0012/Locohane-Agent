@@ -79,7 +79,7 @@ async def test_pinned_instruction_survives_repeated_compaction(monkeypatch, tmp_
     second = await maybe_compact(history, _LossySummaryModel(), config, role="sub", pinned_instruction=_TASK)
     assert second is not None
     assert second[0].content.count(_TASK) == 1
-    assert second[0].content.startswith("[委譲元から指示されたタスク")
+    assert second[0].content.startswith("[The task given by the delegator")
 
 
 @pytest.mark.asyncio

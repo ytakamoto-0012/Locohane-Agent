@@ -44,9 +44,9 @@ def cleanup_old_files(directory: Path, retention_days: int, pattern: str = "*") 
             if path.stat().st_mtime < cutoff:
                 path.unlink()
                 deleted += 1
-                logger.info("期限切れファイルを削除: %s", path)
+                logger.info("Deleted expired file: %s", path)
         except OSError:
-            logger.warning("ファイルの削除に失敗: %s", path, exc_info=True)
+            logger.warning("Failed to delete file: %s", path, exc_info=True)
     return deleted
 
 
@@ -81,9 +81,9 @@ def cleanup_old_dirs(directory: Path, retention_days: int, pattern: str = "*") -
             if path.stat().st_mtime < cutoff:
                 shutil.rmtree(path)
                 deleted += 1
-                logger.info("期限切れディレクトリを削除: %s", path)
+                logger.info("Deleted expired directory: %s", path)
         except OSError:
-            logger.warning("ディレクトリの削除に失敗: %s", path, exc_info=True)
+            logger.warning("Failed to delete directory: %s", path, exc_info=True)
     return deleted
 
 
@@ -118,11 +118,11 @@ def cleanup_old_files_in_subdirs(directory: Path, retention_days: int, pattern: 
         except StopIteration:
             try:
                 sub.rmdir()
-                logger.info("空になったサブフォルダを削除: %s", sub)
+                logger.info("Deleted empty subfolder: %s", sub)
             except OSError:
-                logger.warning("空サブフォルダの削除に失敗: %s", sub, exc_info=True)
+                logger.warning("Failed to delete empty subfolder: %s", sub, exc_info=True)
         except OSError:
-            logger.warning("サブフォルダの中身確認に失敗: %s", sub, exc_info=True)
+            logger.warning("Failed to check subfolder contents: %s", sub, exc_info=True)
     return deleted
 
 

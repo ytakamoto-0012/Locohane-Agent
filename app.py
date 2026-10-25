@@ -158,6 +158,7 @@ from src.skills import (
 from src.subagent import is_truncated_result
 from src.thread_store import ChatThreadDataLayer, _sanitize_filename_component
 from src.tool_labels import tool_label
+from src import i18n
 from src import thread_store
 from src.tools import (
     WorkDirAccessStatus,
@@ -203,7 +204,7 @@ def _tool_step_label(event: dict) -> str:
         tool_input = event["data"].get("input")
         agent_type = tool_input.get("agent_type") if isinstance(tool_input, dict) else None
         if agent_type:
-            return f"SUB: {agent_type}（一括）" if name == "dispatch_agent_batch" else f"SUB: {agent_type}"
+            return f"SUB: {agent_type}{i18n.t('step.batch_suffix')}" if name == "dispatch_agent_batch" else f"SUB: {agent_type}"
     return tool_label(name)
 
 # アプリ全体で共有する状態（起動時に一度だけ構築）。
@@ -215,6 +216,7 @@ def _tool_step_label(event: dict) -> str:
 # そのため config 読み込みと認証コールバックの登録はモジュールのトップレベル
 # （_setup() 内の遅延初期化より前）で行う必要がある。
 _config = load_config()
+i18n.set_default_language(_config.ui_default_language)
 # セッションごとのグラフ構築（on_chat_start）・再構築（_rebuild_graph）に
 # 使い回すため保持しておく。
 _system_prompt = None
@@ -382,7 +384,7 @@ def _make_relayed_emit(session, thread_id: str, original_emit):
                     asyncio.create_task(other.emit(event, data))
                 except Exception:  # noqa: BLE001 - 中継はベストエフォート
                     logging.getLogger(__name__).debug(
-                        "スレッド中継emitに失敗しました（event=%s）", event, exc_info=True
+                        "Failed to relay emit to the thread (event=%s)", event, exc_info=True
                     )
         return original_emit(event, data)
 
@@ -440,7 +442,7 @@ async def _stop_thread_generating(thread_id: str) -> bool:
     for result in job_results:
         if isinstance(result, BaseException):
             logging.getLogger(__name__).debug(
-                "cross-session停止: バックグラウンドジョブの強制終了に失敗しました [thread_id=%s]",
+                "cross-session stop: failed to kill background jobs [thread_id=%s]",
                 thread_id,
                 exc_info=result,
             )
@@ -450,7 +452,7 @@ async def _stop_thread_generating(thread_id: str) -> bool:
         await aclose_active_llm_clients(thread_id)
     except Exception:  # noqa: BLE001 - ベストエフォート、失敗してもcancel()自体は有効
         logging.getLogger(__name__).debug(
-            "cross-session停止: LLMクライアントの強制クローズに失敗しました [thread_id=%s]",
+            "cross-session stop: failed to force-close the LLM client [thread_id=%s]",
             thread_id,
             exc_info=True,
         )
@@ -537,7 +539,7 @@ async def _rebuild_checkpointer(thread_id: str):
                 await old_saver.conn.close()
         except Exception:  # noqa: BLE001 - リークを許容してログのみ
             logging.getLogger(__name__).debug(
-                "旧checkpointer接続のクローズに失敗しました（リークを許容）",
+                "Failed to close the old checkpointer connection (leak tolerated)",
                 exc_info=True,
             )
 
@@ -545,13 +547,11 @@ async def _rebuild_checkpointer(thread_id: str):
 if _config.auth_enabled:
     if not os.environ.get("CHAINLIT_AUTH_SECRET"):
         raise RuntimeError(
-            "config.ini の [auth] enabled=true ですが、.env に CHAINLIT_AUTH_SECRET が"
-            "設定されていません。`chainlit create-secret` の出力を .env に追記してください。"
+            "[auth] enabled=true in config.ini, but CHAINLIT_AUTH_SECRET is not set in .env. Add the output of `chainlit create-secret` to .env."
         )
     if not _config.auth_users:
         raise RuntimeError(
-            "config.ini の [auth] enabled=true ですが、.env の AUTH_USERS が"
-            "未設定または空です。少なくとも1組のユーザー名/パスワードを登録してください。"
+            "[auth] enabled=true in config.ini, but AUTH_USERS in .env is not set or empty. Register at least one username/password pair."
         )
 
     @cl.password_auth_callback
@@ -585,7 +585,7 @@ if _config.thread_store_enabled:
         で、サーバーがリクエストの受付を開始する前に必ず構築しておく
         （この関数定義自体はそれより前で構わない。遅延実行されるため）。
         """
-        assert _thread_data_layer is not None, "_on_app_startup() が完了する前に data layer が参照されました"
+        assert _thread_data_layer is not None, "The data layer was accessed before _on_app_startup() completed"
         return _thread_data_layer
 
 
@@ -622,7 +622,7 @@ def _patch_chainlit_anonymous_resume() -> None:
         return await _original_resume_thread(session)
 
     _cl_socket.resume_thread = _resume_thread_anonymous
-    logging.getLogger(__name__).info("匿名モード用のスレッド再開有効化パッチを適用しました。")
+    logging.getLogger(__name__).info("Applied the patch enabling thread resume in anonymous mode.")
 
 
 def _patch_chainlit_disable_disconnect_thread_touch() -> None:
@@ -659,8 +659,7 @@ def _patch_chainlit_disable_disconnect_thread_touch() -> None:
 
     _cl_socket.persist_user_session = _persist_user_session_disabled
     logging.getLogger(__name__).info(
-        "会話履歴を開いて離れるだけでは並び順が変わらないよう、"
-        "セッション切断時の自動メタデータ保存を無効化しました。"
+        "Disabled automatic metadata saving on session disconnect, so merely opening and leaving a conversation does not change the list order."
     )
 
 
@@ -688,7 +687,7 @@ def _patch_chainlit_websocket_ping_timeout() -> None:
     _sio.eio.ping_interval = _config.websocket_ping_interval_seconds
     _sio.eio.ping_timeout = _config.websocket_ping_timeout_seconds
     logging.getLogger(__name__).info(
-        "WebSocketのping_interval=%s秒 ping_timeout=%s秒を適用しました。",
+        "Applied WebSocket ping_interval=%ss ping_timeout=%ss.",
         _config.websocket_ping_interval_seconds,
         _config.websocket_ping_timeout_seconds,
     )
@@ -698,7 +697,9 @@ def _patch_chainlit_websocket_ping_timeout() -> None:
 # 呼ばれる action_callback。これらのクリックは「最初の発言」ではないが、
 # Chainlit本体側にその区別が無い（_patch_chainlit_ignore_ui_action_first_interaction
 # のdocstring参照）。
-_NON_CHAT_ACTION_NAMES = frozenset({"pick_work_dir", "suggest_work_dir", "work_dir_server_info", "toggle_plan_mode"})
+_NON_CHAT_ACTION_NAMES = frozenset(
+    {"pick_work_dir", "suggest_work_dir", "work_dir_server_info", "toggle_plan_mode", "set_language"}
+)
 
 
 def _patch_chainlit_ignore_ui_action_first_interaction() -> None:
@@ -741,9 +742,8 @@ def _patch_chainlit_ignore_ui_action_first_interaction() -> None:
 
     _cl_emitter.ChainlitEmitter.flush_thread_queues = _flush_thread_queues_ignoring_ui_actions
     logging.getLogger(__name__).info(
-        "UIボタン（%s）クリックが会話履歴の命名・早期永続化を誤って"
-        "トリガーしないようにするパッチを適用しました。",
-        "、".join(sorted(_NON_CHAT_ACTION_NAMES)),
+        "Applied the patch preventing UI button (%s) clicks from wrongly triggering conversation naming and early persistence.",
+        ", ".join(sorted(_NON_CHAT_ACTION_NAMES)),
     )
 
 
@@ -863,7 +863,7 @@ if _config.thread_store_enabled:
         """
         await _assert_owns_thread(thread_id, current_user)
         if thread_id in _generating_thread_ids:
-            raise HTTPException(status_code=409, detail="この会話は生成中のため削除できません。停止してから削除してください。")
+            raise HTTPException(status_code=409, detail="This conversation is generating and cannot be deleted. Stop it first, then delete it.")
         await thread_store.delete_thread_row(_thread_store_conn, thread_id, _config.elements_dir)
         return {"success": True}
 
@@ -993,7 +993,7 @@ if _config.thread_store_enabled:
         del routes[_routes_before_registration:]
         routes[0:0] = added
         logging.getLogger(__name__).info(
-            "スレッド一覧用ルート(%d件)を先頭へ並べ替えました（SPA catch-all対策）。", len(added)
+            "Moved the thread list routes (%d) to the front (SPA catch-all workaround).", len(added)
         )
 
     _reorder_locohane_routes_before_spa_catchall()
@@ -1121,7 +1121,7 @@ async def _on_app_startup() -> None:
         _patch_chainlit_disable_disconnect_thread_touch()
 
     if not _config.mcp_enabled:
-        logging.getLogger(__name__).info("MCP機能は無効化されています（[mcp].enabled=false）")
+        logging.getLogger(__name__).info("MCP is disabled ([mcp].enabled=false)")
         return
     await init_mcp_tools(_config)
 
@@ -1144,7 +1144,7 @@ async def _on_app_shutdown() -> None:
             await _thread_store_conn.close()
         except Exception:  # noqa: BLE001 - シャットダウン時はベストエフォート、ログのみ
             logging.getLogger(__name__).debug(
-                "シャットダウン時のスレッドストア接続クローズに失敗しました（リークを許容）",
+                "Failed to close the thread store connection at shutdown (leak tolerated)",
                 exc_info=True,
             )
     instance_lock.release()
@@ -1171,7 +1171,7 @@ async def _close_checkpointer_gracefully() -> None:
         _done, still_pending = await asyncio.wait(pending, timeout=_config.checkpointer_shutdown_drain_timeout_seconds)
         if still_pending:
             logging.getLogger(__name__).warning(
-                "シャットダウン: %d件の保留タスクが規定時間内に終わらなかったためキャンセルします",
+                "Shutdown: cancelling %d pending tasks that did not finish in time",
                 len(still_pending),
             )
             for task in still_pending:
@@ -1182,7 +1182,7 @@ async def _close_checkpointer_gracefully() -> None:
             await _checkpointer.conn.close()
     except Exception:  # noqa: BLE001 - シャットダウン時はベストエフォート、ログのみ
         logging.getLogger(__name__).debug(
-            "シャットダウン時のcheckpointer接続クローズに失敗しました（リークを許容）",
+            "Failed to close the checkpointer connection at shutdown (leak tolerated)",
             exc_info=True,
         )
 
@@ -1247,6 +1247,12 @@ def _register_instance_settings_route() -> None:
         # チャット画面のヘッダーのツールチップに出す（ログイン前でも見えてよい情報）。
         return {"version": LOCOHANE_VERSION}
 
+    @_asgi_app.get("/locohane/ui-config")
+    async def _serve_ui_config():
+        # 表示言語の既定値（[ui].default_language）。利用者がまだ言語を選んでいないとき、
+        # ログイン画面から使うため認証なしで返す（frontend/src/i18n.tsx 参照）。
+        return {"default_language": _config.ui_default_language}
+
     @_asgi_app.get("/public/settings/{filename}")
     async def _serve_settings_file(filename: str):
         path = _resolve_settings_file(filename)
@@ -1255,6 +1261,7 @@ def _register_instance_settings_route() -> None:
         return FileResponse(path)
 
     routes = _asgi_app.router.routes
+    routes.insert(0, routes.pop())
     routes.insert(0, routes.pop())
     routes.insert(0, routes.pop())
 
@@ -1302,9 +1309,6 @@ def _token_usage_level(total: int) -> str | None:
     return None
 
 
-MAIN_CALL_USAGE_LABEL = "リクエスト1回あたり（main）"
-
-
 def _format_token_usage(call_usage: dict, cumulative: dict) -> str:
     """出力元ごとの直近リクエスト1回分と会話累計（メイン+サブ合算）を、
     サイドパネルの TokenUsageCard（表形式）表示用に JSON 化する。
@@ -1325,7 +1329,7 @@ def _format_token_usage(call_usage: dict, cumulative: dict) -> str:
     payload = {
         "rows": [
             *call_rows,
-            {"label": "会話累計", **cumulative, "group": "total"},
+            {"label": i18n.t("usage.total"), **cumulative, "group": "total"},
         ]
     }
     return TOKEN_USAGE_PREFIX + json.dumps(payload, ensure_ascii=False)
@@ -1370,12 +1374,6 @@ INPUT_LIMITS_PREFIX = "📝 入力上限\n"
 PASTED_TEXT_FILENAME_RE = re.compile(r"^pasted-text-\d+(?:-\d+)?\.txt$")
 
 
-# public/settings/welcome.md が存在しない場合のフォールバック（{skills} はスキル一覧に置換される）。
-_WELCOME_TEMPLATE_DEFAULT = (
-    "Locohaneを起動しました。利用可能なスキル: {skills}\n\n" "スクリプト実行時の作業ディレクトリは、入力欄の📁アイコンから指定できます。"
-)
-
-
 def _format_work_dir_status(resolved: str | None, status: WorkDirAccessStatus | None = None) -> str:
     """作業ディレクトリの現在値・アクセス状況をサイドパネル表示用にまとめる。
 
@@ -1385,19 +1383,19 @@ def _format_work_dir_status(resolved: str | None, status: WorkDirAccessStatus | 
             プローブ未実行）の場合はパスのみを表示する。
     """
     if resolved is None:
-        return f"{WORK_DIR_PREFIX}: 未設定（既定値 {_config.default_workdir} を使用）"
+        return f"{WORK_DIR_PREFIX}: {i18n.t('workdir.unset', default=_config.default_workdir)}"
     if status is None or (status.exists and status.readable and status.writable):
         return f"{WORK_DIR_PREFIX}: {resolved}"
     if not status.exists:
-        label = "存在しません（このPCから直接アクセスできません）"
+        label = i18n.t("workdir.missing")
     elif not status.readable:
-        label = "アクセスできません（読み取り不可）"
+        label = i18n.t("workdir.unreadable")
     else:
-        label = "読み取り専用（書き込み不可）"
+        label = i18n.t("workdir.readonly")
     return (
         f"{WORK_DIR_PREFIX}: {resolved}\n"
-        f"状態: {label}\n"
-        f"※書き込みが必要な処理は既定フォルダ（{_config.default_workdir}）を自動的に使用します。"
+        f"{i18n.t('workdir.state', label=label)}\n"
+        f"{i18n.t('workdir.redirect_note', default=_config.default_workdir)}"
     )
 
 
@@ -1428,15 +1426,15 @@ def _build_work_dir_notice() -> str:
     status: WorkDirAccessStatus | None = cl.user_session.get("work_dir_access") if work_dir else None
     info = _build_workdir_status_info(work_dir, status)
     return (
-        "[作業ディレクトリ]\n"
+        "[Working directory]\n"
         f"{json.dumps(info, ensure_ascii=False)}\n"
-        "absolute_path をそのまま Read/Glob/Grep/analyze_image の対象パスとして使う"
-        "（他の説明文と連結せず、この値単体をパスとして扱う）。"
-        "書き込みは常に write_dir へ行う。state は書き込み先の判断に使わない"
-        "（write_dir が absolute_path と同じ値なら直接書ける、異なる値ならリダイレクトされている）。"
-        "サブフォルダ名しか分からない場合は Glob の path 引数を省略すれば自動的に"
-        "absolute_path 配下が検索対象になる（pattern 側にサブフォルダ名を含めてよい。例:"
-        ' pattern="**/images/**/*"）。パスを記憶や推測で組み立てない。'
+        "Use absolute_path as is for the target path of Read/Glob/Grep/analyze_image "
+        "(treat this value alone as the path; do not join it with other text). "
+        "Always write to write_dir. Do not use state to decide where to write "
+        "(if write_dir equals absolute_path you can write there directly; if it differs, writes are redirected). "
+        "If you only know a subfolder name, omit the path argument of Glob and it automatically "
+        "searches under absolute_path (you may put the subfolder name in pattern, e.g. "
+        'pattern="**/images/**/*"). Never build paths from memory or guesswork.'
     )
 
 
@@ -1550,7 +1548,7 @@ def _patch_chainlit_connection_successful_task_end() -> None:
                 thread = await data_layer.get_thread(thread_id=context.session.thread_id)
                 if thread:
                     logging.getLogger(__name__).info(
-                        "WebSocket再接続: 進行中セッションのフル再同期(resume_thread)を送信しました thread_id=%s",
+                        "WebSocket reconnect: sent a full resync (resume_thread) for the in-progress session thread_id=%s",
                         context.session.thread_id,
                     )
                     await context.emitter.resume_thread(thread)
@@ -1563,7 +1561,7 @@ def _patch_chainlit_connection_successful_task_end() -> None:
 
     ask_reconnect.install()
     logging.getLogger(__name__).info(
-        "Chainlit connection_successful の task_end 誤発火を防ぐパッチを適用しました。"
+        "Applied the patch preventing a spurious task_end on Chainlit connection_successful."
     )
 
 
@@ -1596,15 +1594,13 @@ def _register_socket_lifecycle_logging() -> None:
             task = existing.current_task
             task_active = task is not None and not task.done()
             logger.info(
-                "WebSocket再接続: sid=%s thread_id=%s ターン進行中=%s"
-                "（進行中の再接続は、切断中に完了したStep更新がフロントに届かず"
-                "「実行中」のまま固まる不具合の疑いあり）",
+                "WebSocket reconnect: sid=%s thread_id=%s turn_in_progress=%s (reconnecting mid-turn may leave steps stuck as running if updates completed while disconnected never reached the frontend)",
                 sid,
                 existing.thread_id,
                 task_active,
             )
         else:
-            logger.info("WebSocket新規接続: sid=%s session_id=%s", sid, session_id)
+            logger.info("WebSocket connected: sid=%s session_id=%s", sid, session_id)
         return await _original_connect(sid, environ, auth)
 
     @_sio.on("disconnect")  # pyright: ignore [reportOptionalCall]
@@ -1614,17 +1610,16 @@ def _register_socket_lifecycle_logging() -> None:
             task = session.current_task
             task_active = task is not None and not task.done()
             logger.info(
-                "WebSocket切断: sid=%s thread_id=%s ターン進行中=%s"
-                "（進行中の切断は、以降のStep完了更新が再接続まで失われる可能性）",
+                "WebSocket disconnected: sid=%s thread_id=%s turn_in_progress=%s (disconnecting mid-turn may lose step completion updates until reconnect)",
                 sid,
                 session.thread_id,
                 task_active,
             )
         else:
-            logger.info("WebSocket切断: sid=%s（セッション不明）", sid)
+            logger.info("WebSocket disconnected: sid=%s (unknown session)", sid)
         return await _original_disconnect(sid)
 
-    logger.info("WebSocket接続/切断のライフサイクルログ記録を有効化しました。")
+    logger.info("Enabled WebSocket connect/disconnect lifecycle logging.")
 
 
 class _ThreadIdLogFilter(logging.Filter):
@@ -1707,7 +1702,7 @@ async def _setup() -> None:
     log_level = _config.log_level
     if log_level not in ("info", "debug", "none"):
         raise ValueError(
-            f"unknown log_level: {_config.log_level!r}（config.ini の " "[log].level は info/debug/none のいずれかで指定してください）"
+            f"unknown log_level: {_config.log_level!r} (set [log].level in config.ini to one of info/debug/none)"
         )
     if log_level == "none":
         logging.disable(logging.CRITICAL)
@@ -1746,9 +1741,9 @@ async def _setup() -> None:
     # 読み込まれホットリロードされないため、「config.iniを編集したのに挙動が
     # 変わらない」＝実は編集後に再起動していない、という原因を特定できる
     # ようにするため。詳細な選択過程は _select_endpoint() のログを参照）。
-    logging.getLogger(__name__).info("Locohane v%s を起動しました。", LOCOHANE_VERSION)
+    logging.getLogger(__name__).info("Locohane v%s started.", LOCOHANE_VERSION)
     logging.getLogger(__name__).info(
-        "LLM接続先設定（起動時読込み）: main_routing_strategy=%s main_endpoints=%s",
+        "LLM endpoint settings (loaded at startup): main_routing_strategy=%s main_endpoints=%s",
         _config.main_routing_strategy,
         [
             f"[{i}] base_url={e.base_url} model={e.model} start={e.start} end={e.end} provider={e.provider}"
@@ -1756,7 +1751,7 @@ async def _setup() -> None:
         ],
     )
     logging.getLogger(__name__).info(
-        "LLM接続先設定（起動時読込み）: sub_endpoints_inherit_main=%s sub_routing_strategy=%s sub_default_model=%r sub_endpoints=%s",
+        "LLM endpoint settings (loaded at startup): sub_endpoints_inherit_main=%s sub_routing_strategy=%s sub_default_model=%r sub_endpoints=%s",
         _config.sub_endpoints_inherit_main,
         _config.sub_routing_strategy,
         _config.sub_default_model,
@@ -1771,9 +1766,9 @@ async def _setup() -> None:
         (e.model or "").strip().casefold() == _config.sub_default_model.casefold() for e in _config.sub_endpoints
     ):
         logging.getLogger(__name__).warning(
-            "[llm].sub_default_model=%r に一致する model の接続先が %s に無いため、既定モデルの指定は無視されます",
+            "No endpoint with a model matching [llm].sub_default_model=%r exists in %s, so the default model setting is ignored",
             _config.sub_default_model,
-            "main_url（sub_url 未指定のため継承）" if _config.sub_endpoints_inherit_main else "sub_url",
+            "main_url (inherited because sub_url is not set)" if _config.sub_endpoints_inherit_main else "sub_url",
         )
 
     # 第1段階 Discovery: スキルを走査して name+description をシステムプロンプトへ。
@@ -1804,8 +1799,7 @@ async def _setup() -> None:
             main_skills_block = render_skills_block_with_hint(skills, _config)
         blocked_names = list_blocked_tool_names_for_hint(get_all_tools(), _config)
         blocked_tools_hint = (
-            "以下のビルトインツールは直接呼び出せません（詳細確認・実行が必要な場合は"
-            "dispatch_agentへ委譲してください）: " + "、".join(blocked_names)
+            "The following built-in tools cannot be called directly (delegate to dispatch_agent if you need details or execution): " + ", ".join(blocked_names)
             if blocked_names
             else ""
         )
@@ -1821,7 +1815,7 @@ async def _setup() -> None:
         and (_config.reasoning_budget is None or _config.reasoning_budget < 0)
     ):
         logging.getLogger(__name__).warning(
-            "[thinking_loop_guard].target = content_only ですが [llm].reasoning_budget が無制限のため、思考のループを止める仕組みがありません"
+            "[thinking_loop_guard].target = content_only but [llm].reasoning_budget is unlimited, so nothing stops a thinking loop"
         )
     # [thinking_control].after_tools に書き間違いがあると、そのツールの後は
     # 黙って default_level になるだけで気づきにくいため、起動時に警告しておく。
@@ -1829,7 +1823,7 @@ async def _setup() -> None:
         unknown = unknown_tool_names(_config, {t.name for t in get_all_tools()})
         if unknown:
             logging.getLogger(__name__).warning(
-                "[thinking_control].after_tools に存在しないツール名があります（MCPツールは接続状況により誤検知の場合あり）: %s",
+                "[thinking_control].after_tools contains unknown tool names (MCP tools may be false positives depending on connection state): %s",
                 ", ".join(unknown),
             )
     # ユーザー別ドラフトスキル（src/skill_drafts.py）はセッションごとに見える範囲が
@@ -1950,7 +1944,7 @@ async def _setup() -> None:
     # on_stop でのグラフ再構築（_rebuild_graph）に使い回すため保持する。
     _system_prompt = system_prompt
 
-    logging.getLogger(__name__).info("共有リソース初期化完了。スキル数=%d", len(skills))
+    logging.getLogger(__name__).info("Shared resources initialized. skills=%d", len(skills))
 
     # analyze_image(show_in_chat=True)・回答本文への画像埋め込み（_embed_local_images_as_session_urls）が
     # 使う Chainlit 自身のセッションファイルディレクトリ（.files/<セッションID>/）も
@@ -2089,7 +2083,9 @@ async def _rebuild_graph(thread_id: str, *, wait_when_busy: bool = True):
     # がタブをまたいで混線しないようにする（set_current_session docstring参照。
     # 2026-08-26 監査で発見した既存の軽微なエッジケースの修正）。
     set_current_session(thread_id, tab_id=cl.context.session.id)
-    system_prompt = _apply_session_draft_skills()
+    system_prompt = _apply_session_draft_skills() + i18n.response_language_directive()
+    # 組み立てに使った言語。画面で言語を切り替えたら on_message が比べて組み直す。
+    cl.user_session.set("graph_lang", i18n.current_lang())
     graph = await build_graph(_config, system_prompt, _checkpointer, wait_when_busy=wait_when_busy)
     cl.user_session.set("graph", graph)
     return graph
@@ -2151,7 +2147,7 @@ async def on_stop() -> None:
     if thread_id is None:
         # _setup()/on_chat_start 完了前に停止が押された等の異常系。
         # 紐づくセッションのグラフがまだ無いため何もしない。
-        logging.getLogger(__name__).warning("on_stop: thread_id が未設定のため何もしません")
+        logging.getLogger(__name__).warning("on_stop: thread_id is not set, doing nothing")
         return
     # aclose_active_llm_clients・cancel_dispatch_agent_jobs_for_thread内で
     # CancelledErrorが発生しても、後始末（グラフ再構築・ログ出力）は
@@ -2186,22 +2182,47 @@ async def on_stop() -> None:
             break
         except Exception:  # noqa: BLE001
             logging.getLogger(__name__).error(
-                "on_stop: グラフ再構築に失敗しました [%s]",
+                "on_stop: failed to rebuild the graph [%s]",
                 describe_current_task(),
                 exc_info=True,
             )
             await cl.Message(
-                content="セッションの再初期化に失敗しました。反応がなければ" "ページを再読み込みしてください。",
+                content=i18n.t("notice.session_reinit_failed"),
                 type="system_message",
             ).send()
     logging.getLogger(__name__).info(
-        "on_stop: セッション thread_id=%s のLLMクライアントを強制クローズし、" "グラフを再構築しました%s%s",
+        "on_stop: force-closed the LLM client of session thread_id=%s and rebuilt the graph%s%s",
         thread_id,
-        "（クローズ処理中にタスクがキャンセルされましたが後始末は完了しました）" if cancelled else "",
-        "（グラフ再構築: 成功）" if rebuild_ok else "（グラフ再構築: 失敗）",
+        " (the task was cancelled during the close, but the cleanup completed)" if cancelled else "",
+        " (graph rebuild: succeeded)" if rebuild_ok else " (graph rebuild: failed)",
     )
     if cancelled is not None:
         raise cancelled
+
+
+def _init_session_lang() -> None:
+    """接続時にフロントエンドが userEnv で送った表示言語をセッションへ保存する。
+
+    frontend/src/App.tsx が connect({ userEnv: { LOCOHANE_LANG } }) で送る。送られて
+    こない（古いフロントエンド・evals 等）場合は既定言語（[ui].default_language）にする。
+    グラフを組み立てる（_rebuild_graph）前に呼ぶこと（応答言語の指示に使うため）。
+    """
+    env = cl.user_session.get("env")
+    lang = i18n.normalize(env.get(i18n.USER_ENV_KEY)) if isinstance(env, dict) else None
+    cl.user_session.set(i18n.SESSION_KEY, lang or i18n.current_lang())
+
+
+async def _send_starter_prompts() -> None:
+    """表示言語に合わせた定型文ボタンを送る（定型文が無ければ何もしない）。
+
+    英語のセッションでは [chat_starters].prompts_en を使い、空なら prompts にする。
+    フロントエンドは最新の定型文メッセージだけを表示する（selectLatestStarters）。
+    """
+    prompts = _config.chat_starter_prompts
+    if i18n.current_lang() == "en" and _config.chat_starter_prompts_en:
+        prompts = _config.chat_starter_prompts_en
+    if prompts:
+        await cl.Message(content=STARTER_PREFIX + json.dumps(prompts, ensure_ascii=False)).send()
 
 
 @cl.on_chat_start
@@ -2234,6 +2255,7 @@ async def on_chat_start() -> None:
     # 自動的に一致し、同じ会話状態を引き継げる（[thread_store] 参照）。
     thread_id = cl.context.session.thread_id
     cl.user_session.set("thread_id", thread_id)
+    _init_session_lang()
     # 会話ログ（[chat_log].enabled=true の場合のみ）の書き出し先を
     # セッション開始時に1回だけ確定する（日をまたいでも同じファイルに
     # 追記し続ける。src/chat_log.py 参照）。
@@ -2277,12 +2299,11 @@ async def on_chat_start() -> None:
     await _send_work_dir_settings("")
 
     skills = scan_skills([_config.skills_dir, *_config.locohane_skills_dirs])
-    names = "、".join(s.name for s in skills) or "（なし）"
-    welcome_template = _load_settings_text("welcome.md", _WELCOME_TEMPLATE_DEFAULT)
+    names = i18n.t("list.separator").join(s.name for s in skills) or i18n.t("welcome.no_skills")
+    welcome_template = _load_settings_text("welcome.md", i18n.t("welcome.default"))
     await cl.Message(content=welcome_template.replace("{skills}", names)).send()
 
-    if _config.chat_starter_prompts:
-        await cl.Message(content=STARTER_PREFIX + json.dumps(_config.chat_starter_prompts, ensure_ascii=False)).send()
+    await _send_starter_prompts()
 
     # メインスレッドの表示件数上限をフロントエンドへ伝える（0=無制限も含め常に送信）。
     # 表示専用の設定であり、これ自体がLLMへの会話コンテキストに影響することはない
@@ -2331,6 +2352,7 @@ if _config.thread_store_enabled:
         await _setup()
         thread_id = cl.context.session.thread_id
         cl.user_session.set("thread_id", thread_id)
+        _init_session_lang()
 
         if _config.chat_log_enabled:
             user = cl.user_session.get("user")
@@ -2425,7 +2447,7 @@ if _config.thread_store_enabled:
             # on_chat_resume 自体をブロックしないよう非同期に起動する。
             asyncio.create_task(_relay_pending_ask(thread_id))
 
-        logging.getLogger(__name__).info("スレッドを再開しました thread_id=%s", thread_id)
+        logging.getLogger(__name__).info("Resumed thread thread_id=%s", thread_id)
 
 
 @cl.on_chat_end
@@ -2486,9 +2508,9 @@ async def _send_work_dir_settings(initial: str) -> None:
         [
             TextInput(
                 id="work_dir",
-                label="作業ディレクトリ",
+                label=i18n.t("workdir.setting_label"),
                 initial=initial,
-                placeholder=rf"例: C:\Users\me\project（未入力なら既定値 {_config.default_workdir} を使用）",
+                placeholder=i18n.t("workdir.setting_placeholder", default=_config.default_workdir),
             )
         ]
     ).send()
@@ -2544,9 +2566,9 @@ async def _apply_work_dir(raw: str) -> str | None:
     try:
         resolved, status = await asyncio.wait_for(asyncio.to_thread(_probe_work_dir_input, raw), _WORK_DIR_PROBE_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
-        return f"サーバー（Locohaneが動いているPC）からフォルダの確認が時間内に終わりませんでした: {raw}"
+        return i18n.t("workdir.probe_timeout", path=raw)
     except (OSError, ValueError, RuntimeError) as e:
-        return f"サーバー（Locohaneが動いているPC）からこのパスを解釈できません: {raw}（{e}）"
+        return i18n.t("workdir.probe_invalid", path=raw, error=e)
     error = work_dir_error_message(resolved, status)
     if error is not None:
         return error
@@ -2660,10 +2682,7 @@ async def _persist_token_usage() -> None:
             },
         )
     except Exception:  # noqa: BLE001 - 付帯状態の保存失敗で会話を止めない
-        logging.getLogger(__name__).warning("トークン使用量累計の即時保存に失敗しました thread_id=%s", thread_id, exc_info=True)
-
-
-COMPACTION_USAGE_LABEL = "圧縮処理（直近1回）"
+        logging.getLogger(__name__).warning("Failed to save cumulative token usage immediately thread_id=%s", thread_id, exc_info=True)
 
 
 async def _on_compaction_usage(kind: str, role: str, usage: dict) -> None:
@@ -2685,7 +2704,7 @@ async def _on_compaction_usage(kind: str, role: str, usage: dict) -> None:
     await _persist_token_usage()
     call_totals = _new_usage_totals()
     _accumulate_usage(call_totals, usage)
-    await _send_token_usage({"compaction": {"label": COMPACTION_USAGE_LABEL, **call_totals}})
+    await _send_token_usage({"compaction": {"label": i18n.t("usage.compaction"), **call_totals}})
 
 
 register_compaction_usage_listener(_on_compaction_usage)
@@ -2705,7 +2724,7 @@ async def on_settings_update(settings: dict) -> None:
     if error is not None:
         # 拒否したパスが入力欄・chat_settings に残らないよう、現在の値で送り直す。
         await _send_work_dir_settings(cl.user_session.get("work_dir") or "")
-        await cl.Message(content=f"⚠️ 作業ディレクトリを変更できませんでした。{error}").send()
+        await cl.Message(content=i18n.t("workdir.change_failed", error=error)).send()
 
 
 @cl.action_callback("toggle_plan_mode")
@@ -2750,6 +2769,36 @@ async def on_pick_work_dir(action: cl.Action) -> dict:
     raw = str(action.payload.get("path", ""))
     error = await _apply_work_dir(raw)
     return {"ok": error is None, "error": error}
+
+
+@cl.action_callback("set_language")
+async def on_set_language(action: cl.Action) -> dict:
+    """画面の表示設定で言語を切り替えたときに独自フロントエンドから呼ばれる action_callback。
+
+    セッションの言語だけを更新し、グラフ（応答言語の指示）は次の on_message で
+    組み直す（生成中に切り替えても今の生成を壊さないため）。サイドパネルの
+    作業ディレクトリ表示・歯車の入力欄・定型文ボタンは、新しい言語で送り直す
+    （フロントエンドはいずれも最新のメッセージを表示する）。
+
+    Args:
+        action: payload["lang"] に "ja" / "en" が入る。
+
+    Returns:
+        {"ok": bool, "lang": str}（callAction のレスポンスの response に入る）。
+    """
+    lang = i18n.normalize(action.payload.get("lang"))
+    if lang is None:
+        return {"ok": False, "lang": i18n.current_lang()}
+    if lang == i18n.current_lang():
+        return {"ok": True, "lang": lang}
+    cl.user_session.set(i18n.SESSION_KEY, lang)
+    work_dir = cl.user_session.get("work_dir")
+    await cl.Message(
+        content=_format_work_dir_status(work_dir, cl.user_session.get("work_dir_access") if work_dir else None)
+    ).send()
+    await _send_work_dir_settings(work_dir or "")
+    await _send_starter_prompts()
+    return {"ok": True, "lang": lang}
 
 
 @cl.action_callback("work_dir_server_info")
@@ -2846,14 +2895,14 @@ def _save_uploads(message: cl.Message) -> list[str]:
             n += 1
         shutil.copyfile(src, dest)
         saved.append(str(dest))
-        logging.getLogger(__name__).info("アップロード保存: %s", dest)
+        logging.getLogger(__name__).info("Saved upload: %s", dest)
     # _tmp_* の自動削除はフォルダ自身の更新日時で判定する（cleanup_old_dirs）が、
     # 入れ子の uploads/<送信日時>/ を作っても _tmp_* 自身の更新日時は変わらない
     # ことがあるため、アップロードしたばかりのスレッドが消されないよう更新する。
     try:
         os.utime(exec_dir)
     except OSError:
-        logging.getLogger(__name__).warning("スレッド作業フォルダの更新日時の更新に失敗: %s", exec_dir, exc_info=True)
+        logging.getLogger(__name__).warning("Failed to update the modification time of the thread work folder: %s", exec_dir, exc_info=True)
     return saved
 
 
@@ -2891,7 +2940,7 @@ def _check_input_length(message: cl.Message) -> str | None:
             total += len(_read_pasted_text(src))
     if total <= limit:
         return None
-    return f"入力が長すぎます（{total:,}文字 / 上限{limit:,}文字）。内容を減らして再送信してください。"
+    return i18n.t("notice.input_too_long", total=total, limit=limit)
 
 
 def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice: str | None = None) -> HumanMessage:
@@ -2930,18 +2979,18 @@ def _build_human_message(user_text: str, saved_paths: list[str], work_dir_notice
     text = user_text
     for i, p in enumerate(pasted_paths, start=1):
         # 保存先パスも添えておく（長文をスクリプトで処理させたい場合に渡せるように）。
-        text += f"\n\n[貼り付けテキスト{i}（保存先: {p}）]\n{_read_pasted_text(p)}\n[貼り付けテキスト{i} ここまで]"
+        text += f"\n\n[Pasted text {i} (saved to: {p})]\n{_read_pasted_text(p)}\n[End of pasted text {i}]"
     if work_dir_notice:
         text += f"\n\n{work_dir_notice}"
     if other_paths:
-        tokens = {path: token for token, path in _register_path_memory(other_paths, description="アップロード").items()}
+        tokens = {path: token for token, path in _register_path_memory(other_paths, description="upload").items()}
         lines = [f"- {tokens[p]}: {p}" if p in tokens else f"- {p}" for p in other_paths]
         folders = list(dict.fromkeys(str(Path(p).parent) for p in other_paths))
         if len(other_paths) >= 2 and len(folders) == 1:
-            folder_token = next(iter(_register_path_memory(folders, description="アップロード（送信フォルダ）")), None)
-            lines.append(f"（フォルダ: {folder_token}: {folders[0]}）" if folder_token else f"（フォルダ: {folders[0]}）")
+            folder_token = next(iter(_register_path_memory(folders, description="upload (sent folder)")), None)
+            lines.append(f"(folder: {folder_token}: {folders[0]})" if folder_token else f"(folder: {folders[0]})")
         paths = "\n".join(lines)
-        text += f"\n\n[アップロードされたファイルの保存先（ツールには @N を渡す）]\n{paths}"
+        text += f"\n\n[Saved locations of uploaded files (pass @N to tools)]\n{paths}"
 
     # ユーザー自身の発話の目印（[llm].reasoning_preserve 有効時、thinking を
     # 載せ直す範囲の境界になる。src/llm/dialect.py の mark_user_turn 参照）。
@@ -3045,7 +3094,7 @@ async def _embed_local_images_as_session_urls(text: str) -> str:
                 file_ref = await session.persist_file(name=path.name, mime=mime, content=data)
                 url = f"/project/file/{file_ref['id']}?session_id={session.id}"
         except Exception:
-            logging.getLogger(__name__).exception("画像の永続化に失敗しました: %s", path)
+            logging.getLogger(__name__).exception("Failed to persist the image: %s", path)
             continue
         replacements[raw] = f"![{alt}]({url})"
 
@@ -3131,7 +3180,7 @@ async def _get_or_open_thinking(
     if thinking is not None:
         return thinking
     thinking = cl.Step(
-        name="思考中",
+        name="Thinking",
         type="llm",
         parent_id=_resolve_parent_id(event, steps),
         metadata={"subagent_output": True} if owner is not None else None,
@@ -3146,7 +3195,7 @@ async def _get_or_open_thinking(
         # 思考Stepは再接続時の再送対象（resync_steps）へ入れる。
         resync_steps[f"thinking:{thinking.id}"] = thinking
     logging.getLogger(__name__).info(
-        "thinking Step生成: step_id=%s parent_id=%s [%s]",
+        "thinking step created: step_id=%s parent_id=%s [%s]",
         thinking.id,
         thinking.parent_id,
         describe_current_task(),
@@ -3220,7 +3269,7 @@ def _is_dispatch_agent_error(tool_name: str, content: object) -> bool:
     終了として扱ってしまうため、ここで検知して呼び出し元が is_error を
     立てられるようにする。
     """
-    return tool_name in _SUBAGENT_DISPATCH_TOOLS and isinstance(content, str) and content.startswith("エラー:")
+    return tool_name in _SUBAGENT_DISPATCH_TOOLS and isinstance(content, str) and content.startswith("Error:")
 
 
 def _is_dispatch_agent_truncated(tool_name: str, content: object) -> bool:
@@ -3260,7 +3309,7 @@ async def _close_thinking(thinking: cl.Step | None, *, stopped_reason: str | Non
     thinking.end = utc_now()
     await thinking.update()
     logging.getLogger(__name__).info(
-        "thinking Step確定: step_id=%s stopped_reason=%s [%s]",
+        "thinking step finalized: step_id=%s stopped_reason=%s [%s]",
         thinking.id,
         stopped_reason,
         describe_current_task(),
@@ -3287,8 +3336,7 @@ async def _finalize_orphaned_steps(steps: dict[str, cl.Step], reason: str) -> No
 
 # 安全上限で dispatch_agent_batch が先に返った後も裏で動き続けるグループStepの出力欄の文言。
 _BATCH_GROUP_BACKGROUND_OUTPUT = (
-    "安全上限に達したため、このグループはバックグラウンドで実行を続けています"
-    "（結果は check_dispatch_agent_job で取得します）。"
+    "This group keeps running in the background because the safety limit was reached (its result is collected with check_dispatch_agent_job)."
 )
 
 
@@ -3306,7 +3354,7 @@ async def _mark_background_group_steps(group_run_ids, steps: dict[str, cl.Step])
         if step is None:
             continue
         step.metadata = {"background": True}
-        step.output = _BATCH_GROUP_BACKGROUND_OUTPUT
+        step.output = i18n.t("step.batch_background")
         step.end = utc_now()
         await step.update()
 
@@ -3335,12 +3383,12 @@ async def _aclose_event_stream(event_stream) -> bool:
         return False
     except TimeoutError:
         logging.getLogger(__name__).warning(
-            "astream_events のクローズ(aclose)が5秒でタイムアウトしました",
+            "Closing astream_events (aclose) timed out after 5 seconds",
             exc_info=True,
         )
         return True
     except Exception:
-        logging.getLogger(__name__).debug("astream_events のクローズ中に例外が発生しました", exc_info=True)
+        logging.getLogger(__name__).debug("Exception while closing astream_events", exc_info=True)
         return True
 
 
@@ -3471,9 +3519,9 @@ def _batch_interrupted_note_line(tc: dict) -> str:
     except Exception:  # noqa: BLE001 - 確認できなければ案内しないだけ
         return ""
     return (
-        f'中断した時点の各グループの状態（完了済みグループの結果と、未完了グループの担当ファイル）を thread note "{topic}" に'
-        "保存済みです。再開時はまず read_thread_note でこれを読み、完了済みのグループはやり直さず、"
-        "未完了のグループだけを再委任してください。"
+        f'The state of each group at the interruption (results of completed groups and the files assigned to unfinished groups) has been saved to thread note "{topic}". '
+        "When resuming, first read it with read_thread_note, do not redo completed groups, "
+        "and re-delegate only the unfinished groups."
     )
 
 
@@ -3481,26 +3529,25 @@ def _dispatch_agent_rescue_files_hint(paths: list[Path]) -> str:
     """緊急退避ファイルの一覧から案内文を組み立てる（_dispatch_agent_rescue_note_hint 参照）。"""
     if len(paths) == 1:
         return (
-            "このサブエージェントへの委譲は中断直前まで会話内容を次のファイルへ"
-            f"緊急退避済みです: {paths[0]}\n"
-            "次にこのタスクを再開する際は、まずexploreサブエージェントへ委譲して"
-            "このファイルを把握し、write_thread_noteで要点を記録してから、"
-            "続きの作業に着手してください。"
+            "The conversation of this sub-agent delegation up to the interruption has been "
+            f"saved for recovery to the following file: {paths[0]}\n"
+            "When you resume this task, first delegate to the explore sub-agent to "
+            "understand this file, record the key points with write_thread_note, and then "
+            "continue the work."
         )
     if paths:
         listing = "\n".join(f"- {p}" for p in paths)
         return (
-            "この一括委譲は、中断時点で実行中だった各グループのサブエージェントの会話内容を"
-            f"次のファイルへ緊急退避済みです:\n{listing}\n"
-            "次にこのタスクを再開する際は、まずexploreサブエージェントへ委譲して"
-            "これらのファイルを把握し、write_thread_noteで要点を記録してから、"
-            "続きの作業に着手してください。"
+            "For this batch delegation, the conversations of the sub-agents of each group running at the interruption "
+            f"have been saved for recovery to the following files:\n{listing}\n"
+            "When you resume this task, first delegate to the explore sub-agent to "
+            "understand these files, record the key points with write_thread_note, and then "
+            "continue the work."
         )
     return (
-        "このサブエージェントへの委譲は中断直前まで会話内容の緊急退避を"
-        "試みていますが、退避先ファイルを確認できませんでした（退避前に"
-        "停止した可能性があります）。その場合は通常どおりユーザーの指示に"
-        "従ってください。"
+        "An attempt was made to save the conversation of this sub-agent delegation up to the interruption "
+        "for recovery, but the saved file could not be confirmed (it may have stopped "
+        "before saving). In that case, follow the user's instructions as usual."
     )
 
 
@@ -3523,9 +3570,9 @@ def _dispatch_agent_rescue_nudge_text(hint: str, tool_name: str = "dispatch_agen
     ならないため）。
     """
     return (
-        f"[システム通知] 直前の{tool_name}への委譲は中断されました。{hint} "
-        "ただし、この直後の指示が明確に別の作業内容への変更や中断を"
-        "求めている場合は、そちらを優先してください。"
+        f"[System notice] The previous delegation to {tool_name} was interrupted. {hint} "
+        "However, if the next instruction clearly asks to change to different work or to stop, "
+        "follow that instead."
     )
 
 
@@ -3550,7 +3597,7 @@ def _build_orphaned_placeholder_messages(tc: dict, base_reason: str) -> list:
     Returns:
         補完用のメッセージ列（dispatch_agent・dispatch_agent_batch以外はToolMessage1件のみ）。
     """
-    content = f"エラー: {base_reason}このツール呼び出しの実行が中断されました。"
+    content = f"Error: {base_reason}the execution of this tool call was interrupted."
     if tc.get("name") not in _SUBAGENT_DISPATCH_TOOLS:
         return [ToolMessage(content=content, tool_call_id=tc["id"], name=tc.get("name", ""))]
     hint = _dispatch_agent_rescue_note_hint(tc)
@@ -3576,7 +3623,7 @@ async def _repair_orphaned_tool_calls(graph, config: dict) -> int:
         state = await graph.aget_state(config)
     except _CheckpointerTimeout:
         logging.getLogger(__name__).debug(
-            "孤立tool_call修復中にcheckpointer操作がタイムアウトしました",
+            "Checkpointer operation timed out while repairing orphaned tool_calls",
             exc_info=True,
         )
         return 0
@@ -3590,7 +3637,7 @@ async def _repair_orphaned_tool_calls(graph, config: dict) -> int:
             "messages": [
                 msg
                 for tc in orphaned
-                for msg in _build_orphaned_placeholder_messages(tc, "直前のセッション異常により、")
+                for msg in _build_orphaned_placeholder_messages(tc, "Because the previous session ended abnormally, ")
             ]
         },
         as_node="tools",
@@ -3619,7 +3666,7 @@ async def _remove_message_ids_if_present(graph, config: dict, ids: list[str]) ->
         state = await graph.aget_state(config)
     except _CheckpointerTimeout:
         logging.getLogger(__name__).debug(
-            "nudgeメッセージ除去中にcheckpointer操作がタイムアウトしました",
+            "Checkpointer operation timed out while removing nudge messages",
             exc_info=True,
         )
         return
@@ -3693,7 +3740,7 @@ async def _run_context_compaction(
         # スキップし、次の通常ターンが同じ操作で同じ例外に遭遇した際に
         # on_message側の既存の except _CheckpointerTimeout /
         # except LLM_CONNECTION_ERRORS 経路で自己修復させる。
-        logging.getLogger(__name__).exception("コンテキスト圧縮: 状態取得(aget_state)に失敗したため今回はスキップします")
+        logging.getLogger(__name__).exception("Context compaction: getting state (aget_state) failed, skipping this time")
         return False
     messages = state.values.get("messages", []) if state else []
     if _find_orphaned_tool_calls(messages):
@@ -3719,7 +3766,7 @@ async def _run_context_compaction(
             # （安全弁。無限に諦めないと require_note_max_skips の意味が無くなる）。
             cl.user_session.set("context_compaction_note_skip_count", skip_count + 1)
             logging.getLogger(__name__).debug(
-                "コンテキスト圧縮: write_thread_noteの強制実行に失敗したため見送ります (skip_count=%d)",
+                "Context compaction: forced write_thread_note failed, postponing (skip_count=%d)",
                 skip_count + 1,
             )
             return False
@@ -3732,7 +3779,7 @@ async def _run_context_compaction(
             # write_thread_noteの結果は次回以降の判定（_write_thread_note_called_recently）
             # で再度見えるとは限らないため、見送り扱いにしてskip_countを進める。
             logging.getLogger(__name__).exception(
-                "コンテキスト圧縮: write_thread_note強制実行結果の状態更新(aupdate_state)に失敗したため今回は見送ります"
+                "Context compaction: updating state (aupdate_state) with the forced write_thread_note result failed, postponing this time"
             )
             cl.user_session.set("context_compaction_note_skip_count", skip_count + 1)
             return False
@@ -3751,12 +3798,12 @@ async def _run_context_compaction(
     if new_messages is None:
         return False
     logging.getLogger(__name__).debug(
-        "コンテキスト圧縮: 圧縮前 messages=%d\n%s",
+        "Context compaction: before messages=%d\n%s",
         len(messages),
         _messages_summary(messages),
     )
     logging.getLogger(__name__).debug(
-        "コンテキスト圧縮: 圧縮後 messages=%d\n%s",
+        "Context compaction: after messages=%d\n%s",
         len(new_messages),
         _messages_summary(new_messages),
     )
@@ -3769,7 +3816,7 @@ async def _run_context_compaction(
     except Exception:
         # 上のaget_state同様の理由で握りつぶす。要約結果は破棄して構わない
         # （次回のshould_compact判定でまた同じ範囲が圧縮候補になるだけ）。
-        logging.getLogger(__name__).exception("コンテキスト圧縮: 状態更新(aupdate_state)に失敗したため今回はスキップします")
+        logging.getLogger(__name__).exception("Context compaction: updating state (aupdate_state) failed, skipping this time")
         return False
     # 圧縮により古い履歴が要約へ置き換わったため、次にまた同じ閾値で
     # 即座に発火し続けないよう、メインエージェントの累積トークン数をリセットする。
@@ -3787,7 +3834,7 @@ async def _run_context_compaction(
     # （記憶が無いのにガードだけが残り、拒否され続けてループする問題を防ぐ）。
     reset_call_history_guards_after_compaction()
     logging.getLogger(__name__).warning(
-        "コンテキスト圧縮を実行しました thread_id=%s messages=%d->%d",
+        "context compacted thread_id=%s messages=%d->%d",
         thread_id,
         len(messages),
         len(new_messages),
@@ -3831,18 +3878,18 @@ async def _run_context_compaction_visible(
         # _run_context_compaction 内で同じ失敗に対する自己修復（今回は
         # スキップして次ターンに委ねる）を既に持っているため、ここでは
         # 例外を伝播させずそちらに委譲する。
-        logging.getLogger(__name__).exception("コンテキスト圧縮: 表示要否の判定に失敗したため通常経路にフォールバックします")
+        logging.getLogger(__name__).exception("Context compaction: failed to decide whether to show the notice, falling back to the normal path")
         return await _run_context_compaction(graph, config, thread_id, last_usage)
     if not will_compact:
         return await _run_context_compaction(graph, config, thread_id, last_usage)
 
     await cl.Message(
-        content="会話が長くなったため、履歴を要約して整理しています（数十秒〜数分かかる場合があります）…",
+        content=i18n.t("notice.compaction_start"),
         type="system_message",
     ).send()
     compacted = await _run_context_compaction(graph, config, thread_id, last_usage)
     await cl.Message(
-        content="会話履歴の整理が完了しました。" if compacted else "会話履歴の整理は対象外だったためスキップしました。",
+        content=i18n.t("notice.compaction_done") if compacted else i18n.t("notice.compaction_skipped"),
         type="system_message",
     ).send()
     return compacted
@@ -3916,7 +3963,10 @@ async def _on_message_impl(message: cl.Message) -> None:
     # run_script_background の完了前に組み直してフラグを下ろしてしまい、新しい
     # ドラフトが出ないままになるため、毎回実際のドラフトの状態と比べる。
     current_drafts = skill_drafts.scan_visible_drafts(_config, cl.user_session.get(skill_drafts.SESSION_USER_KEY))
-    if skill_drafts.drafts_signature(current_drafts) != cl.user_session.get("drafts_signature"):
+    # 画面で表示言語を切り替えた後も、応答言語の指示を差し替えるため組み直す
+    # （set_language アクションは生成中にも届くため、ここで反映する）。
+    drafts_changed = skill_drafts.drafts_signature(current_drafts) != cl.user_session.get("drafts_signature")
+    if drafts_changed or i18n.current_lang() != cl.user_session.get("graph_lang"):
         await _rebuild_graph(thread_id, wait_when_busy=False)
     graph = cl.user_session.get("graph")
     config = {
@@ -3934,7 +3984,7 @@ async def _on_message_impl(message: cl.Message) -> None:
     # ユーザーの生入力にはパスワード・APIキー等が含まれうるため、本文を伴う
     # このログはdebugに留める（2026-09-04 レビュー指摘）。
     logging.getLogger(__name__).debug(
-        "ユーザー送信メッセージ: user=%s content=%r",
+        "User message: user=%s content=%r",
         upload_username,
         message.content,
     )
@@ -4052,14 +4102,14 @@ async def _on_message_impl(message: cl.Message) -> None:
         if attempt > 0:
             csb = recent_cancel_scope_breakage()
             logging.getLogger(__name__).warning(
-                "on_message: リトライ%d回目開始 [%s, cancel_scope_breakage_last_60s=%d]",
+                "on_message: starting retry %d [%s, cancel_scope_breakage_last_60s=%d]",
                 attempt + 1,
                 describe_current_task(),
                 csb,
             )
         else:
             logging.getLogger(__name__).debug(
-                "on_message: 初回リクエスト開始 [%s]",
+                "on_message: starting first request [%s]",
                 describe_current_task(),
             )
         try:
@@ -4097,7 +4147,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                             # 両方合わせて「LLM応答の初回チャンク」とみなす。
                             if elapsed_s > 10.0:
                                 logging.getLogger(__name__).warning(
-                                    "リトライ後の初回チャンク受信まで%.0f秒（異常遅延）" " [%s] — llama-server スロット詰まりの疑い",
+                                    "%.0f seconds until the first chunk after retry (abnormal delay) [%s] - llama-server slots may be stuck",
                                     elapsed_s,
                                     describe_current_task(),
                                 )
@@ -4151,7 +4201,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 elif kind == "on_chain_start" and event["name"] == _BATCH_GROUP_RUN_NAME:
                     # dispatch_agent_batch のグループごとの中間Step。配下のサブエージェントの
                     # 思考・ツールStepはこの下へ入る（_resolve_parent_id が一番近い祖先を選ぶ）。
-                    label = (event.get("metadata") or {}).get("batch_group_label") or "SUB: グループ"
+                    label = (event.get("metadata") or {}).get("batch_group_label") or f"SUB: {i18n.t('step.group')}"
                     step = cl.Step(name=label, type="tool", parent_id=_resolve_parent_id(event, steps))
                     step.start = utc_now()
                     await step.send()
@@ -4173,7 +4223,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         output = event["data"].get("output")
                         step.output = output if isinstance(output, str) else ""
                         step.end = utc_now()
-                        if isinstance(output, str) and output.startswith("エラー:"):
+                        if isinstance(output, str) and output.startswith("Error:"):
                             step.is_error = True
                         await step.update()
 
@@ -4220,11 +4270,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         await step.update()
                         if _is_dispatch_agent_truncated(event["name"], content):
                             await cl.Message(
-                                content=(
-                                    "サブエージェントのタスクが打ち切られました"
-                                    "（反復回数や応答内容の上限に到達したため）。"
-                                    "ここまでに収集できた結果を踏まえて続行します。"
-                                ),
+                                content=i18n.t("notice.subagent_truncated"),
                                 type="system_message",
                             ).send()
                         if isinstance(content, str):
@@ -4236,9 +4282,9 @@ async def _on_message_impl(message: cl.Message) -> None:
                                     else cl.File(name=path.name, path=str(path))
                                     for path in generated
                                 ]
-                                names = "、".join(path.name for path in generated)
+                                names = i18n.t("list.separator").join(path.name for path in generated)
                                 await cl.Message(
-                                    content=f"生成ファイル: {names}",
+                                    content=i18n.t("notice.generated_files", names=names),
                                     elements=elements,
                                     type="system_message",
                                 ).send()
@@ -4256,7 +4302,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         cl.user_session.set("plan_denied_just_now", False)
                         await _close_all_outputs(thinkings, answers)
                         await cl.Message(
-                            content="実行計画が却下されたため、処理を終了しました。ご指示をお待ちしています。",
+                            content=i18n.t("notice.plan_denied"),
                             type="system_message",
                         ).send()
                         raise _PlanDeniedInterrupt(tool_message=event["data"].get("output"))
@@ -4284,8 +4330,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                                 # 記録する。cumulative_mainが閾値超なのに発火しない事例が
                                 # 観測されたため、原因切り分けに使う（2026-08-12調査）。
                                 logging.getLogger(__name__).debug(
-                                    "コンテキスト圧縮: 安全点到達 compact_due=%s awaiting_approval=%s "
-                                    "cumulative_main_total=%s approx_count=%d [%s]",
+                                    "Context compaction: reached a safe point compact_due=%s awaiting_approval=%s cumulative_main_total=%s approx_count=%d [%s]",
                                     compact_due,
                                     awaiting_approval,
                                     (cumulative_main or {}).get("total"),
@@ -4340,9 +4385,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         # 単位の値・このターンの累積・会話全体の累積）を追跡できる
                         # よう、on_chat_model_endのたびにINFOで記録しておく。
                         logging.getLogger(__name__).info(
-                            "トークン使用量 thread_id=%s call(in=%d,out=%d,total=%d) "
-                            "turn(in=%d,out=%d,total=%d) cumulative(in=%d,out=%d,total=%d) "
-                            "cumulative_main(in=%d,out=%d,total=%d)",
+                            "token usage thread_id=%s call(in=%d,out=%d,total=%d) turn(in=%d,out=%d,total=%d) cumulative(in=%d,out=%d,total=%d) cumulative_main(in=%d,out=%d,total=%d)",
                             thread_id,
                             usage.get("input_tokens", 0) or 0,
                             usage.get("output_tokens", 0) or 0,
@@ -4370,7 +4413,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                         if usage_owner is None and is_subagent_usage:
                             usage_owner, usage_label = "sub", "SUB"
                         elif usage_owner is None:
-                            usage_label = MAIN_CALL_USAGE_LABEL
+                            usage_label = i18n.t("usage.main")
                         else:
                             usage_label = owner_labels.get(usage_owner, "SUB")
                         call_usage[usage_owner] = {"label": usage_label, **call_totals}
@@ -4400,7 +4443,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             # される順序だった）。
             loop_exc = exc
             logging.getLogger(__name__).warning(
-                "LLM応答のループを検知（%d回目の再試行）: 直近テキスト=%r [%s]",
+                "Detected an LLM response loop (retry %d): recent text=%r [%s]",
                 loop_attempt + 1,
                 exc.snippet,
                 describe_current_task(),
@@ -4422,7 +4465,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             # 送って中断する。
             turn_broken_exc = exc
             logging.getLogger(__name__).warning(
-                "LLMサーバーとの通信エラーを検知しました: %s [%s]",
+                "Detected a communication error with the LLM server: %s [%s]",
                 exc,
                 describe_current_task(),
             )
@@ -4442,7 +4485,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             turn_broken_exc = exc
             checkpointer_needs_rebuild = True
             logging.getLogger(__name__).warning(
-                "チェックポインタ操作が失敗しました（%s）: %s [%s]",
+                "Checkpointer operation failed (%s): %s [%s]",
                 type(exc).__name__,
                 exc,
                 describe_current_task(),
@@ -4455,10 +4498,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             await _close_all_outputs(thinkings, answers)
             await _finalize_orphaned_steps(steps, "recursion_limit")
             await cl.Message(
-                content=(
-                    f"反復上限（recursion_limit={_config.graph_recursion_limit}）に達したため、"
-                    "処理を打ち切りました。タスクを分割するか、別のアプローチを試してください。"
-                ),
+                content=i18n.t("notice.recursion_limit", limit=_config.graph_recursion_limit),
                 type="system_message",
             ).send()
             await _remove_message_ids_if_present(graph, config, loop_nudge_ids)
@@ -4483,7 +4523,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             # 発言を追加するわけではないため、ThinkingLoopDetectedのnudge注入
             # 経路（STARTからの再実行）とは異なる継続方法になる。
             logging.getLogger(__name__).warning(
-                "on_message: ループ内の安全な区切りでコンテキスト圧縮の条件を" "満たしたため、ターン内でグラフ実行を一時中断して圧縮します [%s]",
+                "on_message: the context compaction condition was met at a safe point in the loop, pausing graph execution within the turn to compact [%s]",
                 describe_current_task(),
             )
             await _close_all_outputs(thinkings, answers)
@@ -4527,7 +4567,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             # 例外チェーン（__cause__/__context__）を記録し、なぜキャンセル
             # されたかの診断に使う。
             logging.getLogger(__name__).warning(
-                "on_message: CancelledErrorを検知 [%s, cause=%r, context=%r]",
+                "on_message: detected CancelledError [%s, cause=%r, context=%r]",
                 describe_current_task(),
                 repr(exc.__cause__),
                 repr(exc.__context__),
@@ -4543,14 +4583,13 @@ async def _on_message_impl(message: cl.Message) -> None:
                             "messages": [
                                 msg
                                 for tc in orphaned
-                                for msg in _build_orphaned_placeholder_messages(tc, "ユーザーの停止操作等により、")
+                                for msg in _build_orphaned_placeholder_messages(tc, "Because the user stopped it (or similar), ")
                             ]
                         },
                         as_node="tools",
                     )
                     logging.getLogger(__name__).warning(
-                        "on_message: CancelledErrorを検知し、孤立したtool_calls(%d件)に"
-                        "プレースホルダのToolMessageを補完してチェックポイントを修復しました",
+                        "on_message: detected CancelledError and repaired the checkpoint by adding placeholder ToolMessages for %d orphaned tool_calls",
                         len(orphaned),
                     )
             except _CheckpointerTimeout:
@@ -4560,7 +4599,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 # （次回メッセージ送信時のaget_tupleで同じタイムアウトが
                 # 再検知され、その時のturn_broken_exc処理で自己修復する）。
                 logging.getLogger(__name__).debug(
-                    "CancelledError処理中のcheckpointer操作がタイムアウトしました",
+                    "Checkpointer operation timed out while handling CancelledError",
                     exc_info=True,
                 )
             raise
@@ -4580,7 +4619,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             turn_broken_exc = exc
             checkpointer_needs_rebuild = True
             logging.getLogger(__name__).error(
-                "on_message: 未分類の例外を検知しました（%s）: %s [%s]",
+                "on_message: detected an unclassified exception (%s): %s [%s]",
                 type(exc).__name__,
                 exc,
                 describe_current_task(),
@@ -4634,7 +4673,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 await aclose_active_llm_clients(thread_id)
                 graph = await _rebuild_graph(thread_id)
                 logging.getLogger(__name__).warning(
-                    "ThinkingLoopDetected: リトライ前にLLMグラフを再構築しました [%s]",
+                    "ThinkingLoopDetected: rebuilt the LLM graph before retrying [%s]",
                     describe_current_task(),
                 )
                 if isinstance(loop_exc, ToolCallLoopDetected) and loop_exc.remove_ids:
@@ -4642,14 +4681,14 @@ async def _on_message_impl(message: cl.Message) -> None:
                     # （src/tool_loop_guard.py 冒頭参照）。
                     await _remove_message_ids_if_present(graph, config, list(loop_exc.remove_ids))
                     logging.getLogger(__name__).warning(
-                        "ツール呼び出しのループ区間(%d件)を履歴から取り除きました [%s]",
+                        "Removed the tool call loop section (%d messages) from the history [%s]",
                         len(loop_exc.remove_ids),
                         describe_current_task(),
                     )
                 repaired = await _repair_orphaned_tool_calls(graph, config)
                 if repaired:
                     logging.getLogger(__name__).warning(
-                        "孤立tool_call(%d件)を修復しました [%s]",
+                        "Repaired %d orphaned tool_calls [%s]",
                         repaired,
                         describe_current_task(),
                     )
@@ -4671,10 +4710,9 @@ async def _on_message_impl(message: cl.Message) -> None:
                 await _remove_message_ids_if_present(graph, config, list(loop_exc.remove_ids))
             await cl.Message(
                 content=(
-                    f"全く同じツール呼び出しが繰り返され、{loop_max_retries}回リトライしましたが"
-                    f"改善しなかったため停止しました。\n\n{loop_exc.detail}"
+                    i18n.t("notice.tool_call_loop", retries=loop_max_retries, detail=loop_exc.detail)
                     if isinstance(loop_exc, ToolCallLoopDetected)
-                    else f"生成がループし、{loop_max_retries}回リトライしましたが改善しなかったため停止しました。"
+                    else i18n.t("notice.generation_loop", retries=loop_max_retries)
                 ),
                 type="system_message",
             ).send()
@@ -4694,7 +4732,7 @@ async def _on_message_impl(message: cl.Message) -> None:
             if checkpointer_needs_rebuild:
                 await _rebuild_checkpointer(thread_id)
                 logging.getLogger(__name__).warning(
-                    "チェックポインタを再構築しました [%s]",
+                    "Rebuilt the checkpointer [%s]",
                     describe_current_task(),
                 )
             # ThinkingLoopDetected 経路（1772行目）と同じ理由で、旧接続を
@@ -4704,21 +4742,21 @@ async def _on_message_impl(message: cl.Message) -> None:
             await aclose_active_llm_clients(thread_id)
             graph = await _rebuild_graph(thread_id)
             logging.getLogger(__name__).warning(
-                "エラーのためグラフを再構築しました: %s [%s]",
+                "Rebuilt the graph because of an error: %s [%s]",
                 turn_broken_exc,
                 describe_current_task(),
             )
             repaired = await _repair_orphaned_tool_calls(graph, config)
             if repaired:
                 logging.getLogger(__name__).warning(
-                    "孤立tool_call(%d件)を修復しました [%s]",
+                    "Repaired %d orphaned tool_calls [%s]",
                     repaired,
                     describe_current_task(),
                 )
             if can_retry_connection_error:
                 connection_retry_attempt += 1
                 logging.getLogger(__name__).warning(
-                    "通信エラーのため接続先を切り替えて自動リトライします(%d/%d回目) [%s]",
+                    "Switching endpoints and retrying automatically because of a communication error (%d/%d) [%s]",
                     connection_retry_attempt,
                     connection_error_max_retries,
                     describe_current_task(),
@@ -4732,7 +4770,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 inputs = None
                 continue
             await cl.Message(
-                content="通信エラーのため中断しました。 少し待って「続けて」と送信してください。",
+                content=i18n.t("notice.connection_error"),
                 type="system_message",
             ).send()
             return
@@ -4850,14 +4888,13 @@ async def on_message(message: cl.Message) -> None:
         conflicting_thread = _generating_owner_threads.get(owner)
         if conflicting_thread is not None and conflicting_thread != thread_id:
             logging.getLogger(__name__).info(
-                "on_message: 所有者 %s の別スレッド(thread_id=%s)が生成中のため、"
-                "このメッセージ(thread_id=%s)は実行せず拒否しました。",
+                "on_message: rejected this message (thread_id=%s) without running it because another thread (thread_id=%s) of owner %s is generating",
                 owner,
                 conflicting_thread,
                 thread_id,
             )
             await cl.Message(
-                content="他の会話が処理中です。完了してから送信してください。",
+                content=i18n.t("notice.other_thread_busy"),
                 type="system_message",
             ).send()
             return

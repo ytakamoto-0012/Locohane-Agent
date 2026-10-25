@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { BACKEND_URL } from '../chainlitClient';
+import { useI18n } from '../i18n';
 import { ThemePicker } from './ThemePicker';
 import { Icon } from './Icon';
 
@@ -16,6 +17,7 @@ export function Header({
   onOpenThreads?: () => void;
   onOpenDetails: () => void;
 }) {
+  const { t } = useI18n();
   const [title, setTitle] = useState(DEFAULT_TITLE);
   const [iconExtIndex, setIconExtIndex] = useState(0);
   const [version, setVersion] = useState<string | null>(null);
@@ -56,7 +58,7 @@ export function Header({
     <header className="app-header">
       <div className="app-header-brand" title={version ? `Locohane v${version}` : undefined}>
         {mobile && onOpenThreads ? (
-          <button type="button" className="header-icon-button" title="会話一覧を開く" onClick={onOpenThreads}>
+          <button type="button" className="header-icon-button" title={t('header.openThreads')} onClick={onOpenThreads}>
             <Icon name="menu" size={16} />
           </button>
         ) : null}
@@ -71,13 +73,13 @@ export function Header({
         <span className="app-header-title">{title}</span>
       </div>
       <div className="app-header-actions">
-        <button type="button" className="new-chat-button" title="新規チャット" onClick={handleNewChat}>
+        <button type="button" className="new-chat-button" title={t('common.newChat')} onClick={handleNewChat}>
           <Icon name="plus" size={14} />
-          <span className="new-chat-button-label">新規チャット</span>
+          <span className="new-chat-button-label">{t('common.newChat')}</span>
         </button>
         <ThemePicker />
         {mobile ? (
-          <button type="button" className="header-icon-button" title="実行の詳細を開く" onClick={onOpenDetails}>
+          <button type="button" className="header-icon-button" title={t('header.openDetails')} onClick={onOpenDetails}>
             <Icon name="panel-right" size={16} />
           </button>
         ) : null}

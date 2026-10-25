@@ -92,7 +92,7 @@ class TestReadSkillOutput:
     def test_missing_skill_returns_error_without_wrapper(self, skills_root) -> None:
         result = tools.read_skill.func(skill_name="no-such-skill")
 
-        assert result.startswith("エラー:")
+        assert result.startswith("Error:")
         assert skill_content_name(result) is None
 
 
@@ -112,13 +112,13 @@ class TestReadSkillFilePathMemoryToken:
 
         result = tools.read_skill_file.func(relative_path=token)
 
-        assert result.startswith("エラー:")
+        assert result.startswith("Error:")
         assert "secret" not in result
 
     def test_unregistered_token_is_error(self, skills_root) -> None:
         result = tools.read_skill_file.func(relative_path="@999")
 
-        assert result.startswith("エラー:")
+        assert result.startswith("Error:")
 
 
 class TestSkillNameEnum:

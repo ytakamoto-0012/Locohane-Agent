@@ -12,7 +12,7 @@ from app import _is_dispatch_agent_truncated
 
 
 def test_detects_dispatch_agent_truncated_string() -> None:
-    content = "[サブエージェント: 最大反復回数(6)に達したため打ち切りました]\n続き"
+    content = "[Sub-agent: stopped because the maximum number of iterations (6) was reached]\n続き"
     assert _is_dispatch_agent_truncated("dispatch_agent", content) is True
 
 
@@ -21,11 +21,11 @@ def test_ignores_dispatch_agent_success() -> None:
 
 
 def test_ignores_dispatch_agent_error() -> None:
-    assert _is_dispatch_agent_truncated("dispatch_agent", "エラー: 不明な agent_type 'foo' です。") is False
+    assert _is_dispatch_agent_truncated("dispatch_agent", "Error: unknown agent_type 'foo'.") is False
 
 
 def test_ignores_other_tools_even_with_truncation_prefix() -> None:
-    content = "[サブエージェント: 最大反復回数(6)に達したため打ち切りました]"
+    content = "[Sub-agent: stopped because the maximum number of iterations (6) was reached]"
     assert _is_dispatch_agent_truncated("run_script", content) is False
 
 

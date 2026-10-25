@@ -1,6 +1,6 @@
 ---
 name: pptx-inspect
-description: PowerPoint（.pptx）の編集対象を特定するための構造読み取り専用スキル。スライド単位のshape構造（shape_index・種別・プレースホルダ種別・表/画像の有無等）をJSONで取得する。既存pptxテンプレートを`pptx-edit`で部分編集する前に、必ずこのスキルでshape_indexを把握するために使う。内容の要約・テキスト抽出は`pptx-read`を使う。
+description: A read-only skill that reads the structure of PowerPoint files (.pptx) to identify what to edit. Gets the per-slide shape structure (shape_index, type, placeholder type, whether there are tables/images, etc.) as JSON. Always use this skill to find out shape_index before partially editing an existing pptx template with `pptx-edit`. Use `pptx-read` for summarizing content and extracting text.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,72 +9,71 @@ metadata:
 
 # pptx-inspect
 
-既存テンプレートを編集する前に**必ず**このスキルでスライド構造を確認し、
-`shape_index` を把握してから `pptx-edit` を呼んでください。`inspect_pptx.py` を
-実行して結果を得ます。`pptx-read` の `read_pptx.py` は
-人間向けの要約（title/texts/tables/notes）を返すのに対し、こちらは編集に
-必要なshape単位の構造情報を返します。
+Before editing an existing template, **always** check the slide structure with this skill,
+find out `shape_index`, and then call `pptx-edit`. Run `inspect_pptx.py` to
+get the result. While `read_pptx.py` of `pptx-read` returns
+a human-oriented summary (title/texts/tables/notes), this returns the per-shape structural information
+needed for editing.
 
-正常系なら終了コード0でJSON1行を標準出力へ、異常系なら終了コード非0で
-エラーメッセージを標準エラーへ出力します。
+On success it prints one line of JSON to stdout with exit code 0; on failure it prints an
+error message to stderr with a non-zero exit code.
 
-スライドごとの本文データは直接標準出力へは返さず、一時JSONファイルへ書き出して
-そのパス（`result_path`）を返します。中身を確認するには `result_path` を
-読んでください。
+The per-slide body data is not returned directly on stdout; it is written to a temporary JSON file
+and its path (`result_path`) is returned. To check the content, read `result_path`.
 
-## inspect_pptx.py — 編集対象を特定するための構造読み取り
+## inspect_pptx.py — read the structure to identify what to edit
 
-呼び出し例:
+Call example:
 ```bash
 python inspect_pptx.py "C:\Users\me\template.pptx" --start-slide 1 --max-slides 20
 ```
-`--start-slide`（整数、既定`1`）/`--max-slides`（整数、既定`20`）は省略可。
-どちらも1未満を指定すると1にクランプされる（例`--max-slides 0`は`1`扱い）。
+`--start-slide` (integer, default `1`) / `--max-slides` (integer, default `20`) can be omitted.
+Values below 1 are clamped to 1 (e.g. `--max-slides 0` is treated as `1`).
 
-出力例:
+Output example:
 ```json
 {"path": "C:\\foo\\template.pptx", "total_slides": 4, "start_slide": 1, "end_slide": 4,
  "slides_count": 4, "slide_width_cm": 25.4, "slide_height_cm": 19.05,
  "result_path": "C:\\...\\pptx_inspect\\1a2b3c4d_20260805_153012_123456.json"}
 ```
-スライド単位のshape構造（`slides`、各要素は
-`{"index", "layout_name", "layout_index", "shapes", "notes_present"}`。
-`shapes` の各要素は `{"shape_index", "name", "shape_type", "is_placeholder",
+The per-slide shape structure (`slides`, each element
+`{"index", "layout_name", "layout_index", "shapes", "notes_present"}`;
+each element of `shapes` is `{"shape_index", "name", "shape_type", "is_placeholder",
 "placeholder_idx", "placeholder_type", "has_text_frame", "text_preview",
 "has_table", "table_dims", "has_picture", "left_cm", "top_cm", "width_cm",
-"height_cm", "fill_color", "border_color", "text_style", "crop"}`）は標準出力
-からは省かれ、`result_path` が指すJSONファイルにのみ含まれます。これを
-読んで `shape_index` を確認してから `pptx-edit` を呼んでください。
+"height_cm", "fill_color", "border_color", "text_style", "crop"}`) is left out of stdout
+and included only in the JSON file that `result_path` points to. Read it
+to check `shape_index`, then call `pptx-edit`.
 
-トップレベルに以下のフィールドも追加されます：
-- `slide_width_cm`/`slide_height_cm`: スライドのサイズ（cm単位）
-- `warnings`: 構造的な不備の警告配列（該当なしならキー省略）。shapeがスライド境界をはみ出している場合に指摘。
+The following fields are also added at the top level:
+- `slide_width_cm`/`slide_height_cm`: the slide size (in cm)
+- `warnings`: an array of warnings about structural problems (the key is omitted if there are none). Points out shapes that stick out of the slide boundary.
 
-- `shape_index` は `pptx-edit` の各操作で指定する `shape_index` と完全に一致します
-  （このスライド内での0始まり連番）。
-- `text_preview` は先頭50文字までの切り詰め表示です（編集対象を見分けるための参考情報で、
-  全文取得には `pptx-read` を使ってください）。
-- `left_cm`/`top_cm`/`width_cm`/`height_cm` はshapeの現在位置・サイズ（cm単位）。
-  `pptx-edit`の`set_shape_position`が受け取る単位と完全に一致するため、
-  ここで読んだ値をそのまま計算の基準に使える（例:「shape_index 2の右に10cm離して
-  配置したい」→このshapeの`left_cm + width_cm + 10`を新しい`left_cm`にする）。
-  プレースホルダ等でレイアウト側から座標を継承していて実座標が取得できない
-  shapeは`null`になる。
-- `fill_color`/`border_color`は`pptx-edit`の`set_shape_style`が書き込む塗り色・枠線色を
-  RRGGBBで読み返す（単色塗り・RGB直接指定のみ対応。テーマ色指定や表shapeは`null`）。
-- `text_style`は同じく`set_shape_style`が書き込む文字装飾を、そのshapeの最初の段落の
-  最初のrunについてのみ`{"text_color","bold","italic","underline","font_size_pt","font_name","align"}`
-  として読み返す（run単位で書式が混在していても代表値として最初の1つだけを返す。
-  テキストを持てないshapeや文字が1つも無いshapeは`null`）。
-- `crop`は`pptx-edit`の`crop_picture`が書き込むトリミング量を
-  `{"crop_left","crop_top","crop_right","crop_bottom"}`（0.0〜1.0）として読み返す
-  （画像shapeでトリミングが1つも適用されていない場合、および画像以外のshapeは`null`）。
-- ページングは `pptx-read` と同じ設計です（`total_slides` が `max_slides` を超える場合は
-  `--start-slide` を `end_slide + 1` にして再度呼び出す）。
+- `shape_index` exactly matches the `shape_index` specified in each operation of `pptx-edit`
+  (a 0-based sequence within the slide).
+- `text_preview` is truncated to the first 50 characters (reference information for telling what to edit apart;
+  use `pptx-read` to get the full text).
+- `left_cm`/`top_cm`/`width_cm`/`height_cm` are the shape's current position and size (in cm).
+  They exactly match the units that `set_shape_position` of `pptx-edit` takes,
+  so the values read here can be used as is as the basis of calculations (e.g. "place it 10cm to the right of shape_index 2"
+  -> make this shape's `left_cm + width_cm + 10` the new `left_cm`).
+  Shapes such as placeholders that inherit coordinates from the layout and whose actual coordinates cannot be obtained
+  are `null`.
+- `fill_color`/`border_color` read back, as RRGGBB, the fill color and border color written by `set_shape_style` of `pptx-edit`
+  (only solid fills with direct RGB values are supported; theme colors and table shapes are `null`).
+- `text_style` likewise reads back the text decoration written by `set_shape_style`, only for the first run of the shape's first paragraph,
+  as `{"text_color","bold","italic","underline","font_size_pt","font_name","align"}`
+  (even if formatting is mixed per run, only the first one is returned as the representative value.
+  Shapes that cannot hold text, or shapes with no characters at all, are `null`).
+- `crop` reads back the cropping amounts written by `crop_picture` of `pptx-edit`
+  as `{"crop_left","crop_top","crop_right","crop_bottom"}` (0.0-1.0)
+  (`null` for image shapes with no cropping applied, and for non-image shapes).
+- Paging is designed the same as `pptx-read` (if `total_slides` exceeds `max_slides`,
+  call it again with `--start-slide` set to `end_slide + 1`).
 
-## エッジケース
+## Edge cases
 
-- ファイル不在・ディレクトリ指定・壊れたファイルはエラー終了します
-  （`read_pptx.py` と同じ挙動）。
-- 依存パッケージ `python-pptx` が実行環境に入っていないと `ModuleNotFoundError` で
-  終了コード非0になります。その場合は導入者へ `pip install python-pptx` の実施を促してください。
+- A missing file, a directory, or a broken file ends with an error
+  (the same behavior as `read_pptx.py`).
+- If the dependency `python-pptx` is not installed in the environment, it ends with `ModuleNotFoundError` and
+  a non-zero exit code. In that case, prompt the installer to run `pip install python-pptx`.

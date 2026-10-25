@@ -1,6 +1,6 @@
 ---
 name: excel-vba-edit
-description: xlsmファイルのVBAマクロコードを追加・上書き・削除し、マクロを実行するスキル。ローカルにMicrosoft Excelが導入され対話セッションから呼ばれている必要があり、Excelトラストセンターで「VBAプロジェクトオブジェクトモデルへのアクセスを信頼する」設定が有効である必要がある。既存データ・ファイルを破壊するコードや悪意あるコード（ファイル削除・外部プロセス実行・レジストリ操作等）は生成しない安全ポリシーがあり、危険APIは機械的に検出・拒否する。ユーザーがVBAマクロのコードを書きたい、既存マクロを修正・削除したい、マクロを実行したいときに使う。既存コードの確認はexcel-vba-readスキルを先に使う。
+description: A skill that adds, overwrites and deletes the VBA macro code of xlsm files and runs macros. Microsoft Excel must be installed locally and it must be called from an interactive session, and "Trust access to the VBA project object model" must be enabled in the Excel Trust Center. It has a safety policy of not generating code that destroys existing data/files or malicious code (deleting files, running external processes, operating the registry, etc.), and dangerous APIs are detected and refused mechanically. Use it when the user wants to write VBA macro code, fix or delete existing macros, or run macros. Use the excel-vba-read skill first to check existing code.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,18 +9,18 @@ metadata:
 
 # excel-vba-edit
 
-xlsm のVBAマクロコードを追加・上書き・削除し、マクロを実行するスキル。
-`edit_vba.py` を実行する。
+A skill that adds, overwrites and deletes the VBA macro code of xlsm and runs macros.
+Runs `edit_vba.py`.
 
-## VBAコード生成時の制約（絶対厳守）
+## Constraints when generating VBA code (absolutely mandatory)
 
-既存データ・ファイルを破壊するコード、悪意あるコードはいかなる理由でも生成しない。禁止対象: ファイル/フォルダ削除（`Kill`/`RmDir`/`FileSystemObject.DeleteFile`/`DeleteFolder`等）、外部コマンド/プロセス実行（`Shell`/`WScript.Shell`経由の`Run`/`Exec`等）、レジストリ読み書き、他アプリの起動・操作、ネットワーク経由のダウンロード＆実行等ワークブック範囲を超えたシステムアクセス。該当依頼や意図不明な破壊的操作を求められたら目的を確認するか手動対応を提案し、生成しない。危険API検出エラーが出たコードを、目的確認なしにそのまま修正して再送しない。
+Never generate code that destroys existing data/files or malicious code, for any reason. Forbidden: deleting files/folders (`Kill`/`RmDir`/`FileSystemObject.DeleteFile`/`DeleteFolder`, etc.), running external commands/processes (`Run`/`Exec` via `Shell`/`WScript.Shell`, etc.), reading/writing the registry, starting or operating other apps, downloading and running over the network, and any other system access beyond the scope of the workbook. When asked for such things, or for destructive operations whose intent is unclear, confirm the purpose or suggest handling it manually, and do not generate it. Do not fix code that got a dangerous API detection error and send it again as is without confirming the purpose.
 
-`add_module`/`set_code`/`find_replace`/`replace_procedure`/`insert_code`は上記のうち`Kill`/`RmDir`/`Shell`/`WScript.Shell`/`DeleteFile`/`DeleteFolder`を含むコードを**技術的に検出してエラー拒否する**（`_check_dangerous_code`。完全な悪意判定はできないため最終判断はLLM自身の責任だが、明らかに危険なAPIは機械的にブロックされる）。
+`add_module`/`set_code`/`find_replace`/`replace_procedure`/`insert_code` **technically detect and refuse with an error** code containing `Kill`/`RmDir`/`Shell`/`WScript.Shell`/`DeleteFile`/`DeleteFolder` among the above (`_check_dangerous_code`. Complete detection of malice is impossible, so the final judgment is the LLM's own responsibility, but obviously dangerous APIs are blocked mechanically).
 
-**書き込み直前に簡易構文チェックも行う**（`_lint_vba_syntax`。Sub/End Sub、If/End If、For/Next等のブロック対応を正規表現で検証）。失敗時は書き込み・保存を一切行わずエラーを返す。VBAには「コンパイル成否を返すAPI」が存在しないため、未宣言変数の重複宣言・型不一致・スペルミス等の**意味的**コンパイルエラーはこのチェックでは検出できない（通っても構文的に完全に正しいとは限らない）。
+**A simple syntax check is also done right before writing** (`_lint_vba_syntax`; verifies with regular expressions that blocks such as Sub/End Sub, If/End If and For/Next match). On failure, nothing is written or saved and an error is returned. VBA has no "API that returns whether compilation succeeded", so **semantic** compile errors such as duplicate declarations of undeclared variables, type mismatches and typos cannot be detected by this check (passing it does not mean it is syntactically completely correct).
 
-**既存シート・セル・ブックを上書き/更新する処理が正当な目的で必要な場合**（例:「集計結果を書き戻して」「実行のたびに元データを更新したい」）は、**上書き処理の直前に必ず別名バックアップ処理を含める**（`Save`/`Range.Value`書込等は`_check_dangerous_code`では検出されないため、LLMが自主的にこのパターンに従う）。
+**When processing that overwrites/updates existing sheets, cells or workbooks is needed for a legitimate purpose** (e.g. "write the totals back", "I want to update the source data on every run"), **always include processing that makes a backup under another name right before the overwriting** (`Save`/writing `Range.Value` etc. are not detected by `_check_dangerous_code`, so the LLM follows this pattern on its own).
 
 ```vba
 Sub UpdateData()
@@ -30,89 +30,89 @@ Sub UpdateData()
         "_backup_" & Format(Now, "yyyymmdd_hhnnss") & ".xlsm"
     ThisWorkbook.SaveCopyAs backupPath
 
-    ' ここから既存データを上書きする本処理
+    ' The main processing that overwrites existing data starts here
 End Sub
 ```
-`ThisWorkbook.SaveCopyAs`はブックを閉じずに現在の内容を別名保存でき、実行中マクロの状態に影響しない。バックアップ先は既定で`ThisWorkbook.Path`（ユーザー指定があればそれに従う）。
+`ThisWorkbook.SaveCopyAs` saves the current content under another name without closing the workbook and does not affect the state of the running macro. The backup location is `ThisWorkbook.Path` by default (follow the user's instructions if any).
 
-## 呼び出しと前提条件
+## Calling it and prerequisites
 
 ```bash
 python edit_vba.py "C:\Users\me\book.xlsm" --ops-json '[{"op": "set_code", "name": "Module1", "code": "Sub Foo()\nEnd Sub"}]'
 ```
-- 新規作成: 末尾に`--new`を追加（既存ファイルがあれば`--overwrite`も必須）。Excel COM経由で真のマクロ有効ブックを作るため、表データ・書式も入れたい場合は**このスキルの`--new`を先に実行してから**、excel-editスキルを`--new`なしで使ってシート・データを追記する（excel-editの`--new`を先に使うと中身がxlsx相当のマクロ無効ファイルになり、このスキルで開けなくなる）。VBAコードはまだ書かず器（マクロ有効ブック）だけ先に作りたい場合は`--ops-json`/`--ops-file`を省略してよい（`--new`指定時のみ省略可、省略時は`ops=[]`扱い）。
-- `--new`なしは対象パスを開いて編集（不在ならエラー）。
-- `--new`直後のシート構成は**「Sheet1」1枚のみ**（Excel COMの`Workbooks.Add()`が作る既定）。「Sheet1〜Sheet3の3枚」を前提にexcel-editスキルの`rename_sheet`等を組むと存在しないシート名でエラーになる。2枚目以降が必要なら先にexcel-editスキルの`add_sheet`で追加してからリネームすること。
-- `--output`省略で対象パスへ上書き保存（出力先拡張子は必ず`.xlsm`）。
-- VBAコードは複数行文字列になりやすいため、`--ops-json`直埋め込みより最初から`--ops-file <絶対パス>`（opsをJSON配列としてファイルへ書き出し、そのパスを渡す）を基本とする。
+- Creating new: add `--new` at the end (`--overwrite` is also required if the file exists). It creates a true macro-enabled workbook via Excel COM, so if you also want table data and formatting, **run this skill's `--new` first**, then use the excel-edit skill without `--new` to add sheets and data (using excel-edit's `--new` first makes the content an xlsx-equivalent macro-disabled file that this skill cannot open). If you want to create just the container (a macro-enabled workbook) first without writing VBA code yet, `--ops-json`/`--ops-file` can be omitted (only with `--new`; when omitted, treated as `ops=[]`).
+- Without `--new`, it opens the target path and edits it (an error if it does not exist).
+- Right after `--new`, the sheet structure is **only one sheet, "Sheet1"** (the default created by Excel COM's `Workbooks.Add()`). Building `rename_sheet` etc. of the excel-edit skill on the assumption of "3 sheets, Sheet1-Sheet3" gives errors for nonexistent sheet names. If you need a second sheet or more, add them first with `add_sheet` of the excel-edit skill and then rename them.
+- Omitting `--output` overwrites the target path (the output extension must be `.xlsm`).
+- VBA code tends to be a multi-line string, so instead of embedding it directly in `--ops-json`, use `--ops-file <absolute path>` from the start as the basic approach (write the ops as a JSON array to a file and pass its path).
 
 ```bash
 python -c "import json; json.dump([{'op': 'set_code', 'name': 'Module1', 'code': 'Sub Foo()\nEnd Sub'}], open('ops.json', 'w', encoding='utf-8'), ensure_ascii=False)"
 python edit_vba.py "C:\Users\me\book.xlsm" --ops-file "C:\Users\me\ops.json"
 ```
 
-### 引数一覧
+### Arguments
 
-| 引数 | 必須/任意 | 値の型 | 既定値 | 説明 |
+| Argument | Required/optional | Type | Default | Description |
 |---|---|---|---|---|
-| `path`（位置引数） | 必須 | 文字列（絶対パス） | - | `--new`なし時は編集対象の既存`.xlsm`。`--new`あり時は作成先（`--output`省略時の保存先そのもの） |
-| `--ops-json` | `--ops-file`と排他、`--new`時のみ省略可 | 文字列（JSON配列） | `--new`時省略で`[]` | opsをそのまま1行のJSON文字列で渡す |
-| `--ops-file` | `--ops-json`と排他、`--new`時のみ省略可 | 文字列（絶対パス） | `--new`時省略で`[]` | opsを書いたJSONファイルのパス |
-| `--new`（値なしフラグ） | 任意 | - | 付けない＝既存ファイル編集 | 既存ファイルを読まず新規のマクロ有効ブックとして作成する |
-| `--overwrite`（値なしフラグ） | 任意 | - | 付けない＝上書き拒否 | `--new`時、保存先（`--output`指定時はそちら、省略時は`path`）に既にファイルがあっても上書きすることを許可する |
-| `--output` | 任意 | 文字列（絶対パス、`.xlsm`必須） | 省略＝`path`へ保存 | 別名で保存したいときのみ指定 |
+| `path` (positional) | Required | String (absolute path) | - | Without `--new`, the existing `.xlsm` to edit. With `--new`, the path to create (the save destination itself when `--output` is omitted) |
+| `--ops-json` | Exclusive with `--ops-file`; can be omitted only with `--new` | String (JSON array) | `[]` when omitted with `--new` | Pass the ops as is as a one-line JSON string |
+| `--ops-file` | Exclusive with `--ops-json`; can be omitted only with `--new` | String (absolute path) | `[]` when omitted with `--new` | Path of a JSON file with the ops |
+| `--new` (flag without a value) | Optional | - | Not given = edit an existing file | Create a new macro-enabled workbook without reading an existing file |
+| `--overwrite` (flag without a value) | Optional | - | Not given = refuse to overwrite | With `--new`, allow overwriting even if a file already exists at the save destination (`--output` if given, otherwise `path`) |
+| `--output` | Optional | String (absolute path, `.xlsm` required) | Omitted = save to `path` | Specify only when you want to save under another name |
 
-前提条件（実行前に必ずユーザーへ伝える）:
-- **ローカルにMicrosoft Excelが導入され対話セッションから呼ばれている必要がある**（excel-recalcスキルと同じ制約）。
-- **Excelトラストセンターで「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」が有効である必要がある**（既定無効、プログラムから自動有効化不可）。未設定時は`workbook.VBProject`アクセス自体がエラーになり設定手順を含むメッセージが返るので、そのままユーザーに案内する（設定手順: Excelを開く→ファイル→オプション→トラストセンター→トラストセンターの設定→マクロの設定→「VBA プロジェクト オブジェクト モデルへのアクセスを信頼する」にチェック）。
-- 対象は`.xlsm`のみ（`.xls`/`.xlsx`非対応）。
-- **UserFormの作成・編集は対象外**（標準モジュール・クラスモジュール・ドキュメントモジュール(`ThisWorkbook`/シートモジュール)のみ対応）。
-- `run_macro`を含む呼び出しのみマクロ実行許可設定（`msoAutomationSecurityLow`）で開く。それ以外（`add_module`/`set_code`/`delete_module`のみ）はマクロ自動実行無効（`msoAutomationSecurityForceDisable`）で操作するため、編集中に`Workbook_Open`等が意図せず実行されることはない。
+Prerequisites (always tell the user before running):
+- **Microsoft Excel must be installed locally and it must be called from an interactive session** (the same constraint as the excel-recalc skill).
+- **"Trust access to the VBA project object model" must be enabled in the Excel Trust Center** (disabled by default; it cannot be enabled automatically by a program). When it is not set, accessing `workbook.VBProject` itself fails and a message including the setup steps is returned, so guide the user with it as is (setup steps: open Excel -> File -> Options -> Trust Center -> Trust Center Settings -> Macro Settings -> check "Trust access to the VBA project object model").
+- Only `.xlsm` is supported (`.xls`/`.xlsx` are not).
+- **Creating and editing UserForms is out of scope** (only standard modules, class modules and document modules (`ThisWorkbook`/sheet modules) are supported).
+- Only calls that include `run_macro` open the file with macro execution allowed (`msoAutomationSecurityLow`). Others (only `add_module`/`set_code`/`delete_module`) operate with automatic macro execution disabled (`msoAutomationSecurityForceDisable`), so `Workbook_Open` etc. never run unintentionally while editing.
 
-## opsの一覧
+## List of ops
 
-| op | 必須 | 任意 | 説明 |
+| op | Required | Optional | Description |
 |---|---|---|---|
-| `add_module` | `name` | `code`(既定`""`＝空モジュール)、`type`(既定`standard`。`standard`/`class`) | 標準/クラスモジュールを新規追加。同名既存はエラー |
-| `set_code` | `name`,`code` | - | 既存モジュール（`ThisWorkbook`等含む）を**全文置換** |
-| `find_replace` | `name`,`old_code`,`new_code` | - | 一部コード（`old_code`）を`new_code`に置換（差分パッチ）。`old_code`が非一意（0件/複数件）ならエラー |
-| `replace_procedure` | `name`,`procedure`,`code` | `kind`(`sub`/`property_get`/`property_let`/`property_set`。省略時自動判別) | 指定Sub/Function/Propertyだけを丸ごと置換 |
-| `insert_code` | `name`,`code` | `position`(既定`end`。`end`/`start`/行番号) | 既存コードに触れず新規コードを追加 |
-| `delete_module` | `name` | - | モジュール削除（ドキュメントモジュールは削除不可でエラー） |
-| `run_macro` | `name` | `args`(配列) | 指定マクロを実行。戻り値があれば`results`配列に入る |
+| `add_module` | `name` | `code` (default `""` = empty module), `type` (default `standard`; `standard`/`class`) | Add a new standard/class module. An error if one with the same name exists |
+| `set_code` | `name`,`code` | - | **Replace the whole text** of an existing module (including `ThisWorkbook` etc.) |
+| `find_replace` | `name`,`old_code`,`new_code` | - | Replace part of the code (`old_code`) with `new_code` (a diff patch). An error if `old_code` is not unique (0 or several matches) |
+| `replace_procedure` | `name`,`procedure`,`code` | `kind` (`sub`/`property_get`/`property_let`/`property_set`; detected automatically if omitted) | Replace only the specified Sub/Function/Property as a whole |
+| `insert_code` | `name`,`code` | `position` (default `end`; `end`/`start`/a line number) | Add new code without touching the existing code |
+| `delete_module` | `name` | - | Delete a module (document modules cannot be deleted; an error) |
+| `run_macro` | `name` | `args` (array) | Run the specified macro. Return values, if any, go into the `results` array |
 
-**`run_macro`で実行するマクロに`MsgBox`/`InputBox`を含めない。** 対話セッションが無い自動化実行のためダイアログを誰も閉じられず、スクリプトタイムアウト（既定300秒）まで丸ごとハングし、その後Excelプロセスが残留する（2026-08-22に同一セッション内で3回実機確認）。**`run_macro`は`Application.Run`を呼ぶ前に対象プロシージャのコードを静的チェックし、`MsgBox`/`InputBox`が含まれていれば実行前にエラーで拒否する**（ハングそのものは起きない設計になった）。エラーが出たら`MsgBox`/`InputBox`を削除するか`Debug.Print`/戻り値に置き換えて再送する（対症療法で同じコードを送り直さない）。進捗表示は最初から`MsgBox`ではなく`Debug.Print`か戻り値で行うこと。`Buttons.Add`等の図形・フォームコントロール操作は上記の静的チェック対象外だがハングしやすい報告があるため避ける（ボタン配置が必要な場合は、`run_macro`を使わずマクロのコードだけ書いて実行はユーザーに委ねる）。
+**Do not include `MsgBox`/`InputBox` in macros run with `run_macro`.** In automated runs without an interactive session nobody can close the dialog, so the whole thing hangs until the script timeout (default 300 seconds), and then the Excel process is left behind (confirmed 3 times in the same session on 2026-08-22). **Before calling `Application.Run`, `run_macro` statically checks the code of the target procedure, and refuses with an error before running if it contains `MsgBox`/`InputBox`** (so the hang itself no longer happens). If you get that error, remove `MsgBox`/`InputBox` or replace them with `Debug.Print`/a return value and send it again (do not resend the same code as a stopgap). Show progress with `Debug.Print` or a return value from the start, not `MsgBox`. Operations on shapes and form controls such as `Buttons.Add` are not covered by the static check above, but they are reported to hang easily, so avoid them (if a button is needed, write only the macro code without using `run_macro` and leave running it to the user).
 
-**それでも`run_macro`が300秒でタイムアウトした場合、または`保存処理は例外を出さずに完了しましたが、ファイルの更新時刻が変化していません`というエラーが出た場合、Excelプロセスの残留が疑われる。** このときは`taskkill`や`psutil`を自分で組み立てて実行しない（PID番号やイメージ名フィルタを自分で判断させると、無関係なExcelウィンドウを巻き込む事故につながるため技術的に禁止されている操作。2026-08-23にこの事故が実際に発生した）。代わりに次を実行する:
+**If `run_macro` still times out after 300 seconds, or you get the error "Saving finished without an exception, but the file's modification time did not change", an Excel process may have been left behind.** In that case, do not build and run `taskkill` or `psutil` yourself (letting it decide PID numbers or image name filters by itself leads to accidents involving unrelated Excel windows, so this is a technically forbidden operation; this accident actually happened on 2026-08-23). Instead, run:
 
 ```bash
 python edit_vba.py --recover-locks
 ```
 
-`path`もopsも不要（指定しても無視される）。このコマンドは、自セッションが`edit_vba.py`/`recalc_excel.py`/excel-render・pptx-render・docx-renderで起動して残留したCOMプロセスのうち、まだ生存しているものだけを内部で直接終了する（PID番号を引数に取らない設計のため、無関係なプロセスを誤って終了する余地が無い）。実行後の`{"recovered": [...]}`に終了したPID一覧が入る。終了後は`MsgBox`等ハングの原因を修正してから再実行すること。
+Neither `path` nor ops are needed (ignored if given). This command directly terminates, internally, only those COM processes started by this session with `edit_vba.py`/`recalc_excel.py`/excel-render, pptx-render, docx-render that were left behind and are still alive (it is designed not to take PID numbers as arguments, so there is no way for it to terminate unrelated processes by mistake). Afterwards, `{"recovered": [...]}` holds the list of terminated PIDs. After that, fix the cause of the hang, such as `MsgBox`, before running again.
 
-**`set_code`は必ずモジュール全文が必要。** 長いモジュールで一部だけ変更したい場合、全文渡し方式は低パラメータLLMほど「一部のつもりが無関係な部分を欠落・改変する」事故が起きやすい。**既存モジュールの一部変更は必ず差分系opを優先する**（`set_code`は総入れ替えの場合のみ）:
+**`set_code` always needs the whole text of the module.** When you want to change only part of a long module, passing the whole text makes accidents of "meant to change one part but dropped or altered unrelated parts" more likely the smaller the LLM. **For partial changes to existing modules, always prefer the diff ops** (`set_code` only for complete replacement):
 
-| 変更したい範囲 | 使うop |
+| Range you want to change | op to use |
 |---|---|
-| 数行〜1つの式・条件式 | `find_replace`（`old_code`はexcel-vba-readスキルで取得したコードから一意な範囲をそのままコピー。改行コードCRLF/LFの違いは自動吸収） |
-| 1つのSub/Function/Propertyの中身丸ごと | `replace_procedure`（プロシージャ外の他コードは渡さなくてよい） |
-| 既存コードは変えず新規Sub/Functionを追加 | `insert_code`（既存コードのやり取り不要） |
+| A few lines to one expression or condition | `find_replace` (copy a unique range for `old_code` as is from the code obtained with the excel-vba-read skill; differences between CRLF/LF line endings are absorbed automatically) |
+| The whole content of one Sub/Function/Property | `replace_procedure` (no need to pass other code outside the procedure) |
+| Add a new Sub/Function without changing existing code | `insert_code` (no need to exchange the existing code) |
 
-出力: `{"path":..., "backup_path": null, "applied_ops": 2, "results": [3]}`。`results`は戻り値ありop（`run_macro`でFunction実行時等）の結果のみ発生順に入る。`backup_path`は保存先に既にファイルがあった場合、上書き直前にタイムスタンプ付きでコピーした先の絶対パス（無ければ`null`）。
+Output: `{"path":..., "backup_path": null, "applied_ops": 2, "results": [3]}`. `results` holds, in order of occurrence, only the results of ops with return values (such as running a Function with `run_macro`). `backup_path` is the absolute path of the timestamped copy made right before overwriting when a file already existed at the save destination (`null` if none).
 
-## 手順とエッジケース
+## Procedure and edge cases
 
-1. コードを書く前にexcel-vba-readスキルの`read_vba.py`でモジュール一覧・既存コードを確認する。
-2. 既存モジュールへの変更は基本`find_replace`/`replace_procedure`/`insert_code`のいずれか（`set_code`は全体書き直し時のみ）。
-3. 別名で保存したい場合のみ`--output`を追加する（省略時は`path`へ上書き保存）。
-4. 上記コマンドを実行する。
-5. `--new`使用時に保存先（`--output`指定時はそちら、省略時は`path`）が既存で上書き可否不明なら`--overwrite`なしで一度実行しエラーからユーザーに確認する。
+1. Before writing code, check the module list and existing code with `read_vba.py` of the excel-vba-read skill.
+2. Changes to existing modules are basically one of `find_replace`/`replace_procedure`/`insert_code` (`set_code` only when rewriting everything).
+3. Add `--output` only when you want to save under another name (if omitted, `path` is overwritten).
+4. Run the command above.
+5. When using `--new`, if the save destination (`--output` if given, otherwise `path`) exists and it is unclear whether overwriting is OK, run once without `--overwrite` and confirm with the user based on the error.
 
-エッジケース: 拡張子が`.xlsm`でない／保存先拡張子が`.xlsm`でない／opsがJSON配列でない／opに`op`キーなし／存在しないモジュール指定／UserFormを`add_module`の`type`や`set_code`等の対象に指定／ドキュメントモジュールを`delete_module`／`add_module`で既存モジュール名指定／`find_replace`の`old_code`が0件・複数件一致／`replace_procedure`の`procedure`未検出、はいずれもエラー＋終了コード1（何番目のどのopが失敗したかメッセージに含まれる）。危険API（`Kill`等）検出時は「危険なVBA API（...）が含まれているため、このコードは書き込めません」＋終了コード1（コード修正で再送せずまずユーザーに目的確認）。構文チェック失敗時は「VBAコードの構文が不正な可能性があります（...）」＋終了コード1（`#If`等の条件付きコンパイルやコロン複文、意味的エラーは取りこぼすが誤って正しいコードを拒否するリスクは低い設計。メッセージに従い修正して再送。**このチェックを通っても意味的コンパイルエラーが残っている可能性はこのスキルでは検出不可**）。トラストセンター未設定エラーは上記の設定手順をそのまま案内する。`pywin32`未導入は`ImportError`（該当する`pip install pywin32`をユーザーに促す）。ExcelのCOMエラーは「VBAの編集に失敗しました: ...」＋終了コード1。強制終了時はEXCEL.EXE残留の可能性あり（タスクマネージャーでの手動終了が必要）。`run_macro`対象のプロシージャに`MsgBox`/`InputBox`検出時は「マクロ'...'に(MsgBox|InputBox)が含まれているため実行を中止しました」＋終了コード1（`Application.Run`呼び出し自体をスキップするためハングしない。ファイルは変更されないまま正常終了処理に入る。コード修正して再送）。
+Edge cases: the extension is not `.xlsm` / the output extension is not `.xlsm` / ops is not a JSON array / an op without an `op` key / specifying a nonexistent module / specifying a UserForm as the `type` of `add_module` or the target of `set_code` etc. / `delete_module` on a document module / `add_module` with an existing module name / `old_code` of `find_replace` matching 0 or several places / the `procedure` of `replace_procedure` not found — all are errors with exit code 1 (the message includes which op, at which position, failed). When a dangerous API (`Kill`, etc.) is detected: "This code cannot be written because it contains a dangerous VBA API (...)" with exit code 1 (do not fix the code and resend; first confirm the purpose with the user). When the syntax check fails: "The VBA code may have invalid syntax (...)" with exit code 1 (conditional compilation such as `#If`, colon-separated statements and semantic errors are missed, but it is designed with a low risk of wrongly refusing correct code. Fix it as the message says and resend. **Even if it passes this check, remaining semantic compile errors cannot be detected by this skill**). For the Trust Center not being set, guide the user with the setup steps above as is. Missing `pywin32` gives `ImportError` (prompt the user to run `pip install pywin32`). Excel COM errors give "Editing VBA failed: ..." with exit code 1. On forced termination EXCEL.EXE may be left behind (manual termination in Task Manager is needed). When `MsgBox`/`InputBox` is detected in the procedure targeted by `run_macro`: "Running was aborted because macro '...' contains (MsgBox|InputBox)" with exit code 1 (the `Application.Run` call itself is skipped, so it does not hang. The file stays unchanged and the normal termination processing runs. Fix the code and resend).
 
-## 禁止事項
+## Prohibitions
 
-- ファイル・フォルダの削除、外部コマンド・プロセス実行、レジストリ読み書き、他アプリの起動・操作、ネットワーク経由のダウンロード＆実行を行うVBAコードを生成する。
-- 危険API検出エラーが出たコードを、目的確認なしにそのまま修正して再送する。
-- `--new`かつ`--overwrite`なしで既存ファイルへ強制上書きする（エラーになった場合はユーザーに上書き可否を確認してから再実行する）。
+- Generating VBA code that deletes files/folders, runs external commands/processes, reads/writes the registry, starts or operates other apps, or downloads and runs things over the network.
+- Fixing code that got a dangerous API detection error and sending it again as is without confirming the purpose.
+- Forcibly overwriting an existing file with `--new` and without `--overwrite` (if it errors, confirm with the user whether overwriting is OK before running again).

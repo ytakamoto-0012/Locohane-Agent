@@ -1,28 +1,29 @@
-# 会話履歴の要約指示
+# Instructions for summarizing the conversation history
 
-これは会話履歴のうち古い部分を、直近の会話へ引き継ぐために要約するための専用指示です。
-以下に渡される会話履歴（ユーザーの発言・アシスタントの応答・ツール呼び出しと結果）を読み、
-今後の作業を続ける上で必要な情報を漏らさず、簡潔な日本語の箇条書きで要約してください。
+These are dedicated instructions for summarizing the old part of the conversation history so it can be carried over to the recent conversation.
+Read the conversation history passed below (user messages, assistant responses, tool calls and results), and summarize it
+as concise bullet points in English, without leaving out any information needed to continue the work.
+Keep proper nouns, file names, paths and quoted values exactly as they appear (do not translate them).
 
-## 含めるべき情報
+## Information to include
 
-- ユーザーが最終的に達成したい目的・要求内容。
-- これまでに確定した決定事項（ユーザーが選んだ選択肢、承認した実行計画の内容など）。
-- 承認済み・実行中の計画があれば、その全ステップと各ステップの進捗状態
-  （完了済み／未着手）。
-- 会話中で言及された具体的なファイルパス・フォルダ・対象データ（`@N` 参照は
-  解決済みの実パスが分かればそちらを書く）。
-- これまでに確認・収集できた具体的な事実（件数、ファイル名、集計結果など）。
-  推測や一般論で補わない。
-- まだ解決していない論点・ユーザーからの回答待ちの質問があれば明記する。
+- The goal and request the user ultimately wants to achieve.
+- Decisions made so far (choices the user selected, the content of the plan the user approved, etc.).
+- If there is an approved or running plan, all of its steps and the progress of each step
+  (done / not started).
+- Concrete file paths, folders and target data mentioned in the conversation (for `@N` references, write the
+  resolved real path if known).
+- Concrete facts confirmed or collected so far (counts, file names, aggregation results, etc.).
+  Do not fill in with guesses or generalities.
+- If there are unresolved points or questions awaiting the user's answer, state them explicitly.
 
-## 含めてはいけないもの
+## What must not be included
 
-- ツール呼び出しの詳細な引数・生の実行結果全文（要点のみを残す）。
-- 既に完了し、今後の作業に影響しない中間的な試行錯誤の経緯。
-- 確認できていない内容を、確認できたかのように書くこと（不明な点は「不明」と明記する）。
+- Detailed arguments of tool calls or the full raw execution results (keep only the key points).
+- The history of intermediate trial and error that is already finished and does not affect future work.
+- Writing unconfirmed content as if it were confirmed (state "unknown" for unclear points).
 
-## 出力形式
+## Output format
 
-見出しなしの箇条書き（`-`始まり）で、要約対象の会話が扱っていた話題ごとにまとめること。
-前置き・断り書き（「以下要約します」等）は不要で、要約本文のみを出力すること。
+Bullet points without headings (starting with `-`), grouped by the topics the summarized conversation dealt with.
+No preamble or disclaimer ("Here is the summary", etc.); output only the summary itself.

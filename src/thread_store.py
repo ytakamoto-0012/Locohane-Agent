@@ -235,7 +235,7 @@ def _remove_thread_elements_dir(elements_dir: Path, thread_id: str) -> None:
     try:
         shutil.rmtree(thread_dir, ignore_errors=True)
     except OSError:
-        logger.warning("要素ディレクトリの削除に失敗: %s", thread_dir, exc_info=True)
+        logger.warning("Failed to delete the elements directory: %s", thread_dir, exc_info=True)
 
 
 async def delete_thread_row(conn: aiosqlite.Connection, thread_id: str, elements_dir: Path | None = None) -> None:
@@ -385,7 +385,7 @@ async def _read_element_bytes(element: Any) -> bytes | None:
         try:
             return await asyncio.to_thread(Path(path).read_bytes)
         except OSError:
-            logger.exception("要素ファイルの読み込みに失敗しました: path=%s", path)
+            logger.exception("Failed to read the element file: path=%s", path)
             return None
     content = getattr(element, "content", None)
     if isinstance(content, (bytes, bytearray)):
@@ -485,7 +485,7 @@ async def delete_element_row(conn: aiosqlite.Connection, element_id: str, thread
         try:
             Path(row["file_path"]).unlink(missing_ok=True)
         except OSError:
-            logger.warning("要素ファイルの削除に失敗: %s", row["file_path"], exc_info=True)
+            logger.warning("Failed to delete the element file: %s", row["file_path"], exc_info=True)
 
 
 async def get_elements_for_thread(conn: aiosqlite.Connection, thread_id: str, kind: str = "chainlit") -> list[dict]:
@@ -542,7 +542,7 @@ async def cleanup_old_threads(
     if thread_ids:
         await conn.execute("DELETE FROM threads WHERE updated_at < ?", (cutoff_iso,))
         await conn.commit()
-        logger.info("期限切れのスレッドを削除: %d件", len(thread_ids))
+        logger.info("Deleted expired threads: %d", len(thread_ids))
         if elements_dir is not None:
             for thread_id in thread_ids:
                 _remove_thread_elements_dir(elements_dir, thread_id)
@@ -628,7 +628,7 @@ class ChatThreadDataLayer(BaseDataLayer):
             # ここで捕捉し損ねると診断ログが一切残らないまま要素が消失する。
             # OSError（ファイルI/O）以外にaiosqlite.Error（DB書き込み）等も
             # 起こりうるため、ファイル/DBを問わず全例外を対象にする。
-            logger.exception("要素ファイルの永続化に失敗しました: id=%s", element.id)
+            logger.exception("Failed to persist the element file: id=%s", element.id)
 
     async def get_element(self, thread_id: str, element_id: str):
         row = await get_element_row(self._conn, element_id, thread_id)

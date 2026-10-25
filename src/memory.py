@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # 4種類のメモリータイプ（サブディレクトリ名でもある）。
 MEMORY_TYPES = ("user", "feedback", "project", "reference")
 
-# name 検証ルール: 英数字・ハイフン・アンダースコアのみ、1〜64文字。
+# name 検証ルール: ASCII の英数字・ハイフン・アンダースコアのみ、1〜64文字（ファイル名として安全にするため）。
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _NAME_MAX = 64
 
@@ -75,14 +75,15 @@ def _validate_name(name: str) -> None:
     """name がスラッグとして安全かを検証する。不正なら ValueError。"""
     if not name or len(name) > _NAME_MAX or not _NAME_RE.match(name):
         raise ValueError(
-            f"name は英数字・ハイフン・アンダースコアのみ、{_NAME_MAX}文字以内で指定してください: {name}"
+            f"name must be an ASCII slug: ASCII letters (a-z, A-Z), digits, hyphens and underscores, "
+            f"up to {_NAME_MAX} characters: {name}"
         )
 
 
 def _validate_type(memory_type: str) -> None:
     """memory_type が既定の4種のいずれかかを検証する。不正なら ValueError。"""
     if memory_type not in MEMORY_TYPES:
-        raise ValueError(f"memory_type は {MEMORY_TYPES} のいずれかを指定してください: {memory_type}")
+        raise ValueError(f"memory_type must be one of {MEMORY_TYPES}: {memory_type}")
 
 
 def _safe_memory_path(memory_root: Path, memory_type: str, name: str) -> Path:
@@ -109,7 +110,7 @@ def _safe_memory_path(memory_root: Path, memory_type: str, name: str) -> Path:
     root = memory_root.resolve()
     candidate = (root / memory_type / f"{name}.md").resolve()
     if not candidate.is_relative_to(root):
-        raise ValueError(f"memory ディレクトリ外へのアクセスは許可されません: {name}")
+        raise ValueError(f"Access outside the memory directory is not allowed: {name}")
     return candidate
 
 
@@ -136,7 +137,7 @@ def _split_frontmatter(text: str) -> tuple[dict | None, str]:
     try:
         data = yaml.safe_load(parts[1])
     except yaml.YAMLError as e:
-        logger.warning("メモリー frontmatter の YAML パースに失敗: %s", e)
+        logger.warning("Failed to parse memory frontmatter YAML: %s", e)
         return None, text
     if not isinstance(data, dict):
         return None, text
@@ -166,13 +167,13 @@ def _load(path: Path) -> Memory | None:
     text = path.read_text(encoding="utf-8")
     frontmatter, body = _split_frontmatter(text)
     if frontmatter is None:
-        logger.warning("メモリー frontmatter を読めないためスキップ: %s", path)
+        logger.warning("Skipping because the memory frontmatter cannot be read: %s", path)
         return None
     name = frontmatter.get("name")
     description = frontmatter.get("description")
     memory_type = frontmatter.get("type")
     if not isinstance(name, str) or not isinstance(description, str) or memory_type not in MEMORY_TYPES:
-        logger.warning("メモリーの frontmatter が不正なためスキップ: %s", path)
+        logger.warning("Skipping because the memory frontmatter is invalid: %s", path)
         return None
     return Memory(name=name, description=description, memory_type=memory_type, content=body.rstrip("\n"), path=path)
 
@@ -216,11 +217,11 @@ def rebuild_index(memory_root: Path) -> None:
     lines = [
         "# MEMORY.md",
         "",
-        "永続メモリーの索引。create_memory/update_memory/delete_memory 実行時に自動再構築される。",
+        "Index of persistent memories. Rebuilt automatically by create_memory/update_memory/delete_memory.",
         "",
     ]
     if not memories:
-        lines.append("（保存されているメモリーはありません）")
+        lines.append("(no memories saved)")
     else:
         for mem in memories:
             entry = f"- [{mem.memory_type}] {mem.name}: {mem.description}"
@@ -246,12 +247,12 @@ def create_memory(memory_root: Path, name: str, description: str, memory_type: s
             または同名のメモリーが既に存在する場合。
     """
     if not description.strip():
-        raise ValueError("description が空です")
+        raise ValueError("description is empty")
     if not content.strip():
-        raise ValueError("content が空です")
+        raise ValueError("content is empty")
     path = _safe_memory_path(memory_root, memory_type, name)
     if _find_memory(memory_root, name) is not None:
-        raise ValueError(f"同名のメモリーが既に存在します: {name}（更新するには update_memory を使ってください）")
+        raise ValueError(f"A memory with the same name already exists: {name} (use update_memory to update it)")
     ensure_dirs(memory_root)
     now = _now()
     path.write_text(
@@ -278,10 +279,10 @@ def update_memory(memory_root: Path, name: str, content: str) -> Path:
         ValueError: content が空、または name のメモリーが存在しない場合。
     """
     if not content.strip():
-        raise ValueError("content が空です")
+        raise ValueError("content is empty")
     mem = _find_memory(memory_root, name)
     if mem is None:
-        raise ValueError(f"メモリーが見つかりません: {name}")
+        raise ValueError(f"Memory not found: {name}")
     frontmatter, _ = _split_frontmatter(mem.path.read_text(encoding="utf-8"))
     created = frontmatter.get("created") if frontmatter else None
     mem.path.write_text(
@@ -308,7 +309,7 @@ def delete_memory(memory_root: Path, name: str) -> Path:
     """
     mem = _find_memory(memory_root, name)
     if mem is None:
-        raise ValueError(f"メモリーが見つかりません: {name}")
+        raise ValueError(f"Memory not found: {name}")
     mem.path.unlink()
     rebuild_index(memory_root)
     logger.info("delete_memory: name=%s", name)
@@ -330,7 +331,7 @@ def read_memory(memory_root: Path, name: str) -> Memory:
     """
     mem = _find_memory(memory_root, name)
     if mem is None:
-        raise ValueError(f"メモリーが見つかりません: {name}")
+        raise ValueError(f"Memory not found: {name}")
     return mem
 
 
@@ -349,7 +350,7 @@ def search_memories(memory_root: Path, query: str, memory_type: str | None = Non
         ValueError: query が空、または memory_type が不正な値の場合。
     """
     if not query.strip():
-        raise ValueError("query が空です")
+        raise ValueError("query is empty")
     if memory_type is not None:
         _validate_type(memory_type)
     needle = query.lower()
@@ -395,12 +396,12 @@ def render_memory_block(memory_root: Path, max_lines: int = _INDEX_MAX_LINES) ->
     """
     index_path = memory_root / _INDEX_FILENAME
     if not index_path.is_file():
-        return "（保存されているメモリーはありません）"
+        return "(no memories saved)"
     lines = index_path.read_text(encoding="utf-8").splitlines()
     if len(lines) > max_lines:
         lines = lines[:max_lines] + [
             "",
-            f"…（{max_lines}行を超えたため以降は切り詰められました。詳細は list_memories / search_memory で確認してください）",
+            f"... (truncated after {max_lines} lines; check details with list_memories / search_memory)",
         ]
     text = "\n".join(lines).strip()
-    return text or "（保存されているメモリーはありません）"
+    return text or "(no memories saved)"

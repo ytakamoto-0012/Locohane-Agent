@@ -1,85 +1,85 @@
-# よくある落とし穴
+# Common pitfalls
 
-## Range と Cells の使い分け・シート省略の罠
+## Range vs Cells, and the trap of omitting the sheet
 
-`Cells(i, j)` は列も行も数値で指定できるためループと相性が良いが、
-`With` を使わずシート指定を省略すると**アクティブシートに対して実行される**。
-複数シートを扱うマクロでこれが原因の誤爆（意図しないシートを書き換える）が多発する。
+`Cells(i, j)` takes both row and column as numbers, so it goes well with loops, but
+if you omit the sheet without `With`, **it runs against the active sheet**.
+In macros that handle several sheets, this causes frequent misfires (rewriting an unintended sheet).
 
 ```vb
-' 危険: どのシートに対する操作か省略時は不明瞭（アクティブシート依存）
+' Dangerous: when omitted, it is unclear which sheet it operates on (depends on the active sheet)
 Cells(1, 1).Value = "x"
 
-' 安全: With でシートを明示
+' Safe: state the sheet explicitly with With
 With ThisWorkbook.Worksheets("Data")
     .Cells(1, 1).Value = "x"
     .Range("B1:B10").ClearContents
 End With
 ```
 
-`.Cells` の手前のピリオドを書き忘れると `With` の効果が及ばずアクティブシートに
-飛ぶ（コンパイルエラーにならないため気づきにくい）。
+If you forget the period before `.Cells`, the `With` does not apply and it goes to the active sheet
+(hard to notice, since it is not a compile error).
 
-## Dim の暗黙 Variant とスコープ
+## The implicit Variant of Dim, and scope
 
 ```vb
-Dim i, j As Long   ' i は Variant、j だけ Long（VBAはカンマ区切りで型指定が個別）
+Dim i, j As Long   ' i is Variant, only j is Long (in VBA each comma-separated variable has its own type)
 ```
 
-1行にまとめて宣言する場合、**型は変数ごとに書かないと先頭側が Variant になる**。
-意図せず Variant のままループカウンタに使うと、型不一致のパフォーマンス低下や
-比較演算での予期しない挙動につながる。
+When declaring several variables on one line, **unless you write the type for each variable, the earlier ones become Variant**.
+Using an unintended Variant as a loop counter leads to performance loss from type mismatches and
+unexpected behavior in comparisons.
 
-## 早期バインディング と 遅延バインディング（CreateObject）
+## Early binding vs late binding (CreateObject)
 
-- 早期バインディング: VBEの「参照設定」でライブラリ（例: `Microsoft Scripting Runtime`）
-  を追加し `Dim fso As Scripting.FileSystemObject` のように型を直接書く。
-  補完・型チェックが効くが、**配布先PCで同じライブラリのバージョン/インストール状況が
-  異なると `参照エラー`（コンパイルエラー）になる**。
-- 遅延バインディング: `Dim fso As Object` + `Set fso = CreateObject("Scripting.FileSystemObject")`。
-  実行時にオブジェクトを解決するため配布先の参照設定に依存しないが、補完が効かず
-  タイプミスに気づきにくい。
+- Early binding: add the library (e.g. `Microsoft Scripting Runtime`) in VBE's "References"
+  and write the type directly, like `Dim fso As Scripting.FileSystemObject`.
+  Completion and type checks work, but **if the version/installation of the same library differs on the PCs it is
+  distributed to, it becomes a `reference error` (compile error)**.
+- Late binding: `Dim fso As Object` + `Set fso = CreateObject("Scripting.FileSystemObject")`.
+  The object is resolved at run time, so it does not depend on the references on the target PC, but completion does not work and
+  typos are hard to notice.
 
-**社内配布するマクロは基本、遅延バインディングを使う**（実行環境のライブラリ有無を
-制御できないため）。開発中だけ参照設定で早期バインディングし、完成後に
-`CreateObject` へ置き換える運用も多い。
+**Macros distributed within a company should basically use late binding** (you cannot control whether the libraries
+exist in the execution environment). It is also common to use early binding with references only during development,
+then replace it with `CreateObject` when done.
 
-## 配列の下限（LBound）は常に0とは限らない
+## The lower bound of arrays (LBound) is not always 0
 
-`Range.Value` で取得した配列は1始まり（[[performance-tips]] 参照）だが、
-`Array(1,2,3)` や `Dim arr(5)` のような通常のVBA配列は**モジュール先頭の
-`Option Base` 宣言（既定は0）**に依存する。`Option Base 1` が書かれたモジュールを
-コピペで混在させると `LBound` の想定がずれてインデックスエラーの原因になる。
-決め打ちでインデックスを書かず、必ず `LBound(arr)`〜`UBound(arr)` でループする。
+Arrays obtained with `Range.Value` are 1-based (see [[performance-tips]]), but
+normal VBA arrays such as `Array(1,2,3)` or `Dim arr(5)` depend on **the `Option Base` declaration at the top of the module
+(default 0)**. Mixing in modules with `Option Base 1` by copy and paste shifts the
+`LBound` assumption and causes index errors.
+Do not hard-code indexes; always loop from `LBound(arr)` to `UBound(arr)`.
 
-## 文字列比較の大小文字・全半角
+## Case and full/half width in string comparison
 
-既定の `=` 比較は `Option Compare` 設定に依存する（既定は `Binary` で大文字小文字を
-区別）。ユーザー入力やセル値の比較で大文字小文字を無視したい場合は
-`StrComp(a, b, vbTextCompare) = 0` を使うか、モジュール先頭に
-`Option Compare Text` を宣言する（モジュール単位で影響が及ぶ点に注意）。
+The default `=` comparison depends on the `Option Compare` setting (the default `Binary` is case-sensitive).
+To ignore case when comparing user input or cell values,
+use `StrComp(a, b, vbTextCompare) = 0`, or declare `Option Compare Text` at the top of the module
+(note that it affects the whole module).
 
-## Range.Value と Range.Value2 と Range.Text の違い
+## The difference between Range.Value, Range.Value2 and Range.Text
 
-- `.Value`: 表示形式を考慮した型付きの値（日付はDate型等）。既定でこれを使えばよい。
-- `.Value2`: 日付や通貨をDouble等の生値で返す（Currency/Date型を経由しない分わずかに高速。
-  大量セル読み取りの最適化余地として覚えておく）。
-- `.Text`: セルに**表示されている文字列そのまま**（書式適用後）。値の取得目的では
-  使わない（列幅不足で `###` になっている場合等、意図しない文字列を拾う）。
+- `.Value`: a typed value that takes the number format into account (dates are Date, etc.). Using this by default is fine.
+- `.Value2`: returns dates and currency as raw values such as Double (slightly faster since it skips Currency/Date;
+  remember it as room for optimizing reading many cells).
+- `.Text`: **the string as displayed in the cell** (after formatting). Do not use it to get values
+  (it picks up unintended strings, e.g. `###` when the column is too narrow).
 
-## 遅延評価されない Do While / Loop の無限ループ
+## Infinite loops in Do While / Loop
 
-条件変数をループ内で更新し忘れる典型ミスに加え、`Range.Find` を使ったループで
-「最初に見つけたセルまで一周したら停止する」処理を書く際、開始位置の記録を
-忘れると無限ループになりやすい。
+Besides the typical mistake of forgetting to update the condition variable inside the loop, when writing a loop with
+`Range.Find` that "stops after going around to the first cell found", forgetting to record the starting position
+easily causes an infinite loop.
 
 ```vb
 Dim firstAddr As String
-Set c = Range("A:A").Find("キー")
+Set c = Range("A:A").Find("key")
 If Not c Is Nothing Then
     firstAddr = c.Address
     Do
-        ' ... c を使った処理 ...
+        ' ... processing using c ...
         Set c = Range("A:A").FindNext(c)
     Loop While Not c Is Nothing And c.Address <> firstAddr
 End If

@@ -28,7 +28,7 @@ from pathlib import Path
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
 if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
-from pptx_common import backup_before_overwrite, register_output_path, setup_utf8_stdio  # noqa: E402
+from pptx_common import backup_before_overwrite, read_text_with_fallback, register_output_path, setup_utf8_stdio  # noqa: E402
 from office_theme import CHART_PALETTE, THEMES, resolve_theme  # noqa: E402
 from pptx import Presentation
 from pptx.chart.data import CategoryChartData
@@ -60,7 +60,7 @@ UNSUPPORTED_DUPLICATE_TYPES = {
 def _require(op: dict, key: str):
     value = op.get(key)
     if value is None:
-        raise ValueError(f"'{key}' が必要です")
+        raise ValueError(f"'{key}' is required")
     return value
 
 
@@ -89,10 +89,10 @@ class EditContext:
         idx = int(slide_num) - 1
         total = len(self._original_slide_elements)
         if idx < 0 or idx >= total:
-            raise ValueError(f"存在しないスライド番号です: {slide_num}（このopsバッチ開始時点の総スライド数: {total}）")
+            raise ValueError(f"Slide number does not exist: {slide_num} (total slides at the start of this ops batch: {total})")
         element = self._original_slide_elements[idx]
         if element not in list(self.prs.slides._sldIdLst):
-            raise ValueError(f"スライド{slide_num}は、この呼び出し内の先行する操作（delete_slide等）で" "既に削除されています")
+            raise ValueError(f"Slide {slide_num} was already deleted by an earlier operation in this call (delete_slide, etc.)")
         return element
 
     def get_slide(self, slide_num: int):
@@ -113,7 +113,7 @@ def _get_shape(slide, shape_index: int):
     shapes = list(slide.shapes)
     idx = int(shape_index)
     if idx < 0 or idx >= len(shapes):
-        raise ValueError(f"存在しないshape_indexです: {shape_index}（このスライドのshape数: {len(shapes)}）")
+        raise ValueError(f"shape_index does not exist: {shape_index} (number of shapes on this slide: {len(shapes)})")
     return shapes[idx]
 
 
@@ -137,7 +137,7 @@ def _set_bullets(text_frame, bullets: list) -> None:
 def op_set_title(ctx: EditContext, op: dict) -> None:
     slide = ctx.get_slide(_require(op, "slide"))
     if slide.shapes.title is None:
-        raise ValueError("このスライドにタイトルプレースホルダがありません")
+        raise ValueError("This slide has no title placeholder")
     slide.shapes.title.text = str(op.get("text", ""))
 
 
@@ -145,7 +145,7 @@ def op_set_text(ctx: EditContext, op: dict) -> None:
     slide = ctx.get_slide(_require(op, "slide"))
     shape = _get_shape(slide, _require(op, "shape_index"))
     if not shape.has_text_frame:
-        raise ValueError(f"shape_index {op['shape_index']} はテキストを持てないshapeです")
+        raise ValueError(f"shape_index {op['shape_index']} is a shape that cannot hold text")
     bullets = _require(op, "bullets")
     _set_bullets(shape.text_frame, bullets)
 
@@ -154,12 +154,12 @@ def op_set_table_cell(ctx: EditContext, op: dict) -> None:
     slide = ctx.get_slide(_require(op, "slide"))
     shape = _get_shape(slide, _require(op, "shape_index"))
     if not shape.has_table:
-        raise ValueError(f"shape_index {op['shape_index']} は表ではありません")
+        raise ValueError(f"shape_index {op['shape_index']} is not a table")
     table = shape.table
     row = int(_require(op, "row"))
     col = int(_require(op, "col"))
     if row < 0 or row >= len(table.rows) or col < 0 or col >= len(table.columns):
-        raise ValueError(f"表の範囲外です（既存の表は{len(table.rows)}行{len(table.columns)}列、指定は row={row}, col={col}）")
+        raise ValueError(f"Out of the table's range (the existing table has {len(table.rows)} rows and {len(table.columns)} columns; specified row={row}, col={col})")
     table.cell(row, col).text = str(op.get("text", ""))
 
 
@@ -167,7 +167,7 @@ def op_set_table(ctx: EditContext, op: dict) -> None:
     slide = ctx.get_slide(_require(op, "slide"))
     shape = _get_shape(slide, _require(op, "shape_index"))
     if not shape.has_table:
-        raise ValueError(f"shape_index {op['shape_index']} は表ではありません")
+        raise ValueError(f"shape_index {op['shape_index']} is not a table")
     table = shape.table
     headers = op.get("headers") or []
     rows = op.get("rows") or []
@@ -175,14 +175,14 @@ def op_set_table(ctx: EditContext, op: dict) -> None:
     n_rows_needed = (1 if headers else 0) + len(rows)
     if n_rows_needed != len(table.rows) or n_cols_needed != len(table.columns):
         raise ValueError(
-            "既存の表の行列数と一致しません"
-            f"（既存: {len(table.rows)}行{len(table.columns)}列 / 指定: {n_rows_needed}行{n_cols_needed}列）。"
-            "python-pptxは既存表の行列数の増減に対応していないため、"
-            "行列数を変えたい場合はcreate_pptx.pyで新規スライドとして作り直してください。"
+            "Does not match the number of rows and columns of the existing table"
+            f" (existing: {len(table.rows)} rows, {len(table.columns)} columns / specified: {n_rows_needed} rows, {n_cols_needed} columns). "
+            "python-pptx cannot add or remove rows/columns of an existing table, "
+            "so to change them, recreate it as a new slide with create_pptx.py."
         )
     for i, row_values in enumerate(rows):
         if len(row_values) != n_cols_needed:
-            raise ValueError(f"table の rows[{i}] の列数が揃っていません（列数: {n_cols_needed}、rows[{i}]: {len(row_values)}列）")
+            raise ValueError(f"rows[{i}] of table has a different number of columns (columns: {n_cols_needed}, rows[{i}]: {len(row_values)} columns)")
     r = 0
     if headers:
         for c, h in enumerate(headers):
@@ -203,11 +203,11 @@ def op_replace_picture(ctx: EditContext, op: dict) -> None:
     slide = ctx.get_slide(_require(op, "slide"))
     shape = _get_shape(slide, _require(op, "shape_index"))
     if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
-        raise ValueError(f"shape_index {op['shape_index']} は画像ではありません")
+        raise ValueError(f"shape_index {op['shape_index']} is not an image")
     image_path = _require(op, "image_path")
     image_file = Path(str(image_path))
     if not image_file.is_file():
-        raise ValueError(f"image_path が見つかりません: {image_path}")
+        raise ValueError(f"image_path not found: {image_path}")
     left, top, width, height = shape.left, shape.top, shape.width, shape.height
     old_element = shape._element
     parent = old_element.getparent()
@@ -227,7 +227,7 @@ def op_add_picture(ctx: EditContext, op: dict) -> None:
     image_path = _require(op, "image_path")
     image_file = Path(str(image_path))
     if not image_file.is_file():
-        raise ValueError(f"image_path が見つかりません: {image_path}")
+        raise ValueError(f"image_path not found: {image_path}")
     left = Cm(float(_require(op, "left_cm")))
     top = Cm(float(_require(op, "top_cm")))
     width = Cm(float(op["width_cm"])) if op.get("width_cm") else None
@@ -248,14 +248,14 @@ def op_crop_picture(ctx: EditContext, op: dict) -> None:
     slide = ctx.get_slide(_require(op, "slide"))
     shape = _get_shape(slide, _require(op, "shape_index"))
     if shape.shape_type != MSO_SHAPE_TYPE.PICTURE:
-        raise ValueError(f"shape_index {op['shape_index']} は画像ではありません")
+        raise ValueError(f"shape_index {op['shape_index']} is not an image")
 
     values = {key: op.get(key) for key in _CROP_KEYS}
     if all(v is None for v in values.values()):
-        raise ValueError("crop_left/crop_top/crop_right/crop_bottom のいずれか1つ以上の指定が必要です")
+        raise ValueError("At least one of crop_left/crop_top/crop_right/crop_bottom is required")
     for key, value in values.items():
         if value is not None and not (0.0 <= float(value) <= 1.0):
-            raise ValueError(f"{key} は0.0〜1.0の範囲で指定してください: {value}")
+            raise ValueError(f"Specify {key} in the range 0.0-1.0: {value}")
 
     if values["crop_left"] is not None:
         shape.crop_left = float(values["crop_left"])
@@ -282,11 +282,11 @@ def op_add_chart(ctx: EditContext, op: dict) -> None:
     type_key = _require(op, "type")
     chart_type = _CHART_TYPE_MAP.get(type_key)
     if chart_type is None:
-        raise ValueError(f"未対応のグラフ種別です（bar/line/pieのみ対応）: {type_key}")
+        raise ValueError(f"Unsupported chart type (only bar/line/pie are supported): {type_key}")
     categories = _require(op, "categories")
     series = _require(op, "series")
     if not isinstance(series, list) or not series:
-        raise ValueError("series には1件以上のオブジェクト（name, values）が必要です")
+        raise ValueError("series needs at least 1 object (name, values)")
 
     chart_data = CategoryChartData()
     chart_data.categories = categories
@@ -294,8 +294,8 @@ def op_add_chart(ctx: EditContext, op: dict) -> None:
         values = s.get("values") or []
         if len(values) != len(categories):
             raise ValueError(
-                f"series {s.get('name')!r} の values 要素数({len(values)})が"
-                f" categories 要素数({len(categories)})と一致しません"
+                f"The number of values ({len(values)}) of series {s.get('name')!r}"
+                f" does not match the number of categories ({len(categories)})"
             )
         chart_data.add_series(str(s.get("name", "")), values)
 
@@ -399,7 +399,7 @@ def op_set_shape_style(ctx: EditContext, op: dict) -> None:
     align = op.get("align")
 
     if align is not None and align not in _ALIGN_MAP:
-        raise ValueError(f"未対応の align です: {align!r}（対応: {', '.join(_ALIGN_MAP)}）")
+        raise ValueError(f"Unsupported align: {align!r} (supported: {', '.join(_ALIGN_MAP)})")
 
     if role == "heading":
         text_color = text_color or (theme["primary"] if theme else None)
@@ -409,17 +409,17 @@ def op_set_shape_style(ctx: EditContext, op: dict) -> None:
         text_color = text_color or (theme["text_on_primary"] if theme else None)
         bold = True if bold is None else bold
     elif role is not None:
-        raise ValueError(f"未対応の role です: {role!r}（対応: heading, table_header）")
+        raise ValueError(f"Unsupported role: {role!r} (supported: heading, table_header)")
 
     if not any([text_color, bold is not None, italic is not None, underline is not None, font_size_pt, font_name, fill_color, border_color, align]):
         raise ValueError(
-            "text_color/bold/italic/underline/font_size_pt/font_name/fill_color/"
-            "border_color/align のいずれか、または role（heading/table_header）+ theme の指定が必要です"
+            "one of text_color/bold/italic/underline/font_size_pt/font_name/fill_color/"
+            "border_color/align, or role (heading/table_header) + theme, is required"
         )
 
     if shape.has_table:
         if border_color:
-            raise ValueError("表shapeの罫線色（border_color）は現状非対応です（セル塗り・文字装飾のみ対応）")
+            raise ValueError("Border color (border_color) of table shapes is not supported yet (only cell fill and text decoration are supported)")
         table = shape.table
         if role == "table_header":
             target_rows = [0]
@@ -429,13 +429,13 @@ def op_set_shape_style(ctx: EditContext, op: dict) -> None:
             row = op.get("row")
             if row is None:
                 raise ValueError(
-                    "表shapeへの set_shape_style は対象行の指定が必要です"
-                    "（role='table_header' で見出し行、'row'で行番号指定、'all_rows':trueで全行）"
+                    "set_shape_style on a table shape needs the target rows"
+                    " (role='table_header' for the header row, 'row' for a row number, 'all_rows':true for all rows)"
                 )
             target_rows = [int(row)]
         for r in target_rows:
             if r < 0 or r >= len(table.rows):
-                raise ValueError(f"存在しない行です: {r}（この表は{len(table.rows)}行）")
+                raise ValueError(f"Row does not exist: {r} (this table has {len(table.rows)} rows)")
             for c in range(len(table.columns)):
                 cell = table.cell(r, c)
                 if fill_color:
@@ -452,7 +452,7 @@ def op_set_shape_style(ctx: EditContext, op: dict) -> None:
             shape.line.color.rgb = RGBColor.from_string(border_color)
         if any([text_color, bold is not None, italic is not None, underline is not None, font_size_pt, font_name, align]):
             if not shape.has_text_frame:
-                raise ValueError(f"shape_index {op['shape_index']} はテキストを持てないshapeです")
+                raise ValueError(f"shape_index {op['shape_index']} is a shape that cannot hold text")
             _style_text_frame(shape.text_frame, text_color, bold, font_size_pt, italic=italic, underline=underline, font_name=font_name, align=align)
 
 
@@ -472,7 +472,7 @@ def op_set_shape_position(ctx: EditContext, op: dict) -> None:
     height = op.get("height_cm")
 
     if left is None and top is None and width is None and height is None:
-        raise ValueError("left_cm/top_cm/width_cm/height_cm のいずれか1つ以上の指定が必要です")
+        raise ValueError("At least one of left_cm/top_cm/width_cm/height_cm is required")
 
     if left is not None:
         shape.left = Cm(float(left))
@@ -518,8 +518,8 @@ def _duplicate_slide_once(prs: Presentation, source_slide):
             _copy_picture_into(new_slide, shape)
         elif shape.shape_type in UNSUPPORTED_DUPLICATE_TYPES:
             raise ValueError(
-                f"複製元スライドに非対応のshape種別（{shape.shape_type}, name={shape.name!r}）"
-                "が含まれるため複製できません（チャート/OLE/動画/SmartArt/グループは非対応）"
+                f"The source slide contains an unsupported shape type ({shape.shape_type}, name={shape.name!r})"
+                ", so it cannot be duplicated (charts/OLE/video/SmartArt/groups are not supported)"
             )
         else:
             # プレースホルダ・表・テキストボックス等はXML要素をそのままdeep copyすれば
@@ -552,10 +552,10 @@ def op_duplicate_slide(ctx: EditContext, op: dict) -> None:
     insert_after = int(op["insert_after"]) if "insert_after" in op else ctx.current_position(source_num)
     count = int(op.get("count", 1))
     if count < 1:
-        raise ValueError("count は1以上を指定してください")
+        raise ValueError("Specify count as 1 or more")
     total = len(ctx.prs.slides)
     if insert_after < 0 or insert_after > total:
-        raise ValueError(f"insert_after が不正です（0〜{total}の範囲で指定してください）: {insert_after}")
+        raise ValueError(f"insert_after is invalid (specify it in the range 0-{total}): {insert_after}")
 
     position = insert_after
     for _ in range(count):
@@ -587,7 +587,7 @@ def op_reorder_slides(ctx: EditContext, op: dict) -> None:
     order = op.get("order")
     total = len(ctx.prs.slides)
     if not isinstance(order, list) or sorted(order) != list(range(1, total + 1)):
-        raise ValueError(f"order には現在の全スライド番号(1〜{total})の順列を指定してください: {order!r}")
+        raise ValueError(f"Specify order as a permutation of all current slide numbers (1-{total}): {order!r}")
     xml_slides = ctx.prs.slides._sldIdLst
     slides = list(xml_slides)
     new_order_elms = [slides[i - 1] for i in order]
@@ -630,15 +630,15 @@ def main() -> int:
     output_path = Path(args.output_path)
 
     if not template_path.exists():
-        print(f"テンプレートファイルが見つかりません: {args.template_path}", file=sys.stderr)
+        print(f"Template file not found: {args.template_path}", file=sys.stderr)
         return 1
     if template_path.is_dir():
-        print(f"指定パスはディレクトリです（ファイル専用）: {args.template_path}", file=sys.stderr)
+        print(f"The specified path is a directory (files only): {args.template_path}", file=sys.stderr)
         return 1
     if template_path.resolve() == output_path.resolve() and not args.overwrite:
         print(
-            "テンプレートと同じパスへの保存は --overwrite を指定した場合のみ許可されます。"
-            "別のoutput_pathを指定するか、上書きしてよいことをユーザーに確認してから --overwrite を付けてください。",
+            "Saving to the same path as the template is allowed only with --overwrite. "
+            "Specify a different output_path, or add --overwrite after confirming with the user that overwriting is OK.",
             file=sys.stderr,
         )
         return 1
@@ -646,33 +646,30 @@ def main() -> int:
     if args.data_file:
         data_file = Path(args.data_file)
         if not data_file.exists():
-            print(f"データファイルが見つかりません: {args.data_file}", file=sys.stderr)
+            print(f"Data file not found: {args.data_file}", file=sys.stderr)
             return 1
-        try:
-            raw = data_file.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raw = data_file.read_text(encoding="cp932")
+        raw = read_text_with_fallback(data_file)
     else:
         raw = args.data
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"JSONとして解析できませんでした: {e}", file=sys.stderr)
+        print(f"Could not parse it as JSON: {e}", file=sys.stderr)
         return 1
 
     operations = data.get("operations") if isinstance(data, dict) else None
     if not operations:
-        print("data の 'operations' キーに1件以上の操作定義が必要です。", file=sys.stderr)
+        print("The 'operations' key of data needs at least 1 operation definition.", file=sys.stderr)
         return 1
 
     try:
         prs = Presentation(str(template_path))
     except PackageNotFoundError:
-        print(f"pptxとして読み込めませんでした（壊れているか非対応形式の可能性）: {args.template_path}", file=sys.stderr)
+        print(f"Could not load it as pptx (it may be broken or an unsupported format): {args.template_path}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - python-pptx側の想定外エラーもエラー終了に統一する
-        print(f"pptxの読み込みに失敗しました: {e}\n{traceback.format_exc()}", file=sys.stderr)
+        print(f"Failed to read the pptx: {e}\n{traceback.format_exc()}", file=sys.stderr)
         return 1
 
     ctx = EditContext(prs)
@@ -681,12 +678,12 @@ def main() -> int:
         handler = OP_HANDLERS.get(op_name)
         if handler is None:
             supported = ", ".join(sorted(OP_HANDLERS))
-            print(f"操作{i + 1}: 未対応の op です: {op_name!r}（対応: {supported}）", file=sys.stderr)
+            print(f"Operation {i + 1}: unsupported op: {op_name!r} (supported: {supported})", file=sys.stderr)
             return 1
         try:
             handler(ctx, op)
         except ValueError as e:
-            print(f"操作{i + 1}（{op_name}）の適用に失敗しました: {e}", file=sys.stderr)
+            print(f"Failed to apply operation {i + 1} ({op_name}): {e}", file=sys.stderr)
             return 1
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -694,7 +691,7 @@ def main() -> int:
     try:
         prs.save(str(output_path))
     except OSError as e:
-        print(f"ファイルの保存に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to save the file: {e}", file=sys.stderr)
         return 1
 
     result = {
@@ -704,7 +701,7 @@ def main() -> int:
         "size_bytes": output_path.stat().st_size,
         "applied_operations": len(operations),
     }
-    path_memory = register_output_path(output_path, description="edit_pptxが生成/更新したPPTX")
+    path_memory = register_output_path(output_path, description="PPTX generated/updated by edit_pptx")
     if path_memory:
         result["path_memory"] = path_memory
     print(json.dumps(result, ensure_ascii=False))

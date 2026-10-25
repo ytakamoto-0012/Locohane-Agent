@@ -1,12 +1,12 @@
-# バージョン・プラットフォーム依存の注意点
+# Version and platform dependent caveats
 
-社内配布・複数環境で動かすマクロは「自分の手元のExcelで動く」だけでは不十分で、
-配布先のビット数・バージョン・OS（Windows/Mac）差を意識する必要がある。
+For macros distributed within a company or run in several environments, "it works in my Excel" is not enough;
+you need to be aware of the bitness, version and OS (Windows/Mac) of the target environments.
 
-## 32bit / 64bit（PtrSafe と LongPtr）
+## 32bit / 64bit (PtrSafe and LongPtr)
 
-Windows API（`Declare`）を使うコードは、Office 2010以降で32bit/64bit両対応に
-するなら `PtrSafe` と `LongPtr` が必須。
+Code that uses the Windows API (`Declare`) needs `PtrSafe` and `LongPtr` to support both 32bit and 64bit
+in Office 2010 and later.
 
 ```vb
 #If VBA7 Then
@@ -16,110 +16,103 @@ Windows API（`Declare`）を使うコードは、Office 2010以降で32bit/64bi
 #End If
 ```
 
-- `VBA7`（VBEのバージョン。Office 2010以降で真）と `Win64`（実行環境が64bit
-  Officeかどうか）は別条件。`PtrSafe`宣言自体は`VBA7`で必要、ポインタ型は
-  `Win64`で`LongPtr`が実質8バイト・`Win32`側だと4バイトのLongと同義になる、
-  という2段構えのコンパイル条件分岐になる。
-- **古いWeb上のサンプルコード（`Declare Function`のみで`PtrSafe`が無いもの）は
-  64bit Officeでコンパイルエラーになる。** ユーザーが古いコードを流用している
-  場合、まずこれを疑う。
-- 64bit Office自体は2010年以降存在するが、**Office 2010/2013/2016では既定で
-  32bit版がインストールされ、Office 2019・Microsoft 365以降は既定が64bit版に
-  変わった**という経緯がある。社内の配布先には両世代が混在しうるため、
-  32bit/64bitどちらの環境かは実行時まで分からない前提で、両対応の条件分岐を
-  書いておくのが安全。
+- `VBA7` (the VBE version; true in Office 2010 and later) and `Win64` (whether the execution environment is 64bit
+  Office) are separate conditions. The `PtrSafe` declaration itself is needed under `VBA7`, and pointer types are
+  effectively 8 bytes as `LongPtr` under `Win64` and equivalent to a 4-byte Long on the `Win32` side,
+  giving a two-level conditional compilation.
+- **Old sample code on the web (with only `Declare Function` and no `PtrSafe`) gives a compile error
+  in 64bit Office.** If the user is reusing old code, suspect this first.
+- 64bit Office itself has existed since 2010, but **Office 2010/2013/2016 install the 32bit version by default,
+  and the default changed to the 64bit version from Office 2019 and Microsoft 365 on**.
+  Both generations can be mixed among the target PCs in a company, so it is safe to write conditional branches for both,
+  on the premise that you cannot know whether it is 32bit or 64bit until run time.
 
-## 新しい関数・機能が使えるバージョン
+## Versions in which new functions and features are available
 
-- **動的配列関数**（`FILTER`/`UNIQUE`/`SORT`/`SORTBY`/`XLOOKUP`等）は
-  **買い切り版Excel 2019には存在しない**が、**Excel 2021（買い切り版）には
-  Microsoft 365と同様に含まれている**（2021年の買い切り版から、それまで
-  365限定だった主要な新関数が取り込まれる方針にMicrosoftが変更したため）。
-  一方 **`LAMBDA`はExcel 2021には含まれず**、Microsoft 365、またはより新しい
-  買い切り版のExcel 2024以降が必要（2026年時点の情報）。バージョンごとの
-  対応表は流動的なので、配布先バージョンが古い可能性がある場合は都度
-  最新情報を確認すること。`Application.WorksheetFunction.Filter`等を
-  VBAから呼ぶコードは、対象バージョンに関数が無いと実行時エラー
-  （`438`）になる。配布先のバージョンが不明な場合、これらの
-  関数への依存は避けるか、事前にバージョン判定して代替ロジックに分岐する。
-- `ListObject`（テーブル機能、[[excel-tables-listobject]]参照）は
-  **Excel 2007以降**。`.xls`（97-2003形式）で開かれたブックにはテーブル
-  機能自体が存在しない。
-- リボンのカスタマイズは Excel 2007 で `CommandBars` から Ribbon XML
-  （`customUI.xml`）ベースに刷新された。**Excel 2003以前をターゲットにした
-  `CommandBars` の追加/削除コードは2007以降でも動作はするが非推奨のAPI**で、
-  リボンUIそのものへの統合はできない。
+- **Dynamic array functions** (`FILTER`/`UNIQUE`/`SORT`/`SORTBY`/`XLOOKUP`, etc.)
+  **do not exist in perpetual Excel 2019**, but **are included in Excel 2021 (perpetual)
+  as in Microsoft 365** (because from the 2021 perpetual version Microsoft changed its policy to include the main new functions
+  that had been limited to 365).
+  On the other hand, **`LAMBDA` is not included in Excel 2021** and needs Microsoft 365 or a newer
+  perpetual version, Excel 2024 or later (as of 2026). The support table per version
+  changes, so if the target version may be old, check the latest information each time.
+  Code that calls `Application.WorksheetFunction.Filter` etc. from VBA gives a runtime error
+  (`438`) if the function does not exist in the target version. If the target version is unknown,
+  avoid depending on these functions, or check the version beforehand and branch to alternative logic.
+- `ListObject` (the table feature, see [[excel-tables-listobject]]) is
+  **Excel 2007 and later**. Workbooks opened as `.xls` (97-2003 format) do not have the table
+  feature at all.
+- Ribbon customization was renewed in Excel 2007 from `CommandBars` to Ribbon XML
+  (`customUI.xml`). **Code that adds/removes `CommandBars`, targeting Excel 2003 and earlier, still runs in 2007 and later
+  but is a deprecated API**, and cannot integrate into the ribbon UI itself.
 
-## ファイル形式（拡張子）による制約
+## Constraints by file format (extension)
 
-- `.xls`（97-2003形式）: 最大行数 65,536 行・最大列数 256 列。
-  `.xlsx`/`.xlsm`（2007以降）は 1,048,576 行・16,384 列。これを超える
-  範囲を扱うブックを `.xls` で保存しようとすると「互換性チェック」の
-  警告ダイアログは表示されるが、見落として続行するとダイアログの外の
-  行・列のデータが警告どおり削除される（保存自体はエラーにならず成功
-  してしまう）ため、ダイアログの内容を確認せず`OK`を押す運用は避ける。
-- マクロを含むブックは `.xlsm`（または `.xlsb`）で保存する必要がある。
-  `.xlsx` で `SaveAs` しても**保存自体はエラーにならず成功する**が、
-  「VBAプロジェクトを保存できません」という警告ダイアログが出た上で
-  **VBAプロジェクトが失われた状態で`.xlsx`として保存される**（`.xlsm`側の
-  元ファイルを残していない限りマクロは復元できない）。`Application.DisplayAlerts`
-  を`False`にしていると警告ダイアログ自体が出ないままマクロが失われるため、
-  マクロ入りブックを`.xlsx`として保存するコードは書かない、または
-  `SaveAs` の `FileFormat` 引数を明示的に`.xlsm`系に指定して事故を防ぐ。
+- `.xls` (97-2003 format): at most 65,536 rows and 256 columns.
+  `.xlsx`/`.xlsm` (2007 and later) have 1,048,576 rows and 16,384 columns. When you try to save a workbook
+  using a range beyond this as `.xls`, a "Compatibility Checker" warning dialog appears, but if you overlook it and
+  continue, the data in rows/columns outside the limits is deleted as warned (the save itself succeeds
+  without an error), so avoid pressing `OK` without checking the content of the dialog.
+- Workbooks containing macros must be saved as `.xlsm` (or `.xlsb`).
+  `SaveAs` as `.xlsx` **succeeds without an error**, but
+  after a warning dialog saying the VB project cannot be saved,
+  **it is saved as `.xlsx` with the VBA project lost** (the macros cannot be restored unless the original
+  `.xlsm` file was kept). With `Application.DisplayAlerts` set to `False`,
+  the macros are lost without even showing the warning dialog, so do not write code that saves workbooks
+  with macros as `.xlsx`, or specify the `FileFormat` argument of `SaveAs` explicitly as an `.xlsm` format
+  to prevent accidents.
 
 ```vb
 wb.SaveAs fileName, FileFormat:=xlOpenXMLWorkbookMacroEnabled  ' .xlsm
 ```
 
-## 参照設定ライブラリのバージョン差（早期バインディング時）
+## Version differences in referenced libraries (with early binding)
 
-[[common-gotchas]] で触れた早期バインディングの問題はバージョン差でも起きる。
-「参照設定」で追加したライブラリ（例: `Microsoft Excel 16.0 Object Library`）は
-Officeのバージョンによって番号が異なり、開発環境より古いバージョンのExcelで
-そのファイルを開くと **`参照エラー`（コンパイルエラー）** になる。
-配布用マクロは遅延バインディング（`CreateObject`/`Object`型）を優先する方針は
-[[common-gotchas]] を参照。
+The early binding problem mentioned in [[common-gotchas]] also happens with version differences.
+Libraries added in "References" (e.g. `Microsoft Excel 16.0 Object Library`) have
+different numbers depending on the Office version, and opening the file in an Excel older than
+the development environment gives a **reference error (compile error)**.
+For the policy of preferring late binding (`CreateObject`/`Object` type) in macros for distribution, see
+[[common-gotchas]].
 
-## Windows と Mac の違い
+## Differences between Windows and Mac
 
-Mac版Excelでも基本的なVBA構文は共通だが、以下は非互換または挙動が異なる:
+Basic VBA syntax is common to the Mac version of Excel too, but the following are incompatible or behave differently:
 
-- **Windows API（`kernel32`等のDLLを呼ぶ`Declare`）は使えない**（Mac側に
-  同名のDLLが存在しないため）。Mac固有の処理が必要な場合はAppleScriptを
-  呼び出す`AppleScriptTask`（Office 2016以降で推奨、外部の`.applescript`
-  ファイルを`~/Library/Application Scripts/`配下に置いて実行する方式）を
-  使う。旧来の`MacScript`関数は非推奨（deprecated）扱いなので新規コードでは
-  避ける。
-- `FileSystemObject`（`Scripting.FileSystemObject`）は**Mac未対応**。
-  ファイル操作は `Dir`/`Open...For Input/Output` 等の組み込みステートメントや
-  上記の`AppleScriptTask`経由のAppleScript連携を使う必要がある。
-- パス区切り文字が異なる（Windows: `\`、Mac: `:` または `/`。
-  `Application.PathSeparator` で実行環境の区切り文字を取得できるため、
-  パス結合は決め打ちの`"\"`ではなくこれを使うと両対応しやすい）。
-- `Shell` 関数・COMオートメーション（`CreateObject("Excel.Application")`等)は
-  Mac版には無い（Macにはそもそも「COM」という概念自体が無い）。
+- **The Windows API (`Declare` calling DLLs such as `kernel32`) cannot be used** (no DLLs with the same names
+  exist on the Mac). If Mac-specific processing is needed, use `AppleScriptTask`, which calls AppleScript
+  (recommended from Office 2016 on; it runs an external `.applescript` file placed under
+  `~/Library/Application Scripts/`). The old `MacScript` function is deprecated, so avoid it
+  in new code.
+- `FileSystemObject` (`Scripting.FileSystemObject`) is **not supported on the Mac**.
+  File operations need built-in statements such as `Dir`/`Open...For Input/Output`, or
+  AppleScript integration via `AppleScriptTask` above.
+- The path separator differs (Windows: `\`, Mac: `:` or `/`.
+  `Application.PathSeparator` gets the separator of the execution environment, so using it for joining paths
+  instead of a hard-coded `"\"` makes it easier to support both).
+- The `Shell` function and COM automation (`CreateObject("Excel.Application")`, etc.) are
+  not available on the Mac (the Mac has no concept of "COM" in the first place).
 
-Mac対応が必須要件かどうかは早い段階でユーザーに確認する（Windows専用の
-社内マクロであれば上記は気にしなくてよいことが多いが、判断せず決め打ちしない）。
+Confirm with the user early on whether Mac support is a required condition (for a Windows-only
+internal macro, the above often does not matter, but do not assume without deciding).
 
-## バージョン判定の書き方
+## How to write version checks
 
 ```vb
 Select Case Val(Application.Version)
-    Case Is >= 16   ' Excel 2016以降（365含む。2016系はメジャーバージョンが同じ16のため
-                     ' これだけでは365の新関数の有無までは判定できない）
+    Case Is >= 16   ' Excel 2016 and later (including 365. The 2016 family has the same major version 16,
+                     ' so this alone cannot tell whether the new 365 functions exist)
         ' ...
     Case Else
-        ' 旧バージョン向けフォールバック
+        ' fallback for old versions
 End Select
 ```
 
-`Application.Version` はメジャーバージョン番号（"16.0"等）を返すのみで、
-Microsoft 365かどうか・ビルド番号までは判別できない（Excel 2016以降は
-2019・2021・365のいずれも"16.0"を返すため、バージョン番号だけでは
-これらを区別できない）。**FILTER/LAMBDA等、対応バージョンが関数ごとに
-異なる新しい関数の有無は、バージョン番号ではなく`On Error`で該当関数の
-呼び出しを試みて失敗を検知する（機能検出）方が確実**なことが多い。
+`Application.Version` returns only the major version number ("16.0", etc.) and cannot tell
+whether it is Microsoft 365 or the build number (Excel 2016 and later — 2019, 2021 and 365 — all return "16.0",
+so the version number alone cannot distinguish them). **For whether new functions such as FILTER/LAMBDA, whose supported versions
+differ per function, exist, trying to call the function under `On Error` and detecting failure (feature detection)
+is often more reliable than the version number.**
 
 ```vb
 Dim hasFilter As Boolean
@@ -130,10 +123,10 @@ hasFilter = (Err.Number = 0)
 On Error GoTo 0
 ```
 
-## マクロセキュリティ設定・信頼できる場所
+## Macro security settings and trusted locations
 
-バージョンに関わらず、マクロ有効ブックはユーザー側のトラストセンター設定
-（マクロの有効/無効、信頼できる場所）に実行が左右される。VBAコード側からは
-この設定自体を変更できない（[[events-and-loops]]の`Workbook_Open`の項も参照）。
-配布時は「信頼できる場所への配置」または「実行時の有効化手順」をユーザー
-マニュアル側で案内する必要がある旨、コードの限界として伝えておく。
+Regardless of version, whether macro-enabled workbooks run depends on the user's Trust Center settings
+(macros enabled/disabled, trusted locations). VBA code cannot change these settings themselves
+(also see the `Workbook_Open` item of [[events-and-loops]]).
+When distributing, tell the user, as a limit of the code, that "placing it in a trusted location" or "the steps to enable it when running"
+need to be explained in the user manual.

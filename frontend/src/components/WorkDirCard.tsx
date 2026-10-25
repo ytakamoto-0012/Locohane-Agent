@@ -1,18 +1,19 @@
 import type { IStep } from '@chainlit/react-client';
-import { WORK_DIR_PREFIX } from '../utils/messageTree';
+import { useI18n } from '../i18n';
 import { isLoopbackHost } from '../utils/serverHost';
 
 export function WorkDirCard({ step }: { step: IStep | undefined }) {
+  const { t } = useI18n();
   if (!step || typeof step.output !== 'string') return null;
   const value = step.output.slice(step.output.indexOf(':') + 1).trim();
 
   return (
     <div className="work-dir-card">
       <div className="work-dir-card-label">
-        {WORK_DIR_PREFIX}
+        {t('workdir.title')}
         {!isLoopbackHost() && (
-          <span className="work-dir-card-scope" title="お使いのPCではなく、Locohane が動いているサーバーPCから見たパスです">
-            （サーバーPC上）
+          <span className="work-dir-card-scope" title={t('workdir.serverScopeTitle')}>
+            {t('workdir.serverScope')}
           </span>
         )}
       </div>

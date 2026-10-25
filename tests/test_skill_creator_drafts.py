@@ -69,7 +69,7 @@ def test_scaffold_rejects_official_skill_name(draft_env):
 def test_scaffold_requires_session_user(draft_env):
     env = {k: v for k, v in draft_env["env"].items() if k != "AGENT_USER"}
     result = _run("scaffold_skill.py", "--name", "my-tool", "--description", "x", env=env)
-    assert result.returncode == 1 and "ドラフト置き場が使えません" in result.stderr
+    assert result.returncode == 1 and "The draft location is not available" in result.stderr
 
 
 @pytest.mark.parametrize("path", ["../escape.txt", "_draft_meta.json", "C:/abs.txt"])
@@ -93,7 +93,7 @@ def test_write_draft_file_patch_requires_unique_match(draft_env):
     ok = _run("write_draft_file.py", "--name", "my-tool", "--path", "SKILL.md", "--old", "# my-tool", "--new", "# 道具", env=env)
     assert ok.returncode == 0, ok.stderr
     missing = _run("write_draft_file.py", "--name", "my-tool", "--path", "SKILL.md", "--old", "存在しない文", "--new", "x", env=env)
-    assert missing.returncode == 1 and "0か所" in missing.stderr
+    assert missing.returncode == 1 and "matched 0 places" in missing.stderr
 
 
 def test_fork_records_base_hash_and_keeps_official_untouched(draft_env):

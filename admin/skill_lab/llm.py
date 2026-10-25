@@ -37,7 +37,7 @@ async def _ainvoke(config: Config, system: str, user_messages: list[tuple[str, s
 def ask_text(config: Config, system: str, user: str) -> str:
     text = asyncio.run(_ainvoke(config, system, [("user", user)])).strip()
     if not text:
-        raise LabLLMError("LLM の応答が空でした。")
+        raise LabLLMError("The LLM returned an empty response.")
     return text
 
 
@@ -54,7 +54,7 @@ def extract_json(text: str):
             return json.loads(candidate)
         except json.JSONDecodeError as e:
             last_error = e
-    raise ValueError(f"JSON を読み取れません: {last_error or '本文に JSON がありません'}")
+    raise ValueError(f"Cannot read JSON: {last_error or 'there is no JSON in the text'}")
 
 
 def ask_json(config: Config, system: str, user: str):
@@ -70,11 +70,11 @@ def ask_json(config: Config, system: str, user: str):
                 [
                     ("user", user),
                     ("assistant", first),
-                    ("user", f"今の出力は JSON として読めませんでした（{e}）。説明文を付けず、指定した形式の JSON だけを出力し直してください。"),
+                    ("user", f"The previous output could not be read as JSON ({e}). Output again only the JSON in the specified format, without any explanation."),
                 ],
             )
         )
         try:
             return extract_json(retry)
         except ValueError as e2:
-            raise LabLLMError(f"LLM の応答を JSON として読めませんでした: {e2}") from e2
+            raise LabLLMError(f"Could not read the LLM response as JSON: {e2}") from e2

@@ -26,6 +26,7 @@ from urllib.parse import quote, urlsplit
 
 import httpx
 
+from admin.i18n import t as _t
 from src.config import load_config
 from src.runtime_status import RUNTIME_STATUS_FILENAME
 
@@ -48,8 +49,12 @@ _INTERNAL_TYPES = ("tool", "llm")
 MAX_FIELD_CHARS = 20000
 
 _LOG_LINE_RE = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d),\d+ \[thread=([^\]]*)\] (\w+) (\S+): (.*)$")
+# アプリログの書式（app.py・src/context_compaction.py）。v0.3 までの日本語の行も、
+# ローテーションで消えるまでは読めるよう両方を受け付ける。
+_TOKEN_USAGE_LABELS = ("token usage", "トークン使用量")
+_COMPACTION_DONE_LABELS = ("context compacted", "コンテキスト圧縮を実行しました")
 _TOKEN_RE = re.compile(
-    r"トークン使用量 thread_id=(\S+) "
+    r"(?:token usage|トークン使用量) thread_id=(\S+) "
     r"call\(in=(\d+),out=(\d+),total=(\d+)\) "
     r"turn\(in=(\d+),out=(\d+),total=(\d+)\) "
     r"cumulative\(in=(\d+),out=(\d+),total=(\d+)\) "
@@ -57,7 +62,7 @@ _TOKEN_RE = re.compile(
 )
 # src/context_compaction.py の _log_compaction_usage が出す行。
 _COMPACTION_USAGE_RE = re.compile(
-    r"圧縮処理トークン使用量 kind=(\S+) role=(\S+) call\(in=(\d+),out=(\d+),total=(\d+)\)"
+    r"(?:compaction token usage|圧縮処理トークン使用量) kind=(\S+) role=(\S+) call\(in=(\d+),out=(\d+),total=(\d+)\)"
 )
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 
@@ -72,7 +77,7 @@ def instance_config(instances_root: Path, config_ini_path: Path, name: str):
             config_path=config_ini_path, overrides_path=inst.overrides_path(instances_root, name), instance_name=name
         )
     except Exception as exc:  # noqa: BLE001
-        raise MonitorError(f"インスタンス {name!r} の設定を読み込めません: {exc}") from exc
+        raise MonitorError(_t("インスタンス {0!r} の設定を読み込めません: {1}", name, exc)) from exc
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +125,7 @@ def summarize_runtime(status: dict | None, thread_names: dict[str, str | None]) 
         u = users.setdefault(s["user"], {"user": s["user"], "sessions": 0, "generating": 0})
         u["sessions"] += 1
     for g in generating:
-        owner = g.get("owner") or "（不明）"
+        owner = g.get("owner") or _t("（不明）")
         u = users.setdefault(owner, {"user": owner, "sessions": 0, "generating": 0})
         u["generating"] += 1
     return {
@@ -152,7 +157,7 @@ def _sqlite_ro_uri(db_path: Path) -> str:
 
 def _connect(db_path: Path) -> sqlite3.Connection:
     if not db_path.is_file():
-        raise MonitorError(f"スレッドDBがありません: {db_path}（[thread_store] enabled=false、または未使用）")
+        raise MonitorError(_t("スレッドDBがありません: {0}（[thread_store] enabled=false、または未使用）", db_path))
     # 本体が書き込み中のDBを読むため、読み取り専用で開き、ロック待ちも許す。
     conn = sqlite3.connect(_sqlite_ro_uri(db_path), uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
@@ -343,7 +348,7 @@ def live_context_series(log_dir: Path, generating: list[dict]) -> list[dict]:
             except OSError:
                 continue
         for line in _read_lines(path):
-            if "トークン使用量" not in line:
+            if not any(label in line for label in _TOKEN_USAGE_LABELS):
                 continue
             head = _LOG_LINE_RE.match(line.rstrip("\n"))
             if not head:
@@ -402,8 +407,8 @@ def token_history(log_dir: Path, thread_id: str) -> list[dict]:
     compacted: この点の直前でメインエージェントのコンテキスト圧縮が実行された
         （app.py の「コンテキスト圧縮を実行しました」行）。
     """
-    token_needle = f"トークン使用量 thread_id={thread_id} "
-    compaction_done_needle = f"コンテキスト圧縮を実行しました thread_id={thread_id} "
+    token_needles = tuple(f"{label} thread_id={thread_id} " for label in _TOKEN_USAGE_LABELS)
+    compaction_done_needles = tuple(f"{label} thread_id={thread_id} " for label in _COMPACTION_DONE_LABELS)
     points: list[dict] = []
     prev_main_logged: int | None = None
     cum_all = 0
@@ -419,11 +424,11 @@ def token_history(log_dir: Path, thread_id: str) -> list[dict]:
             # 各行はメッセージ先頭で照合する（DEBUG ログに出た会話内容等に同じ文字列が
             # 含まれていても、偽の呼び出し・圧縮として拾わない）。
             message = head.group(5)
-            if message.startswith(compaction_done_needle):
+            if message.startswith(compaction_done_needles):
                 pending_compaction = True
                 continue
             ts = head.group(1).replace(" ", "T")
-            if message.startswith(token_needle):
+            if message.startswith(token_needles):
                 m = _TOKEN_RE.match(message)
                 if not m or m.group(1) != thread_id:
                     continue
@@ -573,7 +578,7 @@ def probe_endpoints(cfg, timeout_seconds: float = 2.0) -> list[dict]:
                         # 動いている。到達可否は /health で判断する（スロット数は不明のまま）。
                         slots_status = resp.status_code
                         client.get(f"{_server_root(ep.base_url)}/health").raise_for_status()
-                        probe.error = f"GET /slots が HTTP {slots_status} のためスロット使用状況は不明"
+                        probe.error = _t("GET /slots が HTTP {0} のためスロット使用状況は不明", slots_status)
                     else:
                         slots = resp.json()
                         if isinstance(slots, list):

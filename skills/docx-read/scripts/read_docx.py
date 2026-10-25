@@ -42,20 +42,20 @@ def main() -> int:
 
     path = Path(args.docx_path)
     if not path.exists():
-        print(f"ファイルが見つかりません: {args.docx_path}", file=sys.stderr)
+        print(f"File not found: {args.docx_path}", file=sys.stderr)
         return 1
     if path.is_dir():
-        print(f"指定パスはディレクトリです（ファイル専用）: {args.docx_path}", file=sys.stderr)
+        print(f"The specified path is a directory (files only): {args.docx_path}", file=sys.stderr)
         return 1
     if path.suffix.lower() == ".doc":
         print(
-            "拡張子が .doc（レガシーのバイナリ形式）です。このスキルは .docx のみ対応しています。"
-            "Microsoft Wordで開き「名前を付けて保存」で .docx 形式に変換してから再度お試しください。",
+            "The extension is .doc (the legacy binary format). This skill supports only .docx. "
+            "Open it in Microsoft Word, convert it to .docx with \"Save As\", and try again.",
             file=sys.stderr,
         )
         return 1
     if path.suffix.lower() != ".docx":
-        print(f"拡張子が .docx ではありません: {args.docx_path}", file=sys.stderr)
+        print(f"The extension is not .docx: {args.docx_path}", file=sys.stderr)
         return 1
 
     from docx import Document
@@ -64,10 +64,10 @@ def main() -> int:
     try:
         doc = Document(str(path))
     except PackageNotFoundError:
-        print(f".docxとして読み込めませんでした（壊れているか非対応形式の可能性）: {args.docx_path}", file=sys.stderr)
+        print(f"Could not load it as .docx (it may be broken or an unsupported format): {args.docx_path}", file=sys.stderr)
         return 1
     except OSError as e:
-        print(f"ファイル読み込みに失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to read the file: {e}", file=sys.stderr)
         return 1
 
     all_paragraphs = [{"index": i, "style": p.style.name if p.style is not None else None, "text": p.text} for i, p in enumerate(doc.paragraphs)]
@@ -159,7 +159,7 @@ def main() -> int:
                 if all(w is not None for w in col_widths):
                     total_width = sum(col_widths)
                     if total_width > usable_width_cm:
-                        msg = f"表{table_idx}の列幅合計({total_width:.2f}cm)が" f"利用可能なページ幅({usable_width_cm:.2f}cm)を超えています"
+                        msg = f"The total column width of table {table_idx} ({total_width:.2f}cm) " f"exceeds the usable page width ({usable_width_cm:.2f}cm)"
                         warnings.append(msg)
 
             # 挿入画像のサイズチェック
@@ -167,8 +167,8 @@ def main() -> int:
                 width_cm = img["width_cm"]
                 if width_cm is not None and width_cm > usable_width_cm:
                     msg = (
-                        f"挿入画像(image_index={img['image_index']})の幅({width_cm:.2f}cm)が"
-                        f"ページ幅({usable_width_cm:.2f}cm)を超えています"
+                        f"The width ({width_cm:.2f}cm) of the inserted image (image_index={img['image_index']}) "
+                        f"exceeds the page width ({usable_width_cm:.2f}cm)"
                     )
                     warnings.append(msg)
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { useRecoilValue, useSetRecoilState } from 'recoil';
 import {
   useAuth,
@@ -7,6 +7,7 @@ import {
   useChatMessages,
   useChatData,
   useConfig,
+  ChainlitContext,
   currentThreadIdState,
   sessionIdState,
   messagesState,
@@ -14,6 +15,7 @@ import {
   tasklistState
 } from '@chainlit/react-client';
 import { BACKEND_URL } from './chainlitClient';
+import { useI18n } from './i18n';
 import { fetchThreadSnapshot, threadStepsToMessages, splitThreadElements } from './threadSnapshot';
 import { Header } from './components/Header';
 import { LoginForm } from './components/LoginForm';
@@ -59,6 +61,8 @@ function App() {
   const { config } = useConfig();
   const currentThreadId = useRecoilValue(currentThreadIdState);
   const sessionId = useRecoilValue(sessionIdState);
+  const client = useContext(ChainlitContext);
+  const { lang, ready: langReady } = useI18n();
 
   // スマホ幅では左右のパネルを引き出し式にし、同時に開くのは片方だけにする
   // （PC 幅では各パネルが自分の折りたたみ状態を持つため使わない）。
@@ -152,11 +156,28 @@ function App() {
       .catch(() => {});
   }, []);
 
+  // 表示言語は userEnv でバックエンドへ渡す（app.py の _init_session_lang。システム通知・
+  // ボタン・AI の応答言語に使う）。言語が確定する（i18n.tsx の ready）まで接続を待つ。
+  const connectedLangRef = useRef(lang);
   useEffect(() => {
-    if (!canConnect || !seeded) return;
-    connect({ userEnv: {} });
+    if (!canConnect || !seeded || !langReady) return;
+    connectedLangRef.current = lang;
+    connect({ userEnv: { LOCOHANE_LANG: lang } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canConnect, seeded]);
+  }, [canConnect, seeded, langReady]);
+
+  // 接続中に表示設定で言語を切り替えたら、バックエンドのセッションにも伝える
+  // （app.py の set_language。AI の応答言語は次の送信から切り替わる）。
+  useEffect(() => {
+    if (!sessionId || !langReady || connectedLangRef.current === lang) return;
+    connectedLangRef.current = lang;
+    client
+      .callAction(
+        { id: '', name: 'set_language', payload: { lang }, label: '', tooltip: '', forId: '', onClick: () => {} },
+        sessionId
+      )
+      .catch(() => {});
+  }, [lang, langReady, sessionId, client]);
 
   // ページを離れる（スレッド切り替え・新規チャット・再読み込み・タブを閉じる）時点で
   // Socket.IO 接続を明示的に閉じる。socket.io-client は既定ではページ離脱時に接続を

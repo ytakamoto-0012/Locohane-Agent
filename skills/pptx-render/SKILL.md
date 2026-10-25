@@ -1,6 +1,6 @@
 ---
 name: pptx-render
-description: PowerPoint（.pptx）のスライドを画像化し、analyze_imageでLLMに見せるためのスキル（OLE→PDF→PNG変換）。ローカルのMicrosoft PowerPoint本体が必要。テキスト抽出だけでは分からないレイアウト・図表・画像配置・強調表現を確認したいとき、生成・編集したpptxの見た目を確認したいときに使う。テキストの抽出は`pptx-read`、新規生成は`pptx-create`、既存テンプレートの部分編集は`pptx-edit`を使う。
+description: A skill that renders the slides of PowerPoint files (.pptx) as images to show them to the LLM with analyze_image (OLE -> PDF -> PNG conversion). Needs a local Microsoft PowerPoint installation. Use it when you want to check the layout, figures, image placement and emphasis that text extraction alone cannot show, or to check the look of a pptx you generated or edited. Use `pptx-read` for extracting text, `pptx-create` for creating new ones, and `pptx-edit` for partially editing existing templates.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,28 +9,28 @@ metadata:
 
 # pptx-render
 
-PPTXスライドを画像化してLLMに見せるスキルです。`render_pptx.py` を実行して
-結果を得ます。`pptx-read` の `read_pptx.py` でテキストは取得
-できても、レイアウト・図表・画像の配置・強調表現などテキストだけでは読み取れない
-情報があるため、資料の意図をより高精度に汲み取りたいときはこちらを使って
-画像として内容を確認します。
+A skill that renders PPTX slides as images to show them to the LLM. Run `render_pptx.py` to
+get the result. `read_pptx.py` of `pptx-read` can get the text,
+but some information, such as the layout, figures, image placement and emphasis, cannot be read from text alone,
+so when you want to grasp the intent of a presentation more accurately, use this to check the content
+as images.
 
-正常系なら終了コード0でJSON1行を標準出力へ、異常系なら終了コード非0で
-エラーメッセージを標準エラーへ出力します。
+On success it prints one line of JSON to stdout with exit code 0; on failure it prints an
+error message to stderr with a non-zero exit code.
 
-呼び出し例:
+Call example:
 ```bash
 python render_pptx.py "C:\Users\me\presentation.pptx"
 ```
-## 引数一覧
+## Arguments
 
-| 引数 | 必須/任意 | 値の型 | 既定値 | 説明 |
+| Argument | Required/optional | Type | Default | Description |
 |---|---|---|---|---|
-| `pptx_path`（位置引数） | 必須 | 文字列（絶対パス） | - | 画像化対象の`.pptx`ファイルパス。他拡張子はエラー |
+| `pptx_path` (positional) | Required | String (absolute path) | - | Path of the `.pptx` file to render. Other extensions are errors |
 
-全スライドを一度に画像化します（範囲の指定はできません）。
+All slides are rendered at once (a range cannot be specified).
 
-出力例:
+Output example:
 ```json
 {"path": "C:\\foo\\presentation.pptx", "tool": "pptx", "total_pages": 12, "start_page": 1, "end_page": 12, "dpi": 300, "target_dpi": 150, "crop_applied": false,
  "images": [
@@ -39,22 +39,22 @@ python render_pptx.py "C:\Users\me\presentation.pptx"
    {"page": 12, "image_path": "C:\\...\\rendered\\1a2b3c4d_p12.png", "original_dpi": 300}
  ]}
 ```
-`images`には`total_pages`件全てが含まれる。
+`images` contains all `total_pages` entries.
 
-**重要（2段階手順）**: このスクリプト自体はPNGファイルを保存してパスをJSONで
-返すだけで、LLMへ画像を見せるところまでは行いません。`images` の各要素の
-`image_path`（絶対パス）を、続けて `analyze_image` ツール（このスキル専用ではなく
-共通ツール）の `relative_path` 引数にそのまま渡して呼び出してください。
-1回の `analyze_image` 呼び出しで1スライド分が見えるので、複数スライドある場合は
-スライド数分 `analyze_image` を呼びます。
+**Important (2-step procedure)**: this script only saves PNG files and returns their paths in JSON;
+it does not go as far as showing the images to the LLM. Next, pass the `image_path` (absolute path) of each element of `images`
+as is to the `relative_path` argument of the `analyze_image` tool (a shared tool,
+not specific to this skill) and call it.
+One `analyze_image` call shows one slide, so if there are several slides,
+call `analyze_image` once per slide.
 
-## エッジケース
+## Edge cases
 
-- ファイル不在・ディレクトリ指定・拡張子が`.pptx`以外・壊れたファイル/PowerPoint未インストールはエラー終了します。
-- PDF化後のページ数が0になった場合はエラーにはならず終了コード0で返りますが、
-  返るJSONの形が通常時と異なる点に注意（`images: []`に加えて`start_page`/`end_page`が
-  `null`になり、**`target_dpi`キー自体が無くなる**）。
-- 生成されるPNGは一時フォルダ（`rendered/`配下）に保存されます。同一ファイルの
-  再実行時は上書きされます。
-- 依存パッケージ `pywin32`・`pypdfium2`・`pillow` が実行環境に無い場合は
-  `ImportError` で終了コード非0になります。
+- A missing file, a directory, an extension other than `.pptx`, a broken file, or PowerPoint not installed ends with an error.
+- If the number of pages after PDF conversion is 0, it is not an error and returns with exit code 0,
+  but note that the shape of the returned JSON differs from normal (in addition to `images: []`, `start_page`/`end_page` become
+  `null`, and **the `target_dpi` key itself disappears**).
+- Generated PNGs are saved in a temporary folder (under `rendered/`). Rerunning on the same file
+  overwrites them.
+- If the dependencies `pywin32`, `pypdfium2` and `pillow` are not in the environment, it ends
+  with `ImportError` and a non-zero exit code.

@@ -11,14 +11,14 @@ from ._ask_echo import _echo_ask_answer
 from ._ask_echo import _is_text_ask_cancelled
 from ._ask_relay_helper import _ask_with_cross_session_relay
 from ._state import _resolve_ask_timeout
+from ..i18n import t
 
 logger = logging.getLogger(__name__)
 
 
 _ASK_CHOICE_CANCEL_VALUE = "__cancel__"
 _ASK_CHOICE_OTHER_VALUE = "__other__"
-_ASK_CHOICE_CANCEL_MESSAGE = "エラー: ユーザーが選択をキャンセルしました。"
-_ASK_CHOICE_CANCEL_LABEL = "❌ キャンセル"
+_ASK_CHOICE_CANCEL_MESSAGE = "Error: the user cancelled the choice."
 
 
 def _multi_select_answer(res: dict) -> str:
@@ -27,40 +27,39 @@ def _multi_select_answer(res: dict) -> str:
     other = (res.get("other") or "").strip()
     if other:
         selected.append(other)
-    return "、".join(selected) if selected else "(選択なし)"
+    return t("list.separator").join(selected) if selected else t("ask.none_selected")
 
 
 @tool
 async def ask_user_choice(question: str, choices: list[str], multi_select: bool = False) -> str:
-    """会話を続けるために必要な選択を、ユーザーに選択肢形式で質問する。
+    """Ask the user to make a choice needed to continue the conversation, in multiple-choice form.
 
-    複数の進め方・方針からユーザーに1つ（または複数）選んでもらいたい場合に使う。
-    自由記述の回答が必要な場合は AskUserQuestion を使うこと。
+    Use it when you want the user to pick one (or several) of multiple ways or policies.
+    If you need a free-text answer, use AskUserQuestion.
 
-    表示される選択肢には常に「✏️ その他（自由入力）」「❌ キャンセル」が
-    自動的に追加される。「その他」が選ばれた場合は続けて自由記述の入力欄を
-    表示しその回答を返す。「キャンセル」が選ばれた場合は choices に無い
-    指示をユーザーがしたいときの離脱手段として機能する。
+    "Other (free text)" and "Cancel" options are always added automatically to the choices shown.
+    If "Other" is chosen, a free-text input is shown next and its answer is returned. "Cancel"
+    works as a way out when the user wants to give an instruction that is not in choices.
 
     Args:
-        question: ユーザーに表示する質問文。
-        choices: 選択肢の文字列リスト（1件以上）。
-        multi_select: True の場合、チェックボックス形式で複数選択できるように
-            表示し、選択された選択肢をまとめて返す（未選択のまま送信された
-            場合は "(選択なし)" を返す）。False（既定）の場合は従来通り、
-            選択肢ボタンをクリックした時点で即座にその1件を選んで返す
-            （択一で確定させたい場合はこちら）。
+        question: The question shown to the user.
+        choices: A list of choice strings (at least one).
+        multi_select: If True, the choices are shown as checkboxes so several can be selected,
+            and the selected choices are returned together (if submitted with nothing selected,
+            a "nothing selected" marker is returned). If False (default), as before, clicking a
+            choice button immediately selects and returns that one choice
+            (use this when a single answer must be fixed).
 
     Returns:
-        multi_select=False（既定）は選んだ選択肢の文字列、True は選択した
-        選択肢を「、」区切りで連結した文字列（未選択なら "(選択なし)"）。
-        いずれも「その他」経由の場合は自由記述の回答テキストになる。
-        ユーザーがキャンセルした場合は "エラー: ユーザーが選択をキャンセルしま
-        した。" を返す。choices が空の場合や、設定されたタイムアウト秒数以内に
-        応答が無い場合も、例外を送出せず「エラー: ...」形式の文字列を返す。
+        With multi_select=False (default), the chosen choice string; with True, the selected
+        choices joined into one string (a "nothing selected" marker if none).
+        In either case, if it went through "Other", it is the free-text answer.
+        If the user cancels, it returns "Error: the user cancelled the choice."
+        If choices is empty or there is no response within the configured timeout,
+        it returns an "Error: ..." string instead of raising.
     """
     if not choices:
-        return "エラー: choices が空です。1件以上の選択肢を指定してください。"
+        return "Error: choices is empty. Specify at least one choice."
     logger.info("ask_user_choice: %s choices=%s multi_select=%s", question, choices, multi_select)
     timeout = _resolve_ask_timeout(_state._ASK_USER_CHOICE_TIMEOUT_SECONDS)
     thread_id = cl.user_session.get("thread_id") or "_no_session"
@@ -75,21 +74,21 @@ async def ask_user_choice(question: str, choices: list[str], multi_select: bool 
             res = await ask_message.send()
             if res is not None:
                 submitted = res.get("submitted", True)
-                answer = _multi_select_answer(res) if submitted else _ASK_CHOICE_CANCEL_LABEL
+                answer = _multi_select_answer(res) if submitted else t("ask.cancel")
                 await _echo_ask_answer(ask_message, question, answer)
             return res
 
         res = await _ask_with_cross_session_relay(thread_id, _factory_multi, timeout)
         if res is None:
-            return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+            return "Error: there was no response from the user (timeout)."
         if not res.get("submitted", True):
             return _ASK_CHOICE_CANCEL_MESSAGE
         return _multi_select_answer(res)
 
     async def _factory_single():
         actions = [cl.Action(name=f"choice_{i}", payload={"value": c}, label=c) for i, c in enumerate(choices)]
-        actions.append(cl.Action(name="other", payload={"value": _ASK_CHOICE_OTHER_VALUE}, label="✏️ その他（自由入力）"))
-        actions.append(cl.Action(name="cancel", payload={"value": _ASK_CHOICE_CANCEL_VALUE}, label=_ASK_CHOICE_CANCEL_LABEL))
+        actions.append(cl.Action(name="other", payload={"value": _ASK_CHOICE_OTHER_VALUE}, label=t("ask.other")))
+        actions.append(cl.Action(name="cancel", payload={"value": _ASK_CHOICE_CANCEL_VALUE}, label=t("ask.cancel")))
         ask_message = cl.AskActionMessage(content=question, actions=actions, timeout=timeout)
         res = await ask_message.send()
         if res is not None:
@@ -100,7 +99,7 @@ async def ask_user_choice(question: str, choices: list[str], multi_select: bool 
 
     res = await _ask_with_cross_session_relay(thread_id, _factory_single, timeout)
     if res is None:
-        return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+        return "Error: there was no response from the user (timeout)."
     value = res["payload"].get("value") or res.get("label", "")
     if value == _ASK_CHOICE_CANCEL_VALUE:
         return _ASK_CHOICE_CANCEL_MESSAGE
@@ -111,7 +110,7 @@ async def ask_user_choice(question: str, choices: list[str], multi_select: bool 
 
         other_res = await _ask_with_cross_session_relay(thread_id, _factory_other, timeout)
         if other_res is None:
-            return "エラー: ユーザーからの応答がありませんでした（タイムアウト）。"
+            return "Error: there was no response from the user (timeout)."
         if _is_text_ask_cancelled(other_res):
             return _ASK_CHOICE_CANCEL_MESSAGE
         return other_res.get("output", "")

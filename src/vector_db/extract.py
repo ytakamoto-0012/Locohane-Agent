@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import io
+import locale
 from pathlib import Path
 import threading
 
@@ -58,12 +59,12 @@ def extract_segments(path: Path, data: bytes | None = None) -> list[Segment]:
         elif ext in (".md", ".txt", ".csv"):
             segments = [Segment("", _decode_text(path.read_bytes() if data is None else data))]
         else:
-            raise ExtractError(f"対応していない形式です: {ext}")
+            raise ExtractError(f"Unsupported format: {ext}")
     except ExtractError:
         raise
     except Exception as e:  # noqa: BLE001 - 壊れたファイルは1件の失敗として扱い、取り込み全体は止めない
         if ext in _OOXML_EXTENSIONS and _is_encrypted_office(path, data):
-            raise ExtractError("パスワード付き（暗号化された）ファイルのため読めません") from e
+            raise ExtractError("Cannot read because the file is password-protected (encrypted)") from e
         raise ExtractError(f"{type(e).__name__}: {e}") from e
     return [s for s in segments if s.text.strip()]
 
@@ -85,11 +86,12 @@ def _is_encrypted_office(path: Path, data: bytes | None) -> bool:
 
 
 def _decode_text(data: bytes) -> str:
-    """UTF-8（BOM 付き含む）で読み、失敗したら CP932 で読む。"""
-    for encoding in ("utf-8-sig", "cp932"):
+    """UTF-8（BOM 付き含む）→ OS の ANSI コードページ（日本語版 Windows なら cp932、英語版なら cp1252 等）
+    → CP932 の順に読む（ANSI を先にする理由は src/tools/_file_tools_common.py の read_text_with_fallback）。"""
+    for encoding in dict.fromkeys(("utf-8-sig", locale.getencoding(), "cp932")):
         try:
             return data.decode(encoding)
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, LookupError):
             continue
     return data.decode("utf-8", errors="replace")
 
@@ -148,7 +150,7 @@ def _extract_xlsx(source) -> list[Segment]:
                 cells = ["" if v is None else str(v) for v in row]
                 if any(c.strip() for c in cells):
                     rows.append("\t".join(cells).rstrip("\t"))
-            segments.append(Segment(f"シート: {sheet.title}", "\n".join(rows)))
+            segments.append(Segment(f"Sheet: {sheet.title}", "\n".join(rows)))
         return segments
     finally:
         workbook.close()
@@ -170,6 +172,6 @@ def _extract_pptx(source) -> list[Segment]:
         if slide.has_notes_slide and slide.notes_slide.notes_text_frame is not None:
             notes = slide.notes_slide.notes_text_frame.text
             if notes.strip():
-                lines.append(f"[ノート] {notes}")
-        segments.append(Segment(f"スライド{i}", "\n".join(lines)))
+                lines.append(f"[Notes] {notes}")
+        segments.append(Segment(f"Slide {i}", "\n".join(lines)))
     return segments

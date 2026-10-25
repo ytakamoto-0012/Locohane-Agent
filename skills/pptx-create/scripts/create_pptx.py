@@ -20,7 +20,7 @@ from pathlib import Path
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
 if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
-from pptx_common import register_output_path, setup_utf8_stdio  # noqa: E402
+from pptx_common import read_text_with_fallback, register_output_path, setup_utf8_stdio  # noqa: E402
 from office_theme import DEFAULT_THEME, THEMES, resolve_theme  # noqa: E402
 from pptx import Presentation
 from pptx.dml.color import RGBColor
@@ -93,9 +93,9 @@ def style_table(table, theme: dict, has_header: bool) -> None:
 def add_stat_row(slide, prs: Presentation, stats: list, theme: dict, top) -> None:
     n = len(stats)
     if n == 0:
-        raise ValueError("stat レイアウトには stats に1件以上の要素が必要です")
+        raise ValueError("The stat layout needs at least 1 element in stats")
     if n > 4:
-        raise ValueError("stat レイアウトの stats は最大4件です")
+        raise ValueError("stats of the stat layout can have at most 4 elements")
 
     margin = Inches(0.6)
     gap = Inches(0.4)
@@ -108,7 +108,7 @@ def add_stat_row(slide, prs: Presentation, stats: list, theme: dict, top) -> Non
             value = str(item.get("value", ""))
             label = str(item.get("label", ""))
         else:
-            raise ValueError("stats の各要素は {'value':..., 'label':...} の形式にしてください")
+            raise ValueError("Each element of stats must be in the form {'value':..., 'label':...}")
         left = Emu(round(margin + i * (col_width + gap)))
 
         value_box = slide.shapes.add_textbox(left, top, col_width, Inches(1.3))
@@ -156,10 +156,10 @@ def add_table(slide, table_def: dict, left, top, width, height) -> None:
     n_cols = len(headers) if headers else (len(rows[0]) if rows else 0)
     n_rows = (1 if headers else 0) + len(rows)
     if n_cols == 0 or n_rows == 0:
-        raise ValueError("table には headers または rows のいずれかが必要です")
+        raise ValueError("table needs either headers or rows")
     for i, row in enumerate(rows):
         if len(row) != n_cols:
-            raise ValueError(f"table の rows[{i}] の列数が揃っていません（列数: {n_cols}、rows[{i}]: {len(row)}列）")
+            raise ValueError(f"rows[{i}] of table has a different number of columns (columns: {n_cols}, rows[{i}]: {len(row)} columns)")
 
     graphic_frame = slide.shapes.add_table(n_rows, n_cols, left, top, width, height)
     table = graphic_frame.table
@@ -179,13 +179,13 @@ def apply_slide(prs: Presentation, slide_def: dict, theme: dict) -> None:
     layout_key = slide_def.get("layout", "content")
     if layout_key not in LAYOUT_MAP:
         supported = ", ".join(sorted(LAYOUT_MAP))
-        raise ValueError(f"未対応の layout です: {layout_key!r}（対応: {supported}）")
+        raise ValueError(f"Unsupported layout: {layout_key!r} (supported: {supported})")
 
     layout_idx = LAYOUT_MAP[layout_key]
     try:
         layout = prs.slide_layouts[layout_idx]
     except IndexError as e:
-        raise ValueError(f"テンプレートに slide_layouts[{layout_idx}] が存在しません") from e
+        raise ValueError(f"slide_layouts[{layout_idx}] does not exist in the template") from e
     slide = prs.slides.add_slide(layout)
     dark = bool(slide_def.get("dark", False))
 
@@ -211,7 +211,7 @@ def apply_slide(prs: Presentation, slide_def: dict, theme: dict) -> None:
             try:
                 set_bullets(slide.placeholders[1], bullets)
             except KeyError as e:
-                raise ValueError("content レイアウトに本文プレースホルダが見つかりません") from e
+                raise ValueError("No body placeholder found in the content layout") from e
         style_content_title(slide, theme)
 
     elif layout_key == "two_content":
@@ -223,13 +223,13 @@ def apply_slide(prs: Presentation, slide_def: dict, theme: dict) -> None:
             if right_bullets:
                 set_bullets(slide.placeholders[2], right_bullets)
         except KeyError as e:
-            raise ValueError("two_content レイアウトに左右のプレースホルダが見つかりません") from e
+            raise ValueError("No left/right placeholders found in the two_content layout") from e
         style_content_title(slide, theme)
 
     elif layout_key == "table":
         table_def = slide_def.get("table")
         if not table_def:
-            raise ValueError("layout が table のスライドには table キーが必要です")
+            raise ValueError("A slide whose layout is table needs the table key")
         body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
         if body is not None:
             left, top, width, height = body.left, body.top, body.width, body.height
@@ -242,10 +242,10 @@ def apply_slide(prs: Presentation, slide_def: dict, theme: dict) -> None:
     elif layout_key == "picture":
         image_path = slide_def.get("image_path")
         if not image_path:
-            raise ValueError("layout が picture のスライドには image_path キーが必要です")
+            raise ValueError("A slide whose layout is picture needs the image_path key")
         image_file = Path(image_path)
         if not image_file.is_file():
-            raise ValueError(f"image_path が見つかりません: {image_path}")
+            raise ValueError(f"image_path not found: {image_path}")
         body = slide.placeholders[1] if len(slide.placeholders) > 1 else None
         if body is not None:
             left, top, width = body.left, body.top, body.width
@@ -288,24 +288,21 @@ def main() -> int:
     if args.data_file:
         data_file = Path(args.data_file)
         if not data_file.exists():
-            print(f"データファイルが見つかりません: {args.data_file}", file=sys.stderr)
+            print(f"Data file not found: {args.data_file}", file=sys.stderr)
             return 1
-        try:
-            raw = data_file.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raw = data_file.read_text(encoding="cp932")
+        raw = read_text_with_fallback(data_file)
     else:
         raw = args.data
 
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"JSONとして解析できませんでした: {e}", file=sys.stderr)
+        print(f"Could not parse it as JSON: {e}", file=sys.stderr)
         return 1
 
     slide_defs = data.get("slides") if isinstance(data, dict) else None
     if not slide_defs:
-        print("data の 'slides' キーに1件以上のスライド定義が必要です。", file=sys.stderr)
+        print("The 'slides' key of data needs at least 1 slide definition.", file=sys.stderr)
         return 1
 
     try:
@@ -315,14 +312,14 @@ def main() -> int:
         return 1
 
     if not TEMPLATE_PATH.is_file():
-        print(f"テンプレートが見つかりません: {TEMPLATE_PATH}", file=sys.stderr)
+        print(f"Template not found: {TEMPLATE_PATH}", file=sys.stderr)
         return 1
     prs = Presentation(str(TEMPLATE_PATH))
     try:
         for slide_def in slide_defs:
             apply_slide(prs, slide_def, theme)
     except ValueError as e:
-        print(f"スライド生成に失敗しました: {e}", file=sys.stderr)
+        print(f"Slide generation failed: {e}", file=sys.stderr)
         return 1
 
     output_path = Path(args.output_path)
@@ -330,7 +327,7 @@ def main() -> int:
     try:
         prs.save(str(output_path))
     except OSError as e:
-        print(f"ファイルの保存に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to save the file: {e}", file=sys.stderr)
         return 1
 
     result = {
@@ -338,7 +335,7 @@ def main() -> int:
         "total_slides": len(prs.slides),
         "size_bytes": output_path.stat().st_size,
     }
-    path_memory = register_output_path(output_path, description="create_pptxが生成したPPTX")
+    path_memory = register_output_path(output_path, description="PPTX generated by create_pptx")
     if path_memory:
         result["path_memory"] = path_memory
     print(json.dumps(result, ensure_ascii=False))

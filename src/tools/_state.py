@@ -204,7 +204,7 @@ async def _tool_call_semaphore_wrap(request, execute):
         return await execute(request)
     if sem.locked():
         tool_name = request.tool_call.get("name")
-        logger.info("tool_call: 空きスロットが無いため待機します tool=%r", tool_name)
+        logger.info("tool_call: no free slot, waiting tool=%r", tool_name)
     async with sem:
         return await execute(request)
 
@@ -663,7 +663,7 @@ def _resolve_agent_types(agent_type_defs: list[AgentType]) -> dict[str, Resolved
                 tool_obj = tool_lookup.get(tool_name)
                 if tool_obj is None:
                     logger.warning(
-                        "エージェント種別 '%s': 未知のツール '%s' をスキップ",
+                        "Agent type '%s': skipping unknown tool '%s'",
                         agent_def.name,
                         tool_name,
                     )

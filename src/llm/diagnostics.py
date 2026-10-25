@@ -39,7 +39,7 @@ class _CancelScopeBreakageWatcher(logging.Filter):
             # 直近60秒間のヒット数を保持
             self._hits[:] = [t for t in self._hits if now - t < 60]
             logger.warning(
-                "httpcore cancel scope breakage 検知（直近60秒で%d回）。" "ストリームの後始末が別タスクで行われた可能性が高い",
+                "Detected httpcore cancel scope breakage (%d times in the last 60 seconds). The stream was likely cleaned up in another task",
                 len(self._hits),
             )
         return True
@@ -94,7 +94,7 @@ class _DebugResponseLogger(BaseCallbackHandler):
                     reasoning = (getattr(message, "additional_kwargs", None) or {}).get("reasoning_content")
                     tool_calls = getattr(message, "tool_calls", None)
                 logger.debug(
-                    "LLM応答: content=%r reasoning_content=%r tool_calls=%r",
+                    "LLM response: content=%r reasoning_content=%r tool_calls=%r",
                     content,
                     reasoning,
                     tool_calls,
@@ -126,7 +126,7 @@ class _RequestEndpointLogger(BaseCallbackHandler):
 
     def _log(self, run_id: Any) -> None:  # noqa: ANN401
         logger.info(
-            "接続先使用[実リクエスト送信]: role=%s session_id=%r base_url=%s model=%s run_id=%s",
+            "Endpoint used [request sent]: role=%s session_id=%r base_url=%s model=%s run_id=%s",
             self._role,
             self._session_id,
             self._base_url,
@@ -206,13 +206,13 @@ def _log_first_chunk_latency(elapsed_seconds: float, *, sync: bool, never_receiv
     path = "sync" if sync else "async"
     if never_received:
         logger.debug(
-            "初回チャンクを一度も受信せずストリーム終了 [%s, elapsed_ms=%.0f]",
+            "Stream ended without receiving any chunk [%s, elapsed_ms=%.0f]",
             path,
             elapsed_ms,
         )
     else:
         logger.debug(
-            "初回チャンクまで%.0fms [%s]",
+            "%.0fms until the first chunk [%s]",
             elapsed_ms,
             path,
         )

@@ -46,8 +46,8 @@ def _cap_result_size(result: dict) -> None:
     if len(kept) < len(result["matches"]):
         result["truncated"] = True
         result["hint"] = (
-            f"結果が大きすぎるため先頭 {len(kept)} 件のみ返しました。"
-            "pattern・glob・path を絞って検索し直してください。ファイル名だけが必要なら Glob を使ってください。"
+            f"The result was too large, so only the first {len(kept)} entries were returned. "
+            "Narrow pattern, glob or path and search again. If you only need file names, use Glob."
         )
     result["matches"] = kept
     result["returned"] = len(kept)
@@ -89,15 +89,15 @@ def grep_search(
         ValueError: 正規表現が不正・output_modeが不正・対象パスが存在しない場合。
     """
     if output_mode not in _OUTPUT_MODES:
-        raise ValueError(f"output_mode が不正です: {output_mode}")
+        raise ValueError(f"Invalid output_mode: {output_mode}")
     try:
         regex = re.compile(pattern, re.IGNORECASE if case_insensitive else 0)
     except re.error as e:
-        raise ValueError(f"正規表現が不正です: {e}") from e
+        raise ValueError(f"Invalid regular expression: {e}") from e
 
     if not base.exists():
         hint = suggest_similar_dir(base)
-        raise ValueError(f"検索対象パスが見つかりません: {base}{hint}")
+        raise ValueError(f"Search target path not found: {base}{hint}")
 
     target_files: list[Path] = []
     if base.is_file():
@@ -182,31 +182,32 @@ def grep_tool(
     context: int = 0,
     head_limit: int = 50,
 ) -> str:
-    """指定ファイル・ディレクトリ配下のテキストから正規表現で検索し、マッチした行番号・内容を返す。
+    """Search text under a file or directory with a regular expression and return the matching line numbers and contents.
 
-    読み取り専用のため、計画の有無に関わらずいつでも呼んでよい。
-    ファイル名ではなくファイルの中身（テキスト）を検索する（ファイル名検索は `Glob` を使うこと）。
+    It is read-only, so you may call it any time regardless of the plan.
+    It searches file contents (text), not file names (use `Glob` to search file names).
 
     Args:
-        pattern: 検索する正規表現。
-        path: 検索対象の絶対パス（ファイルまたはディレクトリ、`@N` 可）。
-            省略時は作業ディレクトリ配下を検索する。
-        glob: 検索前にファイル名で対象を絞り込むglobパターン（省略可、例: "*.py"）。
-            ディレクトリ検索時のみ有効。マッチ結果には現れない事前フィルタ。
-        case_insensitive: True で大文字小文字を無視する。
-        context: マッチ行の前後何行を含めるか（既定0）。
-        head_limit: 返却するマッチ件数の上限（既定50）。
+        pattern: The regular expression to search for.
+        path: The absolute path to search (a file or directory, `@N` allowed).
+            Defaults to searching under the working directory.
+        glob: A glob pattern to narrow the target files by name before searching (optional,
+            e.g. "*.py"). Only effective when searching a directory. A pre-filter that does not
+            appear in the results.
+        case_insensitive: If True, ignore case.
+        context: How many lines before and after a match to include (default 0).
+        head_limit: The maximum number of matches to return (default 50).
 
     Returns:
-        `{"matched", "total_matches", "returned", "truncated",
-        "matches": [{"path", "line", "text"}, ...], "path_memory"}` 形状のJSON文字列。
-        マッチが1件も無い場合は `{"matched": false, "files": [], "matches": [], "counts": []}`。
-        正規表現が不正・対象パスが存在しない場合は例外を送出せず
-        「エラー: ...」形式の文字列を返す。
+        A JSON string shaped like `{"matched", "total_matches", "returned", "truncated",
+        "matches": [{"path", "line", "text"}, ...], "path_memory"}`.
+        With no matches, `{"matched": false, "files": [], "matches": [], "counts": []}`.
+        If the regular expression is invalid or the target path does not exist, it returns an
+        "Error: ..." string instead of raising.
     """
     base, error = _resolve_file_tools_path(path)
     if error:
-        return f"エラー: {error}"
+        return f"Error: {error}"
     signature = f"Grep\x00{pattern}\x00{base}\x00{glob}\x00" f"{case_insensitive}\x00{context}\x00{head_limit}"
     dup_error = _check_file_tools_duplicate("Grep", signature)
     if dup_error:
@@ -225,7 +226,7 @@ def grep_tool(
         )
     except ValueError as e:
         hint = suggest_from_path_memory(str(base)) if not base.exists() else ""
-        return f"エラー: {e}{hint}"
+        return f"Error: {e}{hint}"
     if result["matched"]:
         _cap_result_size(result)
         paths = list(dict.fromkeys(m["path"] for m in result["matches"]))

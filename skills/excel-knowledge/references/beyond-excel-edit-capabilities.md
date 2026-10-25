@@ -1,52 +1,48 @@
-# excel-editのopで表現できない要求に当たったとき
+# When you hit a request that excel-edit's ops cannot express
 
-`excel-edit`の`add_chart`は`type`に`bar`/`line`/`pie`/`scatter`しか受け付けず、
-**積み上げ（stacked）棒グラフや複合グラフのような細かいバリエーションには
-非対応**。この制約に当たったときの対処を誤ると被害が大きい失敗につながった
-実例がある。
+`add_chart` of `excel-edit` accepts only `bar`/`line`/`pie`/`scatter` for `type`,
+and **does not support finer variations such as stacked bar charts or combination charts**
+(note: stacked bar charts are now supported with `grouping`; combination charts are still not).
+There is a real case where handling this constraint wrongly led to a failure with heavy damage.
 
-## 悪い対処: 生openpyxlへバイパスしてxlsmを直接壊す
+## Bad handling: bypassing to raw openpyxl and breaking the xlsm directly
 
-「積み上げ棒グラフ＋折れ線グラフ」を求められたセッションで、`add_chart`の
-`type`に積み上げ指定が無いことには正しく気づいたものの、その後
-`execute_python_code`で`openpyxl.load_workbook`→`wb.save()`という生openpyxl
-操作に切り替え、20ターン超にわたって以下を繰り返した。
+In a session asked for "a stacked bar chart + a line chart", the model correctly noticed that `type` of `add_chart`
+had no stacked option, but then switched to raw openpyxl operations,
+`openpyxl.load_workbook` -> `wb.save()` with `execute_python_code`, and repeated the following for more than 20 turns.
 
-- `bar_chart.type = "stacked"`（openpyxlに存在しない属性値）
-- `Series(value=...)`（正しくは`values=`。以降`chart.type`参照でAttributeError）
-- `bar_chart.series[0]`を空リストに対して参照し`IndexError`
+- `bar_chart.type = "stacked"` (an attribute value that does not exist in openpyxl)
+- `Series(value=...)` (correctly `values=`; after that, an AttributeError when referring to `chart.type`)
+- referring to `bar_chart.series[0]` on an empty list, giving `IndexError`
 
-さらに、生openpyxlで`.xlsm`を直接`wb.save()`した結果、Excel COMで開けない
-ファイル破損が発生した（`edit_excel.py`は`.xlsm`読込時に自動で
-`keep_vba=(ext == ".xlsm")`を付けているが、生openpyxlでの`load_workbook`/
-`save`を自前で書く場合はこれが保証されない。**マクロが失われる、または
-ファイル形式が壊れて「Excel でファイル '...' を開くことができません。
-ファイル形式またはファイル拡張子が正しくありません。」というエラーで
-開けなくなるリスクがある**）。壊れたファイルはその後の復旧作業でも
-[[edit-excel-invocation-contract]]の「edit_excel.pyの誤用」を誘発し、
-被害がさらに広がった。同じ失敗類型の別実例（フォント名変更）と、
-そこから迷走が長引いた際の抜け出し方は[[raw-openpyxl-xlsm-fallback]]参照。
+Furthermore, saving the `.xlsm` directly with `wb.save()` in raw openpyxl corrupted the file so that Excel COM
+could not open it (`edit_excel.py` automatically adds `keep_vba=(ext == ".xlsm")` when reading `.xlsm`,
+but this is not guaranteed when you write `load_workbook`/`save` in raw openpyxl yourself. **There is a risk
+that the macros are lost, or that the file format breaks and it can no longer be opened, with the error
+"Excel cannot open the file '...' because the file format or file extension is not valid"**).
+The broken file then also triggered the "misuse of edit_excel.py" of [[edit-excel-invocation-contract]]
+during the recovery work, spreading the damage further. For another real case of the same type of failure
+(changing font names) and how to get out when going in circles drags on, see [[raw-openpyxl-xlsm-fallback]].
 
-## 推奨する対処の順序
+## Recommended order of actions
 
-1. まず`format_table`・`row_styles`・テーマ配色など、**既存opの組み合わせで
-   近い見た目を再現できないか**を検討する（完全一致でなくても許容範囲か
-   ユーザーに確認する余地がある）。
-2. それでも表現できない場合は、無理に生openpyxlへ回避せず、
-   「excel-editでは積み上げグラフのような細かい種類指定には対応していない」
-   ことをユーザーに伝え、代替案（積み上げなしの通常の棒グラフにする、等）を
-   提示してから進める（`add_image`のトリミング非対応時と同じ立ち位置。
-   `excel-edit`のSKILL.md「画像・グラフの追加と調整」の禁止事項も参照）。
-3. **どうしてもユーザーが生openpyxlでの直接編集を望む場合**は、
-   `.xlsm`を対象にするなら`load_workbook(path, keep_vba=True)`を必ず明示し、
-   保存前にバックアップ（`shutil.copy2`で別名保存）を取ってから上書きする。
-   保存後は`excel-render`で開ける状態か画像確認し、可能なら実際に
-   Excel COM等で開けることまで確認してから完了報告する。
+1. First consider **whether a similar look can be reproduced by combining existing ops**, such as
+   `format_table`, `row_styles` and theme colors (even if not an exact match, there is room to confirm
+   with the user whether it is acceptable).
+2. If it still cannot be expressed, do not force a workaround with raw openpyxl;
+   tell the user that "excel-edit does not support fine type specifications like this chart",
+   and present alternatives (such as a normal bar chart instead) before proceeding (the same position as
+   when cropping is not supported for `add_image`; also see the prohibitions in "Adding and adjusting images
+   and charts" of the `excel-edit` SKILL.md).
+3. **If the user really wants direct editing with raw openpyxl**,
+   always state `load_workbook(path, keep_vba=True)` explicitly when targeting `.xlsm`,
+   and take a backup (save under another name with `shutil.copy2`) before overwriting.
+   After saving, check with images via `excel-render` that it can be opened, and if possible
+   confirm that it can actually be opened with Excel COM etc. before reporting completion.
 
-## 一般原則
+## General principle
 
-**「ツールのopで表現できない」と分かった時点を、生スクリプトへの
-バイパスの合図にしない。** バイパスは正規のop以上に自由度が高い分、
-壊れたときの被害（ファイル破損・マクロ消失）も大きい。まず制約を
-ユーザーに伝えて期待値をすり合わせる方が、無言で20ターン試行錯誤して
-ファイルを壊すより早く安全に着地する。
+**Do not treat the moment you find "the tool's ops cannot express this" as the signal to bypass
+to raw scripts.** A bypass has more freedom than the regular ops, so the damage when it breaks
+(file corruption, lost macros) is also larger. Telling the user about the constraint first and aligning expectations
+lands faster and more safely than silently trying things for 20 turns and breaking the file.

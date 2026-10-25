@@ -12,6 +12,7 @@ import chainlit as cl
 import logging
 
 from .. import skill_drafts
+from ..tool_errors import looks_like_error
 from ..tool_loop_guard import find_leaked_tool_markup, leaked_tool_markup_error
 from . import _state
 from ._safe_path import _is_guard_exempt_script, _safe_path
@@ -52,22 +53,12 @@ def _log_tool_calls_debug(input) -> None:  # noqa: A002
     logger.debug("tool_call: name=%s args=%r id=%s", call.get("name"), call.get("args"), call.get("id"))
 
 
-def _contains_error(content: str) -> bool:
-    """文字列にエラーを示すキーワードが含まれるかを判定する。
-
-    日本語「エラー」、英語「error」(大文字小文字区別なし)、全角カタカナ
-    「ｴﾗｰ」に対応する。
-    """
-    content_lower = content.lower()
-    return "エラー" in content or "error" in content_lower or "ｴﾗｰ" in content
-
-
 def _log_tool_results_debug(result: dict, call_args: dict | None = None) -> None:
     """メイングラフのツール呼び出し結果を DEBUG レベルで記録する（全文、未省略）。
 
     execute_python_* 系ツールは成功時も WARNING（スキル開発アイデアの
     シグナルとして記録。代替スキルが作られれば LLM は呼ばなくなる）。
-    エラーキーワードを含むメッセージも WARNING。
+    エラーを示す戻り値（src/tool_errors.py の looks_like_error）も WARNING。
     execute_python_code の場合は call_args に code が含まれるため、
     WARNINGログにも含める（monitor-app-log スキルでissue起票可能にする）。
     """
@@ -75,7 +66,7 @@ def _log_tool_results_debug(result: dict, call_args: dict | None = None) -> None
         name = getattr(msg, "name", None) or ""
         content = msg.content or ""
         is_execute_python = name.startswith("execute_python_")
-        has_error = _contains_error(content)
+        has_error = looks_like_error(content)
 
         if is_execute_python or has_error:
             if is_execute_python and call_args and "code" in call_args:
@@ -188,7 +179,7 @@ def _guard_awaiting_approve_plan(input):  # noqa: A002
     return {
         "messages": [
             ToolMessage(
-                content=("エラー: create_planの直後はapprove_planを呼んでください" "（他のツールは実行されませんでした）。"),
+                content=("Error: call approve_plan right after create_plan" " (the other tools were not run)."),
                 name=name,
                 tool_call_id=call.get("id"),
                 status="error",
@@ -285,25 +276,25 @@ def _guard_main_agent_tool_limit(input):  # noqa: A002
             guard_max_calls = entries_by_key[pair]
     if signature is None:
         # 許可リストに存在しない＝メインエージェントからは一切呼び出せない。
-        content = f"エラー: {name} はメインエージェントとして許可されていません（main_agent_tool_guard.allow_entries未登録）。"
+        content = f"Error: {name} is not allowed for the main agent (not registered in main_agent_tool_guard.allow_entries)."
     elif guard_max_calls == -1:
         return None
     elif guard_max_calls <= 0:
-        content = f"エラー: {name} はメインエージェントとして呼び出しを禁止されています（max_calls=0）。"
+        content = f"Error: {name} is forbidden for the main agent (max_calls=0)."
     elif not _record_and_check_duplicate("main_agent_tool_guard_call_count", signature, guard_max_calls):
         return None
     else:
-        content = f"エラー: {name} はメインエージェントとして既に呼び出し上限（{guard_max_calls}回）に達しています。"
+        content = f"Error: {name} has already reached the call limit for the main agent ({guard_max_calls} times)."
     # agent_type一覧はagents/*.mdの走査結果（_state._AGENT_TYPES）から動的に組み立てる。
     # 種別を文言へ決め打ちすると、将来 agent_type が増減しても案内が追従せず、
     # 存在しない/古い種別へ誘導してしまう（dispatch_agentの不明agent_typeエラー
     # メッセージと同じ組み立て方、2972行目付近参照）。
-    available_agent_types = ", ".join(sorted(_state._AGENT_TYPES)) or "dispatch_agentのagent_type一覧を確認"
+    available_agent_types = ", ".join(sorted(_state._AGENT_TYPES)) or "see the agent_type list of dispatch_agent"
     return {
         "messages": [
             ToolMessage(
                 content=(
-                    f"{content}これ以上自分で実行せず、残りの調査・処理は dispatch_agent（agent_type: {available_agent_types}）へ委譲してください。"
+                    f"{content} Do not run any more yourself; delegate the remaining investigation/processing to dispatch_agent (agent_type: {available_agent_types})."
                 ),
                 name=name,
                 tool_call_id=call.get("id"),

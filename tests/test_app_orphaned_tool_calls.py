@@ -93,20 +93,20 @@ def test_build_orphaned_placeholder_messages_for_dispatch_agent_with_existing_re
     note_path = _scratch_notes_path_for_run(sanitize_run_id(tc["id"]))
     note_path.write_text("退避内容", encoding="utf-8")
 
-    messages = _build_orphaned_placeholder_messages(tc, "ユーザーの停止操作等により、")
+    messages = _build_orphaned_placeholder_messages(tc, "Because the user stopped it (or similar), ")
 
     assert len(messages) == 2
     tool_msg, human_msg = messages
     assert isinstance(tool_msg, ToolMessage)
     assert tool_msg.tool_call_id == "tc-1"
     assert tool_msg.name == "dispatch_agent"
-    assert "ユーザーの停止操作等により、このツール呼び出しの実行が中断されました。" in tool_msg.content
+    assert "Because the user stopped it (or similar), the execution of this tool call was interrupted." in tool_msg.content
     assert str(note_path) in tool_msg.content
     assert "explore" in tool_msg.content
     assert "write_thread_note" in tool_msg.content
     assert isinstance(human_msg, HumanMessage)
     assert str(note_path) in human_msg.content
-    assert "別の作業内容への変更や中断" in human_msg.content
+    assert "change to different work or to stop" in human_msg.content
 
 
 def test_build_orphaned_placeholder_messages_for_dispatch_agent_without_rescue_file(monkeypatch, tmp_path) -> None:
@@ -114,23 +114,23 @@ def test_build_orphaned_placeholder_messages_for_dispatch_agent_without_rescue_f
     _setup_workdir(monkeypatch, tmp_path)
     tc = {"name": "dispatch_agent", "args": {}, "id": "tc-missing", "type": "tool_call"}
 
-    messages = _build_orphaned_placeholder_messages(tc, "ユーザーの停止操作等により、")
+    messages = _build_orphaned_placeholder_messages(tc, "Because the user stopped it (or similar), ")
 
     assert len(messages) == 2
     tool_msg, human_msg = messages
-    assert "確認できませんでした" in tool_msg.content
-    assert "確認できませんでした" in human_msg.content
+    assert "could not be confirmed" in tool_msg.content
+    assert "could not be confirmed" in human_msg.content
 
 
 def test_build_orphaned_placeholder_messages_for_other_tool_returns_single_tool_message() -> None:
     tc = {"name": "read_skill", "args": {}, "id": "tc-2", "type": "tool_call"}
 
-    messages = _build_orphaned_placeholder_messages(tc, "直前のセッション異常により、")
+    messages = _build_orphaned_placeholder_messages(tc, "Because the previous session ended abnormally, ")
 
     assert len(messages) == 1
     assert isinstance(messages[0], ToolMessage)
     assert messages[0].tool_call_id == "tc-2"
-    assert "直前のセッション異常により、このツール呼び出しの実行が中断されました。" in messages[0].content
+    assert "Because the previous session ended abnormally, the execution of this tool call was interrupted." in messages[0].content
     assert "write_scratch_note" not in messages[0].content
 
 
@@ -142,12 +142,12 @@ def test_build_orphaned_placeholder_messages_for_batch_lists_all_group_rescue_fi
     for p in paths:
         p.write_text("退避内容", encoding="utf-8")
 
-    messages = _build_orphaned_placeholder_messages(tc, "ユーザーの停止操作等により、")
+    messages = _build_orphaned_placeholder_messages(tc, "Because the user stopped it (or similar), ")
 
     assert len(messages) == 2
     tool_msg, human_msg = messages
     assert tool_msg.name == "dispatch_agent_batch"
     # グループ番号順（g2→g10）に並ぶ。
     assert tool_msg.content.index(str(paths[1])) < tool_msg.content.index(str(paths[0]))
-    assert "dispatch_agent_batchへの委譲は中断" in human_msg.content
+    assert "delegation to dispatch_agent_batch was interrupted" in human_msg.content
     assert str(paths[0]) in human_msg.content

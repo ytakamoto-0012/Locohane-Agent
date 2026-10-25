@@ -25,7 +25,7 @@ from .diagnostics import (
     _RequestEndpointLogger,
     describe_current_task,
 )
-from .loop_guard import ThinkingLoopDetected, _chunk_delta_text, _ThinkingLoopDetector
+from .loop_guard import ThinkingLoopDetected, _ThinkingLoopDetector, feed_chunk
 from .routing import (
     _active_async_clients,
     _CURRENT_SESSION_ID,
@@ -212,7 +212,7 @@ class ChatLlamaCpp(ChatOpenAI):
 
     def _stream(self, *args: Any, **kwargs: Any) -> Any:
         if _LLM_REQUEST_SEMAPHORE is not None:
-            logger.warning("同期ストリームパス (_stream) が呼ばれました。この経路はセマフォでガードされません。")
+            logger.warning("The synchronous stream path (_stream) was called. This path is not guarded by the semaphore.")
         if not self.loop_guard_enabled:
             yield from super()._stream(*args, **kwargs)
             return
@@ -222,17 +222,18 @@ class ChatLlamaCpp(ChatOpenAI):
         first_chunk_seen = False
         try:
             for chunk in inner:
-                if detector.feed(_chunk_delta_text(
+                if feed_chunk(
+                    detector,
                     chunk,
                     include_reasoning=self.loop_guard_include_reasoning,
                     include_content=self.loop_guard_include_content,
-                )):
+                ):
                     snippet = detector.snippet()
                     logger.warning(
-                        "LLM応答のループを検知したため生成を打ち切ります（直近テキスト: %r）",
+                        "Detected an LLM response loop, stopping generation (recent text: %r)",
                         snippet,
                     )
-                    raise ThinkingLoopDetected("LLM応答が反復ループに陥ったため打ち切りました", snippet=snippet)
+                    raise ThinkingLoopDetected("Stopped because the LLM response fell into a repetition loop", snippet=snippet)
                 if not first_chunk_seen:
                     first_chunk_seen = True
                     _log_first_chunk_latency(time.time() - stream_started_at, sync=True)
@@ -241,7 +242,7 @@ class ChatLlamaCpp(ChatOpenAI):
             try:
                 inner.close()
             except Exception:  # noqa: BLE001 - 過剰ログを避ける
-                logger.debug("ストリームの後始末(close)中に例外が発生しました", exc_info=True)
+                logger.debug("Exception while cleaning up the stream (close)", exc_info=True)
             if not first_chunk_seen:
                 _log_first_chunk_latency(time.time() - stream_started_at, sync=True, never_received=True)
 
@@ -258,7 +259,7 @@ class ChatLlamaCpp(ChatOpenAI):
                 yield chunk
             return
         if sem.locked():
-            logger.debug("空きスロットが無いため待機します（llm concurrent guard）")
+            logger.debug("No free slot, waiting (llm concurrent guard)")
             notify_llm_wait(True)
         async with sem:
             notify_llm_wait(False)
@@ -292,19 +293,20 @@ class ChatLlamaCpp(ChatOpenAI):
         first_chunk_seen = False
         try:
             async for chunk in agen:
-                if detector.feed(_chunk_delta_text(
+                if feed_chunk(
+                    detector,
                     chunk,
                     include_reasoning=self.loop_guard_include_reasoning,
                     include_content=self.loop_guard_include_content,
-                )):
+                ):
                     snippet = detector.snippet()
                     diag = describe_current_task(diag_start)
                     logger.warning(
-                        "LLM応答のループを検知したため生成を打ち切ります" "（直近テキスト: %r） [%s]",
+                        "Detected an LLM response loop, stopping generation (recent text: %r) [%s]",
                         snippet,
                         diag,
                     )
-                    loop_exc = ThinkingLoopDetected("LLM応答が反復ループに陥ったため打ち切りました", snippet=snippet)
+                    loop_exc = ThinkingLoopDetected("Stopped because the LLM response fell into a repetition loop", snippet=snippet)
                     raise loop_exc
                 if not first_chunk_seen:
                     first_chunk_seen = True
@@ -342,7 +344,7 @@ class ChatLlamaCpp(ChatOpenAI):
                     await agen.aclose()
                 diag_elapsed = (time.time() - diag_start) * 1000
                 logger.debug(
-                    "ストリームの後始末(aclose)完了 [%s, elapsed_ms=%.0f]",
+                    "Stream cleanup (aclose) finished [%s, elapsed_ms=%.0f]",
                     describe_current_task(diag_start),
                     diag_elapsed,
                 )
@@ -351,16 +353,13 @@ class ChatLlamaCpp(ChatOpenAI):
                 if loop_exc is not None:
                     loop_exc.client_broken = True
                     logger.warning(
-                        "ストリームの後始末(aclose)がタイムアウトしました"
-                        "（5秒）。httpx.AsyncClientが壊れている可能性が高い。"
-                        "呼び出し元でのリトライ前にクライアントの再生成が必要です"
-                        " [%s, elapsed_ms=%.0f]",
+                        "Stream cleanup (aclose) timed out (5 seconds). The httpx.AsyncClient is likely broken; the client must be recreated before the caller retries [%s, elapsed_ms=%.0f]",
                         describe_current_task(diag_start),
                         diag_elapsed,
                     )
                 else:
                     logger.debug(
-                        "ストリームの後始末(aclose)がタイムアウトしました" "（5秒） [%s, elapsed_ms=%.0f]",
+                        "Stream cleanup (aclose) timed out (5 seconds) [%s, elapsed_ms=%.0f]",
                         describe_current_task(diag_start),
                         diag_elapsed,
                     )
@@ -369,16 +368,13 @@ class ChatLlamaCpp(ChatOpenAI):
                 if loop_exc is not None:
                     loop_exc.client_broken = True
                     logger.warning(
-                        "ストリームの後始末(aclose)に失敗しました。"
-                        "httpx.AsyncClientが壊れている可能性があるため、"
-                        "呼び出し元でのリトライ前にクライアントの再生成が必要です"
-                        " [%s, elapsed_ms=%.0f]",
+                        "Stream cleanup (aclose) failed. The httpx.AsyncClient may be broken, so the client must be recreated before the caller retries [%s, elapsed_ms=%.0f]",
                         describe_current_task(diag_start),
                         diag_elapsed,
                     )
                 else:
                     logger.debug(
-                        "ストリームの後始末中に例外が発生しました [%s, elapsed_ms=%.0f]",
+                        "Exception while cleaning up the stream [%s, elapsed_ms=%.0f]",
                         describe_current_task(diag_start),
                         diag_elapsed,
                     )
@@ -394,7 +390,7 @@ class ChatLlamaCpp(ChatOpenAI):
             self._release_slot_reservation()
             return await super()._agenerate(*args, **kwargs)
         if sem.locked():
-            logger.debug("空きスロットが無いため待機します（llm concurrent guard）")
+            logger.debug("No free slot, waiting (llm concurrent guard)")
             notify_llm_wait(True)
         async with sem:
             notify_llm_wait(False)
@@ -408,7 +404,7 @@ class ChatLlamaCpp(ChatOpenAI):
         気づけるよう警告ログを出力して親の処理をそのまま返す。
         """
         if _LLM_REQUEST_SEMAPHORE is not None:
-            logger.warning("同期生成パス (_generate) が呼ばれました。" "この経路はセマフォでガードされません。")
+            logger.warning("The synchronous generate path (_generate) was called. This path is not guarded by the semaphore.")
         return super()._generate(*args, **kwargs)
 
 
@@ -509,8 +505,7 @@ async def build_model(
     # 予約が失効まで他の選択を次点へ追いやるため）。
     slot_reservation_token = reserve_slot(endpoint) if wait_when_busy else None
     logger.info(
-        "build_model()呼び出し: role=%s routing_strategy=%s session_id=%r -> "
-        "base_url=%s model=%s [diag] %s",
+        "build_model() called: role=%s routing_strategy=%s session_id=%r -> base_url=%s model=%s [diag] %s",
         role,
         routing_strategy,
         _CURRENT_SESSION_ID.get(),
@@ -633,8 +628,8 @@ def enable_thinking_control(model: Any, config: Config, role: Literal["main", "s
     if config.enable_thinking is False or config.reasoning_effort == "none":
         _warn_once(
             ("*", "thinking_control"),
-            "[thinking_control].enabled=true ですが [llm] 側で思考が無効"
-            "（enable_thinking=false / reasoning_effort=none）のため、思考レベルの切り替えは行いません",
+            "[thinking_control].enabled=true, but thinking is disabled on the [llm] side "
+            "(enable_thinking=false / reasoning_effort=none), so the thinking level is not switched",
         )
         return model
     model.thinking_control = settings_from_config(config)

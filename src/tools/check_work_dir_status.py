@@ -59,23 +59,20 @@ def probe_workdir_access(path: Path) -> WorkDirAccessStatus:
 
 @tool
 def check_work_dir_status() -> str:
-    """作業ディレクトリのアクセス状況を確認する。
+    """Check the access status of the working directory.
 
-    run_script / execute_python_code が原因不明の読み書きエラーを返した
-    ときに使う。
+    Use it when run_script / execute_python_code returns a read/write error with an unknown cause.
 
     Returns:
-        absolute_path・state（read_write/read_only/unreadable/not_found）・
-        write_dir・description をキーに持つJSON文字列（アクセス不可時は
-        read_dir も追加）。パス値を他の説明文と混在させると低パラメータ
-        モデルが説明文込みで1つのパスとして誤認識することがあるため、
-        パスは必ず独立したキーに分離する。**書き込みは常に write_dir へ
-        行う。state は書き込み先の判断に使わない**（write_dir が
-        absolute_path と同じ値なら直接書ける、異なる値ならリダイレクト
-        されている）。
+        A JSON string with the keys absolute_path, state (read_write/read_only/unreadable/not_found),
+        write_dir and description (read_dir is added when it is not accessible). Paths are always
+        kept in separate keys, because mixing path values with explanatory text can make
+        low-parameter models misread the text as part of one path. **Always write to write_dir.
+        Do not use state to decide where to write** (if write_dir equals absolute_path you can
+        write there directly; if it differs, writes are redirected).
     """
     if _state._DEFAULT_WORKDIR is None:
-        return json.dumps({"error": "init_tools() が未実行です"}, ensure_ascii=False)
+        return json.dumps({"error": "init_tools() has not been run"}, ensure_ascii=False)
     work_dir = cl.user_session.get("work_dir")
     status = None
     if work_dir:

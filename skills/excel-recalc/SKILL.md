@@ -1,6 +1,6 @@
 ---
 name: excel-recalc
-description: xlsx/xlsm/xlsファイルの数式を実際にMicrosoft Excelで再計算し、計算結果とエラーセル（#DIV/0!等）を検出するスキル。ローカルにMicrosoft Excelが導入され対話セッションから呼ばれている必要がある（EXCEL.EXEを一時起動するCOM経由の処理）。excel-editスキルで数式を書き込んだ直後に計算結果を確認したいとき、数式エラーが無いか検査したいときに使う。
+description: A skill that actually recalculates the formulas of xlsx/xlsm/xls files with Microsoft Excel and detects the results and error cells (#DIV/0!, etc.). Microsoft Excel must be installed locally and it must be called from an interactive session (it starts EXCEL.EXE temporarily via COM). Use it when you want to check calculation results right after writing formulas with the excel-edit skill, or to check for formula errors.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,31 +9,31 @@ metadata:
 
 # excel-recalc
 
-xlsx/xlsm/xls の数式を実際に再計算し、エラーセルを検出するスキル。
-`recalc_excel.py` を実行する。
+A skill that actually recalculates the formulas of xlsx/xlsm/xls and detects error cells.
+Runs `recalc_excel.py`.
 
-## 呼び出し
+## Calling it
 
 ```bash
 python recalc_excel.py "C:\Users\me\book.xlsx"
 ```
-excel-editスキルの`edit_excel.py`で書いた数式はopenpyxlでは評価されないため、計算結果を確認したい場合はこのスクリプトを実行後、excel-readスキルの`read_excel.py --data-only`で読み直す。Excel本体をバックグラウンド起動し実際に計算・上書き保存する。
+Formulas written with `edit_excel.py` of the excel-edit skill are not evaluated by openpyxl, so to check the results, run this script and then read the file again with `read_excel.py --data-only` of the excel-read skill. It starts Excel in the background, actually calculates and overwrites the file.
 
-## 入出力の型
+## Input/output types
 
-成功=終了コード0＋JSON1行を標準出力。失敗=終了コード非0＋エラーメッセージを標準エラー。エラー文はそのままユーザーへ伝える。
+Success = exit code 0 + one line of JSON on stdout. Failure = non-zero exit code + an error message on stderr. Pass the error text to the user as is.
 
-## 出力
+## Output
 
-`{"path":..., "recalculated": true, "errors": [{"sheet":"Sheet1","cell":"B5","value":"#DIV/0!"}]}`。`errors`が空なら数式エラーなし。1件でもあればどのシート・セルかをユーザーへ報告し、必要ならexcel-editスキルの`set_cell`で修正する。
+`{"path":..., "recalculated": true, "errors": [{"sheet":"Sheet1","cell":"B5","value":"#DIV/0!"}]}`. If `errors` is empty, there are no formula errors. If there is even one, report the sheet and cell to the user, and fix it with `set_cell` of the excel-edit skill if needed.
 
-## 制約（実行前にユーザーへ伝えるべき情報）
+## Constraints (information to tell the user before running)
 
-- **ローカルにMicrosoft Excelが導入され、対話セッションから呼ばれている必要がある**（サーバーサービス実行では動かない可能性が高い。Windowsネイティブ環境前提のこのプロジェクトでは通常問題ないが、Excel未導入環境では使えない）。
-- 内部でEXCEL.EXEを一時起動する。処理完了時は必ず終了させるが、**スクリプトが強制終了された場合は残留する可能性あり**。この場合はタスクマネージャーでの手動終了ではなく、`python recalc_excel.py --recover-locks`（`path`は不要）を実行する（自セッションが`recalc_excel.py`/`edit_vba.py`/excel-render等で起動して残留したCOMプロセスのうち、まだ生存しているものだけを内部で終了する。無関係なExcelプロセスを巻き込む余地はない）。実行後`{"recovered": [...]}`に終了したPID一覧が返る。
-- 大きいワークブックは実行タイムアウト（既定60秒）を超える可能性あり。超過時はタイムアウト増加を提案する。
-- インターネット由来（Mark of the Web付き）ファイルは保護ビューで開かれ正しく再計算できない場合がある（このスキルで生成・編集したファイルなら通常問題ない）。
+- **Microsoft Excel must be installed locally and it must be called from an interactive session** (it most likely does not work when run as a server service; this project assumes a native Windows environment, so this is normally not a problem, but it cannot be used where Excel is not installed).
+- It starts EXCEL.EXE temporarily. It always closes it when done, but **if the script is forcibly terminated, it may be left behind**. In that case, instead of ending it manually in Task Manager, run `python recalc_excel.py --recover-locks` (no `path` needed) (it terminates internally only those COM processes started by this session with `recalc_excel.py`/`edit_vba.py`/excel-render etc. that were left behind and are still alive; there is no way for it to involve unrelated Excel processes). Afterwards `{"recovered": [...]}` returns the list of terminated PIDs.
+- Large workbooks may exceed the execution timeout (default 60 seconds). If exceeded, suggest increasing the timeout.
+- Files from the internet (with the Mark of the Web) open in Protected View and may not recalculate correctly (files generated or edited with these skills are normally fine).
 
-## エッジケース
+## Edge cases
 
-ファイル不在／拡張子がxlsx・xlsm・xls以外はエラー＋終了コード1。`pywin32`未導入は`ImportError`（該当する`pip install pywin32`をユーザーに促す）。ExcelのCOMエラー（未インストール／未認証／他プロセスで開かれている等）は「Excelでの再計算に失敗しました: ...」＋終了コード1（そのままユーザーへ伝える）。
+A missing file, or an extension other than xlsx/xlsm/xls, is an error with exit code 1. Missing `pywin32` gives `ImportError` (prompt the user to run `pip install pywin32`). Excel COM errors (not installed / not activated / opened by another process, etc.) give "Recalculation with Excel failed: ..." with exit code 1 (pass it to the user as is).

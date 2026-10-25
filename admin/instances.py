@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from src.config import PROJECT_ROOT, load_config
+from admin.i18n import t as _t
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 # 新規作成時のインスタンス名の上限文字数。インスタンス名は data/<name>/ 等のパスに
@@ -112,7 +113,7 @@ class InstanceMeta:
 def validate_name(name: str) -> None:
     """インスタンス名の妥当性を検証する（そのままディレクトリ名に使うため制限する）。"""
     if not _NAME_RE.match(name):
-        raise InstanceError(f"インスタンス名は半角英数字・アンダースコア・ハイフンのみ、1〜32文字にしてください: {name!r}")
+        raise InstanceError(_t("インスタンス名は半角英数字・アンダースコア・ハイフンのみ、1〜32文字にしてください: {0!r}", name))
 
 
 def validate_new_name(name: str) -> None:
@@ -120,7 +121,7 @@ def validate_new_name(name: str) -> None:
     validate_name(name)
     if len(name) > NEW_NAME_MAX_LEN:
         raise InstanceError(
-            f"インスタンス名は{NEW_NAME_MAX_LEN}文字以内にしてください（データ保存先のパスが長くなりすぎるため）: {name!r}"
+            _t("インスタンス名は{0}文字以内にしてください（データ保存先のパスが長くなりすぎるため）: {1!r}", NEW_NAME_MAX_LEN, name)
         )
 
 
@@ -163,7 +164,7 @@ def list_instance_names(instances_root: Path) -> list[str]:
 def read_instance(instances_root: Path, name: str) -> InstanceMeta:
     path = instance_json_path(instances_root, name)
     if not path.is_file():
-        raise InstanceError(f"インスタンス {name!r} が見つかりません。")
+        raise InstanceError(_t("インスタンス {0!r} が見つかりません。", name))
     data = json.loads(path.read_text(encoding="utf-8"))
     return InstanceMeta(
         name=name,
@@ -219,7 +220,7 @@ def suggest_port(instances_root: Path, host: str, exclude_ports: set[int], start
     while port in used or not is_port_available(host, port):
         port += 1
         if port > 65535:
-            raise InstanceError("空いているポートが見つかりませんでした。")
+            raise InstanceError(_t("空いているポートが見つかりませんでした。"))
     return port
 
 
@@ -249,8 +250,7 @@ def _check_data_dir_conflict(instances_root: Path, config_ini_path: Path, *, nam
         other_checkpoint_db = _effective_checkpoint_db(config_ini_path, overrides_path(instances_root, other_name), other_name)
         if other_checkpoint_db == own_checkpoint_db:
             raise InstanceError(
-                f"データ保存先がインスタンス {other_name!r} と重複しています（{own_checkpoint_db}）。"
-                "[paths].common_data_dir を分けてください。"
+                _t("データ保存先がインスタンス {0!r} と重複しています（{1}）。[paths].common_data_dir を分けてください。", other_name, own_checkpoint_db)
             )
 
 
@@ -279,7 +279,7 @@ def check_conflicts(
         if other_meta.is_skill_lab:
             continue
         if other_meta.app_host == app_host and other_meta.app_port == app_port:
-            raise InstanceError(f"ポート {app_host}:{app_port} は既にインスタンス {other_name!r} が使用しています。")
+            raise InstanceError(_t("ポート {0}:{1} は既にインスタンス {2!r} が使用しています。", app_host, app_port, other_name))
     _check_data_dir_conflict(instances_root, config_ini_path, name=name, own_checkpoint_db=own_checkpoint_db)
 
 
@@ -337,16 +337,16 @@ def create_instance(
     """
     validate_new_name(name)
     if kind not in INSTANCE_KINDS:
-        raise InstanceError(f"インスタンスの種類が不正です: {kind!r}（{', '.join(INSTANCE_KINDS)} のいずれか）")
+        raise InstanceError(_t("インスタンスの種類が不正です: {0!r}（{1} のいずれか）", kind, ', '.join(INSTANCE_KINDS)))
     if instance_dir(instances_root, name).exists():
-        raise InstanceError(f"インスタンス {name!r} は既に存在します。")
+        raise InstanceError(_t("インスタンス {0!r} は既に存在します。", name))
     if copy_from:
         # 未検証のまま instances_root / copy_from に使うと ".." 等で instances/ の
         # 外（プロジェクト直下の .env 等）をコピーできてしまうため、名前として
         # 検証し、実在するインスタンスに限る。
         validate_name(copy_from)
         if not instance_json_path(instances_root, copy_from).is_file():
-            raise InstanceError(f"複製元のインスタンス {copy_from!r} が見つかりません。")
+            raise InstanceError(_t("複製元のインスタンス {0!r} が見つかりません。", copy_from))
     if kind == KIND_SKILL_LAB:
         # 研究室はチャット画面を持たず、待ち受けもしない。
         app_port = 0
@@ -419,7 +419,7 @@ def _copy_instance_extensions(instances_root: Path, config_ini_path: Path, src_n
     entries = [n for n in _EXTENSION_ENTRIES if (src / n).exists()]
     taken = [str(dst / n) for n in entries if (dst / n).exists()]
     if taken:
-        raise InstanceError(f"複製先のインスタンス専用ディレクトリに既にあります: {', '.join(taken)}")
+        raise InstanceError(_t("複製先のインスタンス専用ディレクトリに既にあります: {0}", ', '.join(taken)))
     dst.mkdir(parents=True, exist_ok=True)
     for n in entries:
         if (src / n).is_dir():
@@ -561,14 +561,14 @@ def list_data_paths(instances_root: Path, config_ini_path: Path, name: str) -> l
     try:
         cfg = load_config(config_path=config_ini_path, overrides_path=overrides_path(instances_root, name), instance_name=name)
     except Exception as exc:  # noqa: BLE001
-        raise InstanceError(f"インスタンス {name!r} の設定を読み込めないため、データの保存先を特定できません: {exc}") from exc
+        raise InstanceError(_t("インスタンス {0!r} の設定を読み込めないため、データの保存先を特定できません: {1}", name, exc)) from exc
 
     project_root = PROJECT_ROOT.resolve()
     own_default_data = project_root / "data" / name
     guard_roots = [project_root, Path.home().resolve(), instances_root.resolve()]
 
     # 他インスタンスのデータパス・共有パスと、自インスタンスの共有パス（重複検出用）。
-    others: list[tuple[str, Path]] = [(f"インスタンス {name!r} 自身の共有パス", p) for p in _protected_paths(cfg)]
+    others: list[tuple[str, Path]] = [(_t("インスタンス {0!r} 自身の共有パス", name), p) for p in _protected_paths(cfg)]
     unreadable: list[str] = []
     for other_name in list_instance_names(instances_root):
         if other_name == name:
@@ -581,29 +581,29 @@ def list_data_paths(instances_root: Path, config_ini_path: Path, name: str) -> l
             unreadable.append(other_name)
             continue
         for key, _ in DATA_PATH_FIELDS:
-            others.append((f"インスタンス {other_name!r} の {key}", getattr(other_cfg, key).resolve()))
-        others += [(f"インスタンス {other_name!r} の共有パス", p) for p in _protected_paths(other_cfg)]
+            others.append((_t("インスタンス {0!r} の {1}", other_name, key), getattr(other_cfg, key).resolve()))
+        others += [(_t("インスタンス {0!r} の共有パス", other_name), p) for p in _protected_paths(other_cfg)]
 
     entries: list[DataPathEntry] = []
     for key, label in DATA_PATH_FIELDS:
         path = getattr(cfg, key).resolve()
-        entry = DataPathEntry(key=key, label=label, path=path, exists=path.exists(), deletable=False)
+        entry = DataPathEntry(key=key, label=_t(label), path=path, exists=path.exists(), deletable=False)
         entries.append(entry)
         if not entry.exists:
-            entry.reason = "存在しません"
+            entry.reason = _t("存在しません")
             continue
         if path == Path(path.anchor) or any(root.is_relative_to(path) for root in guard_roots):
-            entry.reason = "ドライブのルート・ホーム・プロジェクト等の上位ディレクトリのため削除できません"
+            entry.reason = _t("ドライブのルート・ホーム・プロジェクト等の上位ディレクトリのため削除できません")
             continue
         if path.is_relative_to(project_root) and not path.is_relative_to(own_default_data):
-            entry.reason = f"プロジェクト内の data/{name}/ 配下ではないため削除できません"
+            entry.reason = _t("プロジェクト内の data/{0}/ 配下ではないため削除できません", name)
             continue
         if unreadable:
-            entry.reason = f"インスタンス {', '.join(unreadable)} の設定を読み込めず、重複を確認できないため削除できません"
+            entry.reason = _t("インスタンス {0} の設定を読み込めず、重複を確認できないため削除できません", ", ".join(unreadable))
             continue
         conflict = next((desc for desc, other in others if _overlaps(path, other)), None)
         if conflict is not None:
-            entry.reason = f"{conflict} と重複しているため削除できません"
+            entry.reason = _t("{0} と重複しているため削除できません", conflict)
             continue
         entry.deletable = True
         entry.default_selected = path.is_relative_to(own_default_data)
@@ -642,22 +642,22 @@ def delete_instance(
             削除できないデータを指定した、またはデータの削除に失敗した。
     """
     if name == DEFAULT_INSTANCE_NAME:
-        raise InstanceError("既定インスタンス(default)は削除できません。")
+        raise InstanceError(_t("既定インスタンス(default)は削除できません。"))
     path = instance_dir(instances_root, name)
     if not path.is_dir():
-        raise InstanceError(f"インスタンス {name!r} が見つかりません。")
+        raise InstanceError(_t("インスタンス {0!r} が見つかりません。", name))
 
     targets: list[Path] = []
     if delete_data_keys:
         if config_ini_path is None:
-            raise InstanceError("データを削除するには config.ini のパスが必要です。")
+            raise InstanceError(_t("データを削除するには config.ini のパスが必要です。"))
         entries = {e.key: e for e in list_data_paths(instances_root, config_ini_path, name)}
         for key in dict.fromkeys(delete_data_keys):
             entry = entries.get(key)
             if entry is None:
-                raise InstanceError(f"不明なデータ項目です: {key!r}")
+                raise InstanceError(_t("不明なデータ項目です: {0!r}", key))
             if not entry.deletable:
-                raise InstanceError(f"{entry.label} は削除できません（{entry.reason}）: {entry.path}")
+                raise InstanceError(_t("{0} は削除できません（{1}）: {2}", entry.label, entry.reason, entry.path))
             targets.append(entry.path)
 
     deleted: list[Path] = []
@@ -669,7 +669,7 @@ def delete_instance(
             _remove_path(target)
         except OSError as exc:
             raise InstanceError(
-                f"データの削除に失敗しました（インスタンス自体は削除していません）: {target}: {exc}"
+                _t("データの削除に失敗しました（インスタンス自体は削除していません）: {0}: {1}", target, exc)
             ) from exc
         deleted.append(target)
     shutil.rmtree(path)

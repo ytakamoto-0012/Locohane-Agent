@@ -1,27 +1,26 @@
-# 権限外のツールをコードでシミュレートしない
+# Do not simulate tools outside your permissions in code
 
-`execute_python_code_readonly`のみを持つ（`run_script`を持たない）
-readonlyサブエージェントが、それでも`excel-read`を呼びたいがために、
-`run_script`ツールへ渡すはずの引数JSONをそのまま`subprocess`経由の
-標準入力として渡すコードを書いた実例がある。
+There is a real case where a readonly sub-agent that has only `execute_python_code_readonly`
+(and not `run_script`), wanting to call `excel-read` anyway, wrote code that passed
+the argument JSON meant for the `run_script` tool as standard input
+via `subprocess`.
 
 ```python
 subprocess.run(["python", "-m", "json.tool"],
                 input='{"skill_name": "excel-read", ...}', ...)
 ```
 
-これは`run_script`という**ツール呼び出しの仕組み自体**を、手元のコード内で
-再現しようとした誤り（`json.tool`はJSONの整形コマンドであって`excel-read`を
-実行する手段ではなく、加えて`input`に文字列を渡したことで
-`TypeError: a bytes-like object is required, not 'str'`にもなっている）。
-自分に無い権限のツールは、どれだけコードを工夫しても呼び出せない。
+This was a mistake of trying to reproduce **the tool call mechanism itself** called `run_script`
+in your own code (`json.tool` is a JSON formatting command, not a means of running `excel-read`;
+on top of that, passing a string to `input` caused
+`TypeError: a bytes-like object is required, not 'str'`).
+Tools you do not have permission for cannot be called, however cleverly you write code.
 
-## 対処
+## What to do
 
-- 自分が持つツール一覧を確認し、必要なツール（この例では`run_script`）が
-  無いと分かった時点で、コードでの回避を試みるのをやめる。
-- 権限を持つ上位エージェントへ結果を差し戻す・作業を委譲し直す等、
-  ツール権限の設計に沿った経路で解決する。
-- 「readonly」の制約は意図的な設計（書き込み系ツールを持たせないことで
-  安全に読み取り専用の調査をさせる）であり、コードでの抜け道を探す対象では
-  ない。
+- Check the list of tools you have, and as soon as you find that a needed tool (in this example `run_script`)
+  is missing, stop trying to work around it in code.
+- Solve it through a route that follows the design of tool permissions, such as returning the result to
+  a higher-level agent that has the permission, or having the work re-delegated.
+- The "readonly" constraint is an intentional design (it lets the agent do read-only investigation safely
+  by not giving it write tools), not something to look for loopholes in with code.

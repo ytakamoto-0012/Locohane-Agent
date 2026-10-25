@@ -239,6 +239,16 @@ def _cosine(a: Counter[str], b: Counter[str]) -> float:
     return dot / (norm_a * norm_b)
 
 
+def bigram_vector(text: str) -> Counter[str]:
+    """任意の文字列を正規化して文字2-gramの出現頻度にする（パス以外の類似度検索用。admin/assistant_index.py）。"""
+    return _bigrams(_normalize(text))
+
+
+def cosine_similarity(a: Counter[str], b: Counter[str]) -> float:
+    """bigram_vector() 同士（または各成分に重みを掛けたもの）のコサイン類似度（0.0〜1.0）。"""
+    return _cosine(a, b)
+
+
 def _split(normalized: str) -> tuple[str, str]:
     """正規化済みパスを (フォルダ部分, ファイル名部分) に分ける（区切りが無ければフォルダ部分は空）。"""
     folder, _, name = normalized.rpartition("/")
@@ -294,10 +304,10 @@ def difference_label(query: str, path: str) -> str:
     folder_differs = bool(q_folder) and q_folder != p_folder
     name_differs = q_name != p_name
     if folder_differs and name_differs:
-        return "フォルダ・ファイル名違い"
+        return "different folder and file name"
     if folder_differs:
-        return "フォルダ違い"
-    return "ファイル名違い"
+        return "different folder"
+    return "different file name"
 
 
 def _exists(path: str | None) -> bool | None:

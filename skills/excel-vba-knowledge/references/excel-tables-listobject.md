@@ -1,24 +1,24 @@
-# テーブル（ListObject）の扱い方
+# Handling tables (ListObject)
 
-「挿入」→「テーブル」で作る構造化参照テーブルはVBAでは `ListObject` として
-操作する。セル範囲を都度 `CurrentRegion` 等で特定するより、行の増減に自動追従
-する分バグが少なく、[[pivot-tables]] の元データとしても相性が良い。
+Structured reference tables created with "Insert" -> "Table" are operated on as `ListObject` in VBA.
+Compared to identifying the cell range each time with `CurrentRegion` etc., they follow row additions and removals
+automatically, so there are fewer bugs, and they also go well as source data for [[pivot-tables]].
 
-## 階層と主要プロパティ
+## Hierarchy and main properties
 
 ```vb
 Dim tbl As ListObject
 Set tbl = ThisWorkbook.Worksheets("Data").ListObjects("SalesTable")
 
-tbl.Range          ' ヘッダー行〜合計行まで含む全体（見出し含む）
-tbl.HeaderRowRange  ' 見出し行のみ
-tbl.DataBodyRange   ' データ行のみ（見出し・合計行を除く）。行が0件だとNothing
-tbl.ListColumns("金額").DataBodyRange  ' 特定列のデータ行のみ
+tbl.Range          ' the whole thing from the header row to the total row (including headers)
+tbl.HeaderRowRange  ' only the header row
+tbl.DataBodyRange   ' only the data rows (excluding headers and the total row). Nothing if there are 0 rows
+tbl.ListColumns("Amount").DataBodyRange  ' only the data rows of a specific column
 ```
 
-**`DataBodyRange` はデータが1行も無い（見出しのみの）状態だと `Nothing` を
-返す。** 存在確認せずに `.Rows.Count` 等を呼ぶと実行時エラーになるため、
-空テーブルを扱う可能性があるコードでは必ず `Is Nothing` を確認する。
+**`DataBodyRange` returns `Nothing` when there is not even one row of data (headers only).**
+Calling `.Rows.Count` etc. without checking causes a runtime error, so
+in code that may handle empty tables, always check `Is Nothing`.
 
 ```vb
 If Not tbl.DataBodyRange Is Nothing Then
@@ -29,32 +29,32 @@ If Not tbl.DataBodyRange Is Nothing Then
 End If
 ```
 
-## 行の追加
+## Adding rows
 
 ```vb
 Dim newRow As ListRow
 Set newRow = tbl.ListRows.Add
-newRow.Range(1, tbl.ListColumns("商品名").Index).Value = "新商品"
-newRow.Range(1, tbl.ListColumns("金額").Index).Value = 1000
+newRow.Range(1, tbl.ListColumns("Product").Index).Value = "New product"
+newRow.Range(1, tbl.ListColumns("Amount").Index).Value = 1000
 ```
 
-`ListRows.Add` は第1引数 `Position` を省略すると既定で**末尾**に追加される
-（特定の位置に挿入したい場合は `Position` に相対位置を指定する）。第2引数
-`AlwaysInsert` は挿入位置ではなく、テーブル直下の行を常にシフトするかどうか
-を制御するもの（省略時は `True` と同じ動作＝直下の行を1行ずつ下にシフト。
-`False` を指定し、かつ直下の行が空であれば、その行を巻き込まずにテーブルの
-方だけを拡張する）。列位置を決め打ちの数値（`newRow.Range(1, 3)` 等）で書くと、
-後から列を並べ替えた際にコードとズレるため、`tbl.ListColumns("列名").Index`
-で列名から解決する方が保守性が高い。
+`ListRows.Add` adds at **the end** by default when the 1st argument `Position` is omitted
+(to insert at a specific position, give the relative position in `Position`). The 2nd argument
+`AlwaysInsert` does not control the insertion position but whether the rows right below the table are always shifted
+(when omitted it behaves like `True` = shifts the rows right below down one row each.
+If you specify `False` and the row right below is empty, only the table is extended without involving that row).
+Writing column positions as hard-coded numbers (`newRow.Range(1, 3)`, etc.) gets out of sync with the code
+when columns are reordered later, so resolving from the column name with `tbl.ListColumns("column name").Index`
+is more maintainable.
 
-## 列名から配列で一括読み書き（列並べ替えに強い書き方）
+## Bulk reading/writing with arrays from column names (robust against column reordering)
 
 ```vb
 Dim data As Variant
-data = tbl.DataBodyRange.Value   ' 2次元配列、1始まり（[[performance-tips]]参照）
+data = tbl.DataBodyRange.Value   ' 2D array, 1-based (see [[performance-tips]])
 
 Dim priceCol As Long
-priceCol = tbl.ListColumns("金額").Index   ' テーブル内での列番号（1始まり）
+priceCol = tbl.ListColumns("Amount").Index   ' the column number within the table (1-based)
 
 Dim r As Long
 For r = LBound(data, 1) To UBound(data, 1)
@@ -64,30 +64,30 @@ Next r
 tbl.DataBodyRange.Value = data
 ```
 
-列を `Cells(r, 3)` のように絶対列番号で決め打ちしない。テーブルの列順は
-ユーザーが自由に入れ替えられるため、`ListColumns("列名").Index` を都度
-取得する（ループの外で1回だけ取得してキャッシュしておけば速度上も問題ない）。
+Do not hard-code columns as absolute column numbers like `Cells(r, 3)`. Users can freely rearrange
+the column order of a table, so get `ListColumns("column name").Index` each time
+(getting it once outside the loop and caching it is fine for speed too).
 
-## フィルタ（AutoFilter）とソート
+## Filtering (AutoFilter) and sorting
 
 ```vb
-tbl.Range.AutoFilter Field:=tbl.ListColumns("地域").Index, Criteria1:="関東"
+tbl.Range.AutoFilter Field:=tbl.ListColumns("Region").Index, Criteria1:="Kanto"
 ```
 
-`Field` はテーブル内での列番号（`ListColumns.Index`）であり、シート全体の
-列番号ではない点に注意。フィルタ解除は `tbl.AutoFilter.ShowAllData`
-（`tbl.Range.AutoFilter` を条件なしで再実行すると逆にフィルタ自体が解除される
-ことがあるため、解除専用にはこちらを使う）。
+Note that `Field` is the column number within the table (`ListColumns.Index`), not the column number
+of the whole sheet. To clear the filter, use `tbl.AutoFilter.ShowAllData`
+(rerunning `tbl.Range.AutoFilter` without conditions can instead remove the filter itself,
+so use this one just for clearing).
 
 ```vb
 If tbl.AutoFilter.FilterMode Then tbl.AutoFilter.ShowAllData
 ```
 
-## テーブル名の取得と存在確認
+## Getting table names and checking existence
 
-シートをまたいで複数テーブルを扱う場合、ブック全体のテーブル一覧は
-シートごとに `Worksheet.ListObjects` を走査する必要がある
-（`Workbook.ListObjects` のようなブック直下の一括プロパティは無い）。
+When handling several tables across sheets, listing all tables of the workbook requires
+scanning `Worksheet.ListObjects` for each sheet
+(there is no workbook-level bulk property like `Workbook.ListObjects`).
 
 ```vb
 Function FindTable(wb As Workbook, tableName As String) As ListObject
@@ -104,22 +104,22 @@ Function FindTable(wb As Workbook, tableName As String) As ListObject
 End Function
 ```
 
-## ピボットテーブルの元データにする
+## Using it as pivot table source data
 
 ```vb
 Set pc = ThisWorkbook.PivotCaches.Create( _
     SourceType:=xlDatabase, _
-    SourceData:="SalesTable")   ' テーブル名を文字列で渡す
+    SourceData:="SalesTable")   ' pass the table name as a string
 ```
 
-セル範囲ではなくテーブル名を渡すと、行追加でテーブル範囲が自動拡張された際に
-ピボット側の `SourceData` を書き換えずに `RefreshTable` だけで追従する
-（詳細・注意点は [[pivot-tables]] 参照）。
+Passing the table name instead of a cell range means that when the table range expands automatically with added rows,
+the pivot follows with just `RefreshTable`, without rewriting its `SourceData`
+(for details and caveats, see [[pivot-tables]]).
 
-## 構造化参照（数式内）とVBAの関係
+## Structured references (in formulas) and VBA
 
-シート上の数式で使う構造化参照（`=SUM(SalesTable[金額])` 等）はVBA側からは
-直接の対応構文が無く、`tbl.ListColumns("金額").DataBodyRange` 等で同等の範囲を
-取得してから `WorksheetFunction.Sum(...)` を呼ぶ形になる。数式文字列として
-構造化参照をそのままセルに書き込む（`Range("C1").Formula = "=SUM(SalesTable[金額])"`）
-ことは可能で、テーブル名が変わらない前提であればこちらの方が保守はしやすい。
+Structured references used in formulas on the sheet (`=SUM(SalesTable[Amount])`, etc.) have no direct counterpart syntax
+in VBA; you get the equivalent range with `tbl.ListColumns("Amount").DataBodyRange` etc. and then call
+`WorksheetFunction.Sum(...)`. Writing a structured reference as is into a cell as a formula string
+(`Range("C1").Formula = "=SUM(SalesTable[Amount])"`) is possible, and assuming the table name does not change,
+this is easier to maintain.

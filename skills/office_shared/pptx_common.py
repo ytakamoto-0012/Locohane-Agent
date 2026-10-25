@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import locale
 import os
 import shutil
 import sys
@@ -41,6 +42,24 @@ def setup_utf8_stdio() -> None:
     """
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+
+
+def read_text_with_fallback(path: Path) -> str:
+    """UTF-8 で読めなければ OS の ANSI コードページ（日本語版 Windows なら cp932、英語版なら cp1252 等）、
+    cp932 の順に読む（本体の src/tools/_file_tools_common.py と同じ順）。
+
+    cp1252 の文書の多くは cp932 としてもエラーなく読めて文字化けに気付けないため、ANSI を先に試す。
+    """
+    data = path.read_bytes()
+    error: UnicodeDecodeError | None = None
+    for encoding in dict.fromkeys(("utf-8", locale.getencoding(), "cp932")):
+        try:
+            return data.decode(encoding).replace("\r\n", "\n")
+        except UnicodeDecodeError as e:
+            error = error or e
+        except LookupError:
+            continue
+    raise error or UnicodeDecodeError("utf-8", data, 0, len(data), "undecodable")
 
 
 def backup_before_overwrite(path: Path) -> Path | None:
@@ -86,22 +105,22 @@ def check_shape_overflow(shape_info: dict, slide_width_cm: float | None, slide_h
     issues = []
 
     if left_cm < -tolerance:
-        issues.append(f"左端を{abs(left_cm):.2f}cmはみ出し")
+        issues.append(f"sticks out {abs(left_cm):.2f}cm past the left edge")
     if top_cm < -tolerance:
-        issues.append(f"上端を{abs(top_cm):.2f}cmはみ出し")
+        issues.append(f"sticks out {abs(top_cm):.2f}cm past the top edge")
     if left_cm + width_cm > slide_width_cm + tolerance:
         overshoot = left_cm + width_cm - slide_width_cm
-        issues.append(f"右端を{overshoot:.2f}cmはみ出し")
+        issues.append(f"sticks out {overshoot:.2f}cm past the right edge")
     if top_cm + height_cm > slide_height_cm + tolerance:
         overshoot = top_cm + height_cm - slide_height_cm
-        issues.append(f"下端を{overshoot:.2f}cmはみ出し")
+        issues.append(f"sticks out {overshoot:.2f}cm past the bottom edge")
 
     if not issues:
         return None
 
     shape_name = shape_info.get("name", "unknown")
     shape_idx = shape_info.get("shape_index", "?")
-    return f"shape_index {shape_idx}('{shape_name}')が{', '.join(issues)}しています"
+    return f"shape_index {shape_idx}('{shape_name}') {', '.join(issues)}"
 
 
 def _solid_fill_color(fill) -> str | None:
@@ -269,7 +288,7 @@ def write_json_result(result: dict, category: str, source_path) -> dict:
     out_path = out_dir / f"{digest}_{timestamp}.json"
     out_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
     info: dict = {"result_path": str(out_path)}
-    pm = register_output_path(out_path, description=f"{category}の読み込み結果全文JSON")
+    pm = register_output_path(out_path, description=f"full JSON of the {category} read result")
     if pm:
         info["path_memory"] = pm
     return info

@@ -4,7 +4,7 @@
 置く。組織別・役割別のインスタンスごとに置き場そのものが分かれるため、テーマが混ざらない。
 
     theme.json          名前・状態・担当の研究室・資産の入手元・反復の記録・タスク
-    spec.md             仕様（目的・使う場面・期待する出力・禁止事項）
+    spec.md             仕様（Purpose・When to use・Expected output・Must not do の見出しで書く）
     config_patch.json   評価と昇格で足す設定（evals/config_patch.py）
     assets/skills/<名前>/      開発中のスキル
     assets/agents/<名前>.md    開発中のサブエージェント
@@ -36,6 +36,7 @@ import yaml
 
 from evals.case_schema import load_case
 from evals.skill_tree import FIXTURES_DIRNAME, cases_sha256, copy_ignore_for, file_sha256, tree_sha256
+from admin.i18n import t as _t
 
 THEME_FILENAME = "theme.json"
 SPEC_FILENAME = "spec.md"
@@ -92,10 +93,10 @@ def themes_root(common_data_dir: Path) -> Path:
 def theme_dir(root: Path, theme_id: str) -> Path:
     """テーマ ID からフォルダを求める（ID の形式を確かめ、置き場の外を指させない）。"""
     if not _THEME_ID_RE.match(theme_id or ""):
-        raise ThemeError(f"テーマ ID が不正です: {theme_id!r}")
+        raise ThemeError(_t("テーマ ID が不正です: {0!r}", theme_id))
     path = root / theme_id
     if not (path / THEME_FILENAME).is_file():
-        raise ThemeError(f"テーマが見つかりません: {theme_id}")
+        raise ThemeError(_t("テーマが見つかりません: {0}", theme_id))
     return path
 
 
@@ -123,7 +124,7 @@ def _locked(directory: Path) -> Iterator[None]:
                 break
             except OSError:
                 if time.monotonic() > deadline:
-                    raise ThemeError(f"テーマのロックを取得できません（他の処理が使用中）: {directory.name}") from None
+                    raise ThemeError(_t("テーマのロックを取得できません（他の処理が使用中）: {0}", directory.name)) from None
                 time.sleep(0.05)
         try:
             yield
@@ -191,7 +192,7 @@ def add_history(data: dict, actor: str, action: str, detail: str = "") -> None:
 def create_theme(root: Path, *, instance: str, title: str, lab: str | None, actor: str) -> Path:
     title = (title or "").strip()
     if not title:
-        raise ThemeError("テーマ名を入力してください。")
+        raise ThemeError(_t("テーマ名を入力してください。"))
     root.mkdir(parents=True, exist_ok=True)
     theme_id = f"{datetime.now():%Y%m%d%H%M%S}_{secrets.token_hex(2)}"
     directory = root / theme_id
@@ -199,7 +200,7 @@ def create_theme(root: Path, *, instance: str, title: str, lab: str | None, acto
     for sub in (f"{ASSETS_DIRNAME}/skills", f"{ASSETS_DIRNAME}/agents", f"{CASES_DIRNAME}/{FIXTURES_DIRNAME}", RUNS_DIRNAME):
         (directory / sub).mkdir(parents=True)
     (directory / SPEC_FILENAME).write_text(
-        f"# {title}\n\n## 目的\n\n## 使う場面（どんな業務・状況で使うか。具体的な指示文はケースに書く）\n\n## 期待する出力\n\n## やってはいけないこと\n",
+        f"# {title}\n\n" + "\n".join(f"## {heading}\n" for heading in SPEC_HEADINGS),
         encoding="utf-8",
     )
     (directory / CONFIG_PATCH_FILENAME).write_text("{}\n", encoding="utf-8")
@@ -231,7 +232,7 @@ def create_theme(root: Path, *, instance: str, title: str, lab: str | None, acto
 
 def _check_part(part: str) -> None:
     if part in ("", ".", "..") or not _FIXTURE_PART_RE.match(part) or part.endswith((".", " ")) or _RESERVED_NAME_RE.match(part):
-        raise ThemeError(f"パスに使えない名前が含まれています: {part!r}")
+        raise ThemeError(_t("パスに使えない名前が含まれています: {0!r}", part))
 
 
 def resolve_path(directory: Path, rel: str, *, for_write: bool = False) -> Path:
@@ -243,7 +244,7 @@ def resolve_path(directory: Path, rel: str, *, for_write: bool = False) -> Path:
     """
     rel = (rel or "").replace("\\", "/").strip().strip("/")
     if not rel or rel.startswith("/") or ":" in rel:
-        raise ThemeError(f"パスが不正です: {rel!r}")
+        raise ThemeError(_t("パスが不正です: {0!r}", rel))
     parts = rel.split("/")
     for part in parts:
         _check_part(part)
@@ -259,17 +260,17 @@ def resolve_path(directory: Path, rel: str, *, for_write: bool = False) -> Path:
     elif parts[0] == CASES_DIRNAME and len(parts) >= 3 and parts[1] == FIXTURES_DIRNAME:
         ok = True
     if not ok:
-        raise ThemeError(f"このパスは扱えません: {rel}")
+        raise ThemeError(_t("このパスは扱えません: {0}", rel))
     path = (directory / Path(*parts)).resolve()
     if not path.is_relative_to(directory.resolve()):
-        raise ThemeError(f"テーマの外を指すパスです: {rel}")
+        raise ThemeError(_t("テーマの外を指すパスです: {0}", rel))
     if for_write and parts[0] == ASSETS_DIRNAME and parts[1] == "skills" and len(parts) == 3:
-        raise ThemeError("スキルのフォルダそのものではなく、その中のファイルを指定してください。")
+        raise ThemeError(_t("スキルのフォルダそのものではなく、その中のファイルを指定してください。"))
     if for_write and parts[0] == CASES_DIRNAME and len(parts) == 3:
         # 入力ファイルはフォルダ（ケースの work_dir: fixtures/<フォルダ>）の中に置く。
-        raise ThemeError("入力ファイルは cases/fixtures/<フォルダ名>/ の中に置いてください。")
+        raise ThemeError(_t("入力ファイルは cases/fixtures/<フォルダ名>/ の中に置いてください。"))
     if for_write and path.is_dir():
-        raise ThemeError(f"同じ名前のフォルダがあります: {rel}")
+        raise ThemeError(_t("同じ名前のフォルダがあります: {0}", rel))
     return path
 
 
@@ -305,11 +306,11 @@ def _is_text(path: Path) -> bool:
 def read_text(directory: Path, rel: str) -> str:
     path = resolve_path(directory, rel)
     if not path.is_file():
-        raise ThemeError(f"ファイルが見つかりません: {rel}")
+        raise ThemeError(_t("ファイルが見つかりません: {0}", rel))
     try:
         return path.read_text(encoding="utf-8")
     except UnicodeDecodeError as e:
-        raise ThemeError(f"テキストファイルではありません: {rel}") from e
+        raise ThemeError(_t("テキストファイルではありません: {0}", rel)) from e
 
 
 def write_text(directory: Path, rel: str, content: str, *, actor: str) -> None:
@@ -318,33 +319,33 @@ def write_text(directory: Path, rel: str, content: str, *, actor: str) -> None:
     validate_content(rel, content)
     path.parent.mkdir(parents=True, exist_ok=True)
     _atomic_write_text(path, content)
-    mark_changed(directory, actor, f"編集: {rel}")
+    mark_changed(directory, actor, f"edit: {rel}")
 
 
 def write_bytes(directory: Path, rel: str, content: bytes, *, actor: str) -> None:
     path = resolve_path(directory, rel, for_write=True)
     if not rel.replace("\\", "/").startswith(f"{CASES_DIRNAME}/{FIXTURES_DIRNAME}/"):
-        raise ThemeError("ファイルのアップロードは cases/fixtures/ 配下にだけできます。")
+        raise ThemeError(_t("ファイルのアップロードは cases/fixtures/ 配下にだけできます。"))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(content)
-    mark_changed(directory, actor, f"入力ファイル: {rel}")
+    mark_changed(directory, actor, f"input file: {rel}")
 
 
 def delete_path(directory: Path, rel: str, *, actor: str) -> None:
     path = resolve_path(directory, rel)
     parts = rel.replace("\\", "/").strip().strip("/").split("/")
     if parts in (["spec.md"], ["config_patch.json"]):
-        raise ThemeError(f"{rel} は削除できません（中身を空にして保存してください）。")
+        raise ThemeError(_t("{0} は削除できません（中身を空にして保存してください）。", rel))
     if parts[0] == ASSETS_DIRNAME and (parts[1] == "agents" or len(parts) == 3 or parts[3:] == ["SKILL.md"]):
         # 研究対象の本体だけを消すと、入手元の記録（取り込んだドラフト等）と食い違う。
-        raise ThemeError("研究対象そのものを除くには、研究対象の「外す」を使ってください。")
+        raise ThemeError(_t("研究対象そのものを除くには、研究対象の「外す」を使ってください。"))
     if not path.exists():
-        raise ThemeError(f"見つかりません: {rel}")
+        raise ThemeError(_t("見つかりません: {0}", rel))
     if path.is_dir():
         shutil.rmtree(path)
     else:
         path.unlink()
-    mark_changed(directory, actor, f"削除: {rel}")
+    mark_changed(directory, actor, f"delete: {rel}")
 
 
 def mark_changed(directory: Path, actor: str, detail: str) -> None:
@@ -395,7 +396,7 @@ def validate_skill_md(content: str, dir_name: str) -> str | None:
 
     fm = _parse_frontmatter(content)
     if fm is None:
-        return "SKILL.md の先頭に frontmatter（--- で囲んだ name・description）がありません。"
+        return "SKILL.md has no frontmatter (name and description enclosed in ---) at the top."
     error = _validate(fm.get("name"), fm.get("description"), dir_name)
     return f"SKILL.md: {error}" if error else None
 
@@ -405,16 +406,16 @@ def validate_agent_md(content: str, file_stem: str, known_tools: list[str] | Non
 
     parsed = _parse_frontmatter(content)  # (frontmatter, 本文) か None
     if parsed is None:
-        return "エージェント定義の先頭に frontmatter（--- で囲んだ name・description・tools）がありません。"
+        return "The agent definition has no frontmatter (name, description and tools enclosed in ---) at the top."
     fm = parsed[0]
     error = _validate(fm.get("name"), fm.get("description"), file_stem)
     if error:
-        return f"エージェント定義: {error}"
+        return f"Agent definition: {error}"
     if known_tools is not None:
         tools = _parse_tools_field(fm.get("tools")) or []
         unknown = [t for t in tools if t not in known_tools]
         if unknown:
-            return f"エージェント定義: tools に存在しないツール名があります: {unknown}"
+            return f"Agent definition: tools has tool names that do not exist: {unknown}"
     return None
 
 
@@ -424,21 +425,21 @@ def validate_case_yaml(content: str, case_id: str) -> str | None:
     try:
         data = yaml.safe_load(content)
     except yaml.YAMLError as e:
-        return f"ケース {case_id}: YAML として読めません: {e}"
+        return f"Case {case_id}: cannot read it as YAML: {e}"
     if isinstance(data, dict) and data.get("id") is not None and not isinstance(data.get("id"), str):
-        return f"ケース {case_id}: id は文字列にしてください（数字だけの id は '{case_id}' のように引用符で囲む）。"
+        return f"Case {case_id}: make id a string (quote an id made only of digits, like '{case_id}')."
     if isinstance(data, dict) and data.get("id") not in (None, case_id):
-        return f"ケース {case_id}: id（{data.get('id')}）をファイル名と同じにしてください。"
+        return f"Case {case_id}: make id ({data.get('id')}) the same as the file name."
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / f"{case_id}.yaml"
         path.write_text(content, encoding="utf-8")
         try:
             case = load_case(path)
         except (ValueError, TypeError) as e:
-            return f"ケース {case_id}: {str(e).replace(str(path), path.name)}"
+            return f"Case {case_id}: {str(e).replace(str(path), path.name)}"
     if not case_has_condition(case):
         # expect の項目がすべて空で judge も無いケースは何をしても合格になり、AI 修正の抜け道にもなる。
-        return f"ケース {case_id}: 合格の決め方（expect のいずれかの条件、または judge）を1つ以上入れてください。"
+        return f"Case {case_id}: add at least one way to decide passing (a condition in expect, or judge)."
     return None
 
 
@@ -458,7 +459,7 @@ def validate_python(content: str, rel: str) -> str | None:
     try:
         ast.parse(content)
     except SyntaxError as e:
-        return f"{rel}: Python の構文エラー（{e.lineno}行目）: {e.msg}"
+        return f"{rel}: Python syntax error (line {e.lineno}): {e.msg}"
     return None
 
 
@@ -469,9 +470,9 @@ def validate_python(content: str, rel: str) -> str | None:
 
 def asset_path(directory: Path, asset_type: str, name: str) -> Path:
     if asset_type not in ASSET_TYPES:
-        raise ThemeError(f"研究対象の種類が不正です: {asset_type!r}")
+        raise ThemeError(_t("研究対象の種類が不正です: {0!r}", asset_type))
     if not NAME_RE.match(name or "") or len(name) > 64:
-        raise ThemeError(f"名前は小文字英数字・ハイフン・アンダースコアのみにしてください: {name!r}")
+        raise ThemeError(_t("名前は小文字英数字・ハイフン・アンダースコアのみにしてください: {0!r}", name))
     base = directory / ASSETS_DIRNAME / asset_type
     return base / name if asset_type == "skills" else base / f"{name}.md"
 
@@ -487,18 +488,18 @@ def add_asset_copy(directory: Path, asset_type: str, name: str, origin: Path, *,
     """既存のスキル（フォルダ）・エージェント（.md）を複製して資産にする（baseline にも写す）。"""
     target = asset_path(directory, asset_type, name)
     if target.exists():
-        raise ThemeError(f"同じ名前の研究対象が既にあります: {name}")
+        raise ThemeError(_t("同じ名前の研究対象が既にあります: {0}", name))
     baseline = directory / BASELINE_DIRNAME / ASSETS_DIRNAME / asset_type / target.name
     if asset_type == "skills":
         if not (origin / "SKILL.md").is_file():
-            raise ThemeError(f"スキルが見つかりません: {origin}")
+            raise ThemeError(_t("スキルが見つかりません: {0}", origin))
         shutil.copytree(origin, target, ignore=copy_ignore_for(origin))
         baseline.parent.mkdir(parents=True, exist_ok=True)
         shutil.copytree(target, baseline, dirs_exist_ok=True)
         source = {**source, "origin_sha256": tree_sha256(origin)}
     else:
         if not origin.is_file():
-            raise ThemeError(f"エージェント定義が見つかりません: {origin}")
+            raise ThemeError(_t("エージェント定義が見つかりません: {0}", origin))
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(origin, target)
         baseline.parent.mkdir(parents=True, exist_ok=True)
@@ -517,7 +518,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
     """新しいスキル（SKILL.md だけ）・エージェント（.md）を作る。"""
     target = asset_path(directory, asset_type, name)
     if target.exists():
-        raise ThemeError(f"同じ名前の研究対象が既にあります: {name}")
+        raise ThemeError(_t("同じ名前の研究対象が既にあります: {0}", name))
     if asset_type == "skills":
         error = validate_skill_md(content, name)
         if error:
@@ -534,7 +535,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
     def _apply(data: dict) -> None:
         data["sources"][asset_type][name] = {"kind": "new", "description": description}
         data["tryout"] = None
-        add_history(data, actor, "add_asset", f"{asset_type}/{name}（新規）")
+        add_history(data, actor, "add_asset", f"{asset_type}/{name} (new)")
 
     update(directory, _apply)
 
@@ -542,7 +543,7 @@ def add_asset_new(directory: Path, asset_type: str, name: str, content: str, *, 
 def remove_asset(directory: Path, asset_type: str, name: str, *, actor: str) -> None:
     target = asset_path(directory, asset_type, name)
     if not target.exists():
-        raise ThemeError(f"研究対象が見つかりません: {name}")
+        raise ThemeError(_t("研究対象が見つかりません: {0}", name))
     if target.is_dir():
         shutil.rmtree(target)
     else:
@@ -582,17 +583,22 @@ def list_cases(directory: Path) -> list[dict]:
                 }
             )
             if not case_has_condition(case):
-                item["error"] = "合格の決め方（expect の条件か judge）がありません"
+                item["error"] = "There is no way to decide passing (an expect condition or judge)"
             elif case.work_dir and not _work_dir_exists(directory, case.work_dir):
-                item["error"] = f"使うファイルのフォルダ {case.work_dir} がありません"
+                item["error"] = f"The folder of files to use, {case.work_dir}, does not exist"
         except Exception as e:  # noqa: BLE001 - 一覧では壊れたケースも理由付きで出す
             item["error"] = str(e)
         result.append(item)
     return result
 
 
+# 仕様（spec.md）の決まった見出し。画面（skill_lab.js の SPEC_FIELDS）と AI の下書き（drafting.py）も同じ見出しを使う。
+# 見出しと「TODO:」は英語圏でも打ちやすい半角にする。日本語の旧見出し・「要確認:」で書かれた仕様も読めるようにしている。
+SPEC_HEADINGS = ("Purpose", "When to use", "Expected output", "Must not do")
+_SPEC_PURPOSE_HEADINGS = ("Purpose", "目的")
 _SPEC_HEADING = re.compile(r"^#{1,6}\s*(.*?)\s*$")
-_SPEC_UNSURE = re.compile(r"^要確認\s*[:：]?")
+# AI の下書きが資料から読み取れなかった点の印（旧形式の「要確認:」も同じに扱う）。
+_SPEC_UNSURE = re.compile(r"^(?:TODO\b|要確認)\s*[:：]?", re.IGNORECASE)
 # 節の終わり（# か ## の見出し）。### 以下の小見出しは節の本文に含める。
 _SPEC_SECTION_END = re.compile(r"^#{1,2}(?!#)")
 
@@ -613,17 +619,17 @@ def _spec_section_lines(text: str, heading_prefix: str) -> list[str] | None:
 
 
 def spec_filled(directory: Path) -> bool:
-    """仕様の「目的」が書かれているか。
+    """仕様の Purpose（目的）が書かれているか。
 
     仕様は AI 修正と AI judge の正解の基準で、無いと AI がケースに通るだけの直し方をしても
-    気づけないため、開始の条件にする。見出しだけ・AI の下書きが「要確認:」しか書けなかった行は
-    書かれていないとみなす。「目的」の見出しが無い自由形式の仕様は、見出し以外の行があればよい。
+    気づけないため、開始の条件にする。見出しだけ・AI の下書きが「TODO:」しか書けなかった行は
+    書かれていないとみなす。Purpose の見出しが無い自由形式の仕様は、見出し以外の行があればよい。
     """
     try:
         text = (directory / SPEC_FILENAME).read_text(encoding="utf-8")
     except FileNotFoundError:
         return False
-    body = _spec_section_lines(text, "目的")
+    body = next((b for h in _SPEC_PURPOSE_HEADINGS if (b := _spec_section_lines(text, h)) is not None), None)
     if body is None:
         body = [line for line in text.splitlines() if not line.startswith("#")]
     return any(line.strip() and not _SPEC_UNSURE.match(line.strip()) for line in body)
@@ -634,16 +640,16 @@ def start_missing(directory: Path) -> list[str]:
     missing = []
     assets = list_assets(directory)
     if not assets["skills"] and not assets["agents"]:
-        missing.append("① 研究対象（スキルかサブエージェントを1つ以上）")
+        missing.append(_t("① 研究対象（スキルかサブエージェントを1つ以上）"))
     if not spec_filled(directory):
-        missing.append("② やってほしいことの「目的」")
+        missing.append(_t("② やってほしいことの「目的」"))
     cases = list_cases(directory)
     if not cases:
-        missing.append("③ 試験問題（1問以上）")
+        missing.append(_t("③ 試験問題（1問以上）"))
     broken = [c["id"] for c in cases if c.get("error")]
     if broken:
         # 読めないケースがあると評価がエラーになり、AI 修正の手がかりにもならない。
-        missing.append(f"③ 試験問題の直し（読めない・条件や使うファイルが足りない: {', '.join(broken)}）")
+        missing.append(_t("③ 試験問題の直し（読めない・条件や使うファイルが足りない: {0}）", ', '.join(broken)))
     return missing
 
 
@@ -689,21 +695,21 @@ def content_hashes(directory: Path) -> dict:
 def tryout_matches(directory: Path, tryout: dict | None) -> list[str]:
     """tryout（evals/run_all.py の tryout.json）が今の内容を評価したものか。食い違いの説明を返す。"""
     if not tryout:
-        return ["トライアウトの結果がありません"]
+        return ["There are no tryout results"]
     now = content_hashes(directory)
     problems = []
     if tryout.get("cases_sha256") != now["cases"]:
-        problems.append("トライアウト後にケース（入力ファイルを含む）が変わっています")
+        problems.append("The cases (including input files) changed after the tryout")
     if sorted(tryout.get("case_files") or []) != sorted(p.stem for p in (directory / CASES_DIRNAME).glob("*.yaml")):
-        problems.append("トライアウトしたケースが今の全ケースと一致しません")
+        problems.append("The cases in the tryout do not match all the current cases")
     evaluated_skills = {o.get("name"): o.get("sha256") for o in tryout.get("skill_overlays") or []}
     evaluated_agents = {o.get("name"): o.get("sha256") for o in tryout.get("agent_overlays") or []}
     if evaluated_skills != now["skills"]:
-        problems.append("トライアウト後にスキルが変わっています")
+        problems.append("The skills changed after the tryout")
     if evaluated_agents != now["agents"]:
-        problems.append("トライアウト後にサブエージェントが変わっています")
+        problems.append("The sub-agents changed after the tryout")
     if ((tryout.get("config_patch") or {}).get("sha256")) != now["config_patch"]:
-        problems.append("トライアウト後に設定パッチ（config_patch.json）が変わっています")
+        problems.append("The settings patch (config_patch.json) changed after the tryout")
     return problems
 
 
@@ -716,7 +722,7 @@ TASK_TYPES = ("trial", "draft_spec", "draft_cases", "draft_asset")
 
 def add_task(directory: Path, task_type: str, params: dict, *, actor: str) -> str:
     if task_type not in TASK_TYPES:
-        raise ThemeError(f"不明なタスクです: {task_type}")
+        raise ThemeError(_t("不明なタスクです: {0}", task_type))
     task_id = f"{datetime.now():%Y%m%d%H%M%S}_{secrets.token_hex(2)}"
 
     def _apply(data: dict) -> None:

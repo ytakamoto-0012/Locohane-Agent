@@ -31,18 +31,18 @@ def read_file(path: Path, offset: int = 0, limit: int = 10) -> dict:
             読み込み権限が無い・読み込みに失敗した場合。
     """
     if not path.exists():
-        raise ValueError(f"ファイルが見つかりません: {path}")
+        raise ValueError(f"File not found: {path}")
     if path.is_dir():
-        raise ValueError(f"指定パスはディレクトリです（ファイル専用）: {path}")
+        raise ValueError(f"The path is a directory (files only): {path}")
     if looks_binary(path):
-        raise ValueError(f"バイナリファイルの可能性があるため読み込めません: {path}")
+        raise ValueError(f"Cannot read because it may be a binary file: {path}")
 
     try:
         text = read_text_with_fallback(path)
     except PermissionError as e:
-        raise ValueError(f"ファイルへのアクセス権限がありません: {path}") from e
+        raise ValueError(f"No permission to access the file: {path}") from e
     except (OSError, UnicodeDecodeError) as e:
-        raise ValueError(f"ファイル読み込みに失敗しました: {e}") from e
+        raise ValueError(f"Failed to read the file: {e}") from e
 
     lines = text.splitlines()
     total_lines = len(lines)
@@ -60,32 +60,31 @@ def read_file(path: Path, offset: int = 0, limit: int = 10) -> dict:
 
 @tool("Read")
 def read_tool(file_path: str, offset: int = 0, limit: int = 10) -> str:
-    """ローカルファイルシステム上の任意のテキストファイルを行番号付きで読み込む。
+    """Read any text file on the local file system with line numbers.
 
-    skills ディレクトリ配下限定の read_skill_file とは異なり、パスの制限は
-    行わない（ユーザーが指定した任意の絶対パスを読めることが目的。ただし
-    `_tmp_<作成時刻>_<短縮ID>` の他セッション分だけは例外で読み取れない）。
-    スキル本文・補助資料を読むなら read_skill_file、ユーザーが指定した
-    ファイルを読むならこちらを使う。読み取り専用のため、計画の有無に
-    関わらずいつでも呼んでよい。
+    Unlike read_skill_file, which is limited to the skills directory, it does not restrict paths
+    (the purpose is to read any absolute path the user specifies, except other sessions'
+    `_tmp_<created time>_<short ID>` folders, which cannot be read). Use read_skill_file to read
+    skill bodies and supporting material, and this tool to read files the user specified. It is
+    read-only, so you may call it any time regardless of the plan.
 
     Args:
-        file_path: 読み込む絶対パス（`@N` のパスメモリー参照も指定可）。
-            相対パスを指定した場合は作業ディレクトリ基準で解決する。
-        offset: 読み飛ばす先頭行数（0始まり、既定0）。
-        limit: 読み込む最大行数（既定10）。大きいファイルの続きを読みたい
-            場合は offset を前回の end_line に合わせて指定すること。
+        file_path: The absolute path to read (a path memory reference `@N` is also allowed).
+            A relative path is resolved against the working directory.
+        offset: The number of leading lines to skip (0-based, default 0).
+        limit: The maximum number of lines to read (default 10). To read the rest of a large
+            file, set offset to the previous end_line.
 
     Returns:
-        `{"path", "total_lines", "start_line", "end_line", "content", "path_memory"}`
-        を持つJSON文字列。`content` は "行番号\\t内容" を改行結合した文字列。
-        ファイル不在・ディレクトリ指定・バイナリファイル・同一引数での
-        再呼び出し（読み取り専用のため上限回数まで）は例外を送出せず
-        「エラー: ...」形式の文字列を返す。
+        A JSON string with `{"path", "total_lines", "start_line", "end_line", "content", "path_memory"}`.
+        `content` is "line number\\tcontent" lines joined with newlines.
+        A missing file, a directory, a binary file, or calling again with the same arguments
+        (allowed up to a limit because it is read-only) returns an "Error: ..." string instead of
+        raising.
     """
     path, error = _resolve_file_tools_path(file_path)
     if error:
-        return f"エラー: {error}"
+        return f"Error: {error}"
     dup_error = _check_file_tools_duplicate("Read", f"Read\x00{path}\x00{offset}\x00{limit}")
     if dup_error:
         return dup_error
@@ -93,7 +92,7 @@ def read_tool(file_path: str, offset: int = 0, limit: int = 10) -> str:
         result = read_file(path, offset=offset, limit=limit)
     except ValueError as e:
         hint = suggest_from_path_memory(str(path)) if not path.exists() else ""
-        return f"エラー: {e}{hint}"
+        return f"Error: {e}{hint}"
     path_memory = _register_path_memory([result["path"]])
     if path_memory:
         result["path_memory"] = path_memory

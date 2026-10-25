@@ -46,4 +46,4 @@ async def _echo_ask_answer(ask_message, question: str, answer: str) -> None:
         await ask_message.update()
         await cl.Message(content=answer, author=_ANSWER_AUTHOR, type="user_message").send()
     except Exception:  # noqa: BLE001 - 表示の失敗でツールの結果を失わせない
-        logger.warning("ask 系ツールの回答をチャットに表示できませんでした", exc_info=True)
+        logger.warning("Could not show the answer of the ask tool in the chat", exc_info=True)

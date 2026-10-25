@@ -28,7 +28,7 @@ from pathlib import Path
 _OFFICE_SHARED = Path(__file__).resolve().parent.parent.parent / "office_shared"
 if str(_OFFICE_SHARED) not in sys.path:
     sys.path.append(str(_OFFICE_SHARED))
-from excel_common import backup_before_overwrite, register_output_path, setup_utf8_stdio  # noqa: E402
+from excel_common import backup_before_overwrite, read_text_with_fallback, register_output_path, setup_utf8_stdio  # noqa: E402
 from _ops import apply_op  # noqa: E402
 
 
@@ -37,29 +37,26 @@ def _load_json_arg(args: argparse.Namespace) -> str:
         return args.ops_json
     data_path = Path(args.ops_file)
     if not data_path.is_file():
-        raise FileNotFoundError(f"opsファイルが見つかりません: {args.ops_file}")
-    try:
-        return data_path.read_text(encoding="utf-8")
-    except UnicodeDecodeError:
-        return data_path.read_text(encoding="cp932")
+        raise FileNotFoundError(f"ops file not found: {args.ops_file}")
+    return read_text_with_fallback(data_path)
 
 
 def main() -> int:
     setup_utf8_stdio()
     parser = argparse.ArgumentParser()
-    parser.add_argument("path", help="編集対象（--new時は作成先）のxlsx/xlsmパス")
+    parser.add_argument("path", help="xlsx/xlsm path to edit (the path to create with --new)")
     group = parser.add_mutually_exclusive_group(required=True)
-    group.add_argument("--ops-json", help="適用する操作のJSON配列をそのまま渡す")
-    group.add_argument("--ops-file", help="適用する操作のJSON配列を書いたファイルのパス")
-    parser.add_argument("--new", action="store_true", help="既存ファイルを読まず新規ワークブックとして作成する")
-    parser.add_argument("--overwrite", action="store_true", help="--new時に出力先が既に存在する場合の上書きを許可する")
-    parser.add_argument("--output", default=None, help="保存先パス（省略時は path へ上書き保存）")
+    group.add_argument("--ops-json", help="pass the JSON array of operations to apply as is")
+    group.add_argument("--ops-file", help="path of a file with the JSON array of operations to apply")
+    parser.add_argument("--new", action="store_true", help="create a new workbook without reading an existing file")
+    parser.add_argument("--overwrite", action="store_true", help="with --new, allow overwriting if the output already exists")
+    parser.add_argument("--output", default=None, help="output path (if omitted, path is overwritten)")
     args = parser.parse_args()
 
     path = Path(args.path)
     ext = path.suffix.lower()
     if ext not in (".xlsx", ".xlsm"):
-        print(f"対応拡張子は .xlsx/.xlsm のみです: {ext}", file=sys.stderr)
+        print(f"Only the .xlsx/.xlsm extensions are supported: {ext}", file=sys.stderr)
         return 1
 
     output_path = Path(args.output) if args.output else path
@@ -73,45 +70,45 @@ def main() -> int:
     try:
         ops = json.loads(raw)
     except json.JSONDecodeError as e:
-        print(f"opsのJSON解析に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to parse the ops JSON: {e}", file=sys.stderr)
         return 1
     if not isinstance(ops, list):
-        print("opsはJSON配列である必要があります", file=sys.stderr)
+        print("ops must be a JSON array", file=sys.stderr)
         return 1
 
     import openpyxl
 
     if args.new:
         if path.exists() and not args.overwrite:
-            print(f"作成先が既に存在します（上書きするには --overwrite を指定）: {args.path}", file=sys.stderr)
+            print(f"The output already exists (specify --overwrite to overwrite it): {args.path}", file=sys.stderr)
             return 1
         wb = openpyxl.Workbook()
         wb.remove(wb.active)
     else:
         if not path.is_file():
-            print(f"編集対象のファイルが見つかりません（新規作成する場合は --new を指定）: {args.path}", file=sys.stderr)
+            print(f"File to edit not found (specify --new to create a new one): {args.path}", file=sys.stderr)
             return 1
         try:
             wb = openpyxl.load_workbook(str(path), keep_vba=(ext == ".xlsm"))
         except Exception as e:  # noqa: BLE001 - 破損ファイル等、openpyxlが送出する多様な例外を丸めて報告する
-            print(f"ファイルの読み込みに失敗しました: {e}\n{traceback.format_exc()}", file=sys.stderr)
+            print(f"Failed to read the file: {e}\n{traceback.format_exc()}", file=sys.stderr)
             return 1
 
     for idx, op in enumerate(ops):
         if not isinstance(op, dict) or "op" not in op:
-            print(f"ops[{idx}] が不正です（'op'キーを持つオブジェクトである必要があります）: {op!r}", file=sys.stderr)
+            print(f"ops[{idx}] is invalid (it must be an object with an 'op' key): {op!r}", file=sys.stderr)
             return 1
         try:
             apply_op(wb, op)
         except KeyError as e:
-            print(f"ops[{idx}]（op={op.get('op')!r}）に必須キー{e}が指定されていません", file=sys.stderr)
+            print(f"ops[{idx}] (op={op.get('op')!r}) is missing the required key {e}", file=sys.stderr)
             return 1
         except (ValueError, TypeError) as e:
-            print(f"ops[{idx}]（op={op.get('op')!r}）の適用に失敗しました: {e}", file=sys.stderr)
+            print(f"Failed to apply ops[{idx}] (op={op.get('op')!r}): {e}", file=sys.stderr)
             return 1
 
     if not wb.sheetnames:
-        print("最終的にシートが1つも存在しません（add_sheetを含めるか--newを見直してください）", file=sys.stderr)
+        print("In the end there are no sheets at all (include add_sheet or review --new)", file=sys.stderr)
         return 1
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,7 +116,7 @@ def main() -> int:
     try:
         wb.save(str(output_path))
     except OSError as e:
-        print(f"ファイルの保存に失敗しました: {e}", file=sys.stderr)
+        print(f"Failed to save the file: {e}", file=sys.stderr)
         return 1
 
     result = {
@@ -128,7 +125,7 @@ def main() -> int:
         "sheets": wb.sheetnames,
         "applied_ops": len(ops),
     }
-    path_memory = register_output_path(output_path, description="edit_excelが生成/更新したファイル")
+    path_memory = register_output_path(output_path, description="file generated/updated by edit_excel")
     if path_memory:
         result["path_memory"] = path_memory
     print(json.dumps(result, ensure_ascii=False))

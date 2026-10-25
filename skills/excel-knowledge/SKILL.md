@@ -1,6 +1,6 @@
 ---
 name: excel-knowledge
-description: xlsx/xlsmファイルをexcel-edit/excel-read/excel-render/excel-recalcスキルで作成・編集・確認する際のコーディング作法・定石・よくある落とし穴について、実際の作業ログから蓄積したローカルの知識ベース（references/配下のノート）を参照するスキル。ユーザーが「表を作りたい」「既存のxlsx/xlsmを修正したい」といった依頼そのものではなく、excel-edit等のスキルを呼び出す際に「引数エラーが出た」「同じエラーを繰り返している」「opの組み立て方が分からない」「excel-editのopで表現できない要求にどう対処すべきか」「グラフの種類が対応していないと言われた」「ファイルが壊れて開けなくなった」など、ツール呼び出し自体で詰まった/迷走しかけたときに使う。excel-edit/excel-read/excel-render/excel-recalcで実際にxlsx/xlsmを読み書きする前後の下調べ・トラブルシューティング段階で使うことが多い。VBAマクロの読み書き・エラーはexcel-vba-knowledge（excel-vba-read/excel-vba-edit用）の担当でこのスキルの対象外。ユーザーの依頼でExcel操作用のPythonスクリプト（openpyxl等を使った単体スクリプト）を新規に書き起こすタスクもこのスキルの対象外。
+description: A skill that refers to a local knowledge base (notes under references/), accumulated from real work logs, on coding practices, standard techniques and common pitfalls when creating, editing and checking xlsx/xlsm files with the excel-edit/excel-read/excel-render/excel-recalc skills. Use it not for requests themselves such as "I want to make a table" or "I want to fix an existing xlsx/xlsm", but when you get stuck or start going in circles on the tool calls themselves while calling skills such as excel-edit, for example "an argument error occurred", "the same error keeps repeating", "I don't know how to build the ops", "how should I handle a request that excel-edit's ops cannot express", "I was told the chart type is not supported" or "the file got corrupted and cannot be opened". VBA macros and their errors are handled by excel-vba-knowledge (for excel-vba-read/excel-vba-edit). Writing a new standalone Python script for Excel operations (openpyxl, etc.) at the user's request is also out of scope.
 license: MIT
 metadata:
   author: ytakamoto
@@ -9,61 +9,60 @@ metadata:
 
 # excel-knowledge
 
-xlsx/xlsm を扱う `excel-edit`/`excel-read`/`excel-render`/`excel-recalc` スキルの
-呼び出しでハマりやすい点をまとめたローカル知識ベース。
-スクリプトは持たず、`read_skill_file` で
-`references/` 配下のノートを読むだけのスキル。
+A local knowledge base summarizing common pitfalls when calling the `excel-edit`/`excel-read`/`excel-render`/`excel-recalc` skills,
+which handle xlsx/xlsm.
+It has no scripts; it is a skill where you only read the notes under `references/`
+with `read_skill_file`.
 
-## 使い方
+## How to use
 
-1. このSKILL.mdの本文（`read_skill` で既に読んでいる）にある下記「索引」から、
-   相談内容に近いトピックを選ぶ。複数該当してもよい。
-2. `read_skill_file` で該当ノートを読む。**`relative_path` には必ず
-   `excel-knowledge/references/<ファイル名>` のようにスキルフォルダ名を
-   先頭に含めること**（`references/edit-excel-invocation-contract.md` の
-   ようにスキルフォルダ名を省略すると見つからない）。
-3. ノート内に `[[別のノート名]]` という参照があれば、必要に応じてそちらも読む
-   （例: `[[error-message-first-retry]]` は
-   `references/error-message-first-retry.md` を指す）。
-4. ノートの内容はそのままコピペ提示するのではなく、実際に呼び出そうとしている
-   op・引数・エラーメッセージに当てはめて具体的な修正案として提示する。
-5. 索引に該当するトピックが無い、またはノートを読んでも解決しない場合は、
-   その旨をユーザーに伝えたうえで各スキル自身のSKILL.mdを`read_skill`で
-   読み直す・`web-search`スキルでの調査を検討する。
-6. 実際にxlsx/xlsmを読む・書き換える作業は`excel-edit`/`excel-read`/
-   `excel-render`/`excel-recalc`スキルの担当。このスキルは「呼び出す前に
-   引数・opの正しい形を確認する」「エラーが出たときに原因の当たりを付ける」
-   ための下調べに使う。
+1. From the "Index" below in the body of this SKILL.md (already read with `read_skill`),
+   choose the topics close to the question. Several may apply.
+2. Read the matching notes with `read_skill_file`. **Always include the skill folder name
+   at the start of `relative_path`, like `excel-knowledge/references/<file name>`**
+   (omitting the skill folder name, like `references/edit-excel-invocation-contract.md`,
+   makes it not found).
+3. If a note has a reference like `[[other note name]]`, read that one too if needed
+   (e.g. `[[error-message-first-retry]]` points to
+   `references/error-message-first-retry.md`).
+4. Do not copy and paste the content of notes as is; apply it to the op, arguments and error message
+   you are actually trying to call, and present it as a concrete fix.
+5. If no topic in the index applies, or reading the notes does not solve it,
+   tell the user so, then reread each skill's own SKILL.md with `read_skill`
+   or consider investigating with the `web-search` skill.
+6. The work of actually reading and rewriting xlsx/xlsm belongs to the `excel-edit`/`excel-read`/
+   `excel-render`/`excel-recalc` skills. Use this skill for research: "checking the correct form of arguments and ops
+   before calling" and "getting an idea of the cause when an error occurs".
 
-## 索引
+## Index
 
-| トピック | ファイル | 内容 |
+| Topic | File | Content |
 |---|---|---|
-| excel-read/excel-renderの引数・query | `excel-knowledge/references/read-render-args-and-queries.md` | `read_excel.py`/`render_excel.py`の引数はSKILL.md記載のもので全て、`--query-json`の対応opは`group_by`/`list_images`/`list_charts`/`print_area`のみ、存在しない引数・op名を当てずっぽうで発明しない |
-| edit_excel.pyの呼び出し契約 | `excel-knowledge/references/edit-excel-invocation-contract.md` | `--ops-json`/`--ops-file`はどんな用途でも必須（コピー・復元ツールとして使えない）、`--new`は0シートの空ブックから始まる（Sheet1は存在しない）、`--query`と`--query-json`の混同 |
-| excel-editのopで表現できない要求 | `excel-knowledge/references/beyond-excel-edit-capabilities.md` | 積み上げグラフ等、`add_chart`が対応しない種類指定に当たったときの対処。生openpyxlへ無断でバイパスしてxlsmを破損させた実例、`keep_vba`、推奨する対処の順序 |
-| フォント名変更でraw openpyxlに頼るとき | `excel-knowledge/references/raw-openpyxl-xlsm-fallback.md` | excel-editにフォント名指定が無い、Fontはcopy()してから.nameだけ変更する（新規Font代入だとbold/size/colorが消える）、render_excel失敗=破損とは限らない、同じ仮説を実行せず繰り返す迷走への対処 |
-| エラーメッセージを読んでからの再試行 | `excel-knowledge/references/error-message-first-retry.md` | エラーメッセージの型ごとの読み方、再試行前に変更点とエラー原因が対応しているか確認する、2回連続で同種エラーが出たらread_skillでSKILL.mdを読み直す |
-| ツール権限の境界 | `excel-knowledge/references/tool-permission-boundaries.md` | readonly系サブエージェント等、権限外の書き込み系スクリプト実行をコードでシミュレートしようとしない |
+| Arguments and queries of excel-read/excel-render | `excel-knowledge/references/read-render-args-and-queries.md` | The arguments of `read_excel.py`/`render_excel.py` are exactly those in SKILL.md; the ops supported by `--query-json` are only `group_by`/`list_images`/`list_charts`/`print_area`; do not invent nonexistent arguments or op names by guesswork |
+| The calling contract of edit_excel.py | `excel-knowledge/references/edit-excel-invocation-contract.md` | `--ops-json`/`--ops-file` are required for any use (it cannot be used as a copy/restore tool); `--new` starts from an empty workbook with 0 sheets (Sheet1 does not exist); confusing `--query` and `--query-json` |
+| Requests excel-edit's ops cannot express | `excel-knowledge/references/beyond-excel-edit-capabilities.md` | What to do when you hit a type that `add_chart` does not support, such as stacked charts. A real case where bypassing to raw openpyxl without permission corrupted an xlsm, `keep_vba`, the recommended order of actions |
+| When relying on raw openpyxl to change font names | `excel-knowledge/references/raw-openpyxl-xlsm-fallback.md` | excel-edit has no font name option; copy() the Font and change only .name (assigning a new Font loses bold/size/color); a render_excel failure does not necessarily mean corruption; dealing with going in circles by repeating the same hypothesis without running it |
+| Retrying after reading the error message | `excel-knowledge/references/error-message-first-retry.md` | How to read each type of error message; before retrying, check that your change corresponds to the cause of the error; if the same kind of error occurs twice in a row, reread SKILL.md with read_skill |
+| Tool permission boundaries | `excel-knowledge/references/tool-permission-boundaries.md` | Do not try to simulate running write scripts outside your permissions in code, e.g. from read-only sub-agents |
 
-## ノートの追加・更新について（開発者向け）
+## Adding and updating notes (for developers)
 
-このスキルの `references/` は、実際の作業ログから見つかった失敗パターンや
-Web調査で得た知見を**開発者（人間、またはこのプロジェクトを保守するClaude Code）が
-事前に**書き足していく運用を想定している。
+The `references/` of this skill are meant to be added to **in advance by developers (humans, or the Claude Code
+that maintains this project)**, based on failure patterns found in real work logs
+and knowledge gained from web research.
 
-Locohaneの実行時LLM（このスキルを使う本体）は、スクリプト実行系ツールの
-書き込み先が作業ディレクトリ配下に限定されるサンドボックス制約があり、
-`skills/` 配下（このスキル自身のフォルダ）へはチャット実行中に書き込めない。そのため、**チャット中に得た新しい知見をこの
-知識ベースへ自動で書き戻す機能は無い**。会話の中で有用な新知見が得られた場合は、
-ユーザーまたは開発者に「このノウハウを`excel-knowledge`に追記してよいか」を
-確認し、後日（アプリの外から）ファイルを追加する運用にすること。
+Locohane's runtime LLM (the main app that uses this skill) is under a sandbox constraint where
+the write destination of script execution tools is limited to the working directory,
+so it cannot write under `skills/` (this skill's own folder) during a chat. So **there is no feature
+that automatically writes new knowledge gained during a chat back into this knowledge base**. When useful new knowledge comes up in a conversation,
+confirm with the user or developer "may I add this know-how to `excel-knowledge`?",
+and add the file later (from outside the app).
 
-新しいノートを追加する手順:
+Steps to add a new note:
 
-1. `references/<トピックを表す短い英語スラッグ>.md` を作成し、既存ノートと同じ
-   Markdown形式（見出し・コード例・関連ノートへの`[[名前]]`リンク）で書く。
-2. 上記「索引」の表に1行追加する（トピック名・ファイルパス・内容の要約）。
-3. アプリ再起動は不要（`read_skill_file` はファイルをそのつど読むため）。
-   ただし索引に載っていないノートはLLMから見つけてもらえないので、
-   必ず索引への追記とセットで行う。
+1. Create `references/<short English slug for the topic>.md` and write it in the same
+   Markdown format as the existing notes (headings, code examples, `[[name]]` links to related notes).
+2. Add one row to the "Index" table above (topic name, file path, summary of the content).
+3. No app restart is needed (`read_skill_file` reads the file each time).
+   But notes not in the index cannot be found by the LLM,
+   so always add the index entry at the same time.
