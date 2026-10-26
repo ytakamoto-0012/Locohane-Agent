@@ -65,7 +65,7 @@ reportlab==4.5.1
 #     実行・数式再計算: pywin32（Excel COM経由、recalc_excel.py/edit_vba.py）） ---
 openpyxl==3.1.5
 xlrd==2.0.2
-oletools
+oletools==0.60.2
 pywin32==311
 
 # --- docx-read/docx-create/docx-edit/docx-render
@@ -80,4 +80,4 @@ python-pptx==1.0.2
 
 # 画像
 pillow>=13.0.0                       # 12.x 以前は画像のデコード（JPEG・TIFF・FlashPix 等）に既知の脆弱性があり、ナレッジの取り込みで利用者の置いた画像を開くため
-pillow-heif
+pillow-heif==1.5.0                   # HEIC/HEIF を Pillow で開く（ナレッジの取り込みの画像ファイル）
