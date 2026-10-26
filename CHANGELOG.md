@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-27
+
 ### 追加
 
 - 設定ダッシュボードのナレッジ画面で、コレクションを別のインスタンス（または同じインスタンスの別の名前）へコピーできるように
@@ -26,6 +28,11 @@
 ### 変更
 
 - `[llm].reasoning_budget` の既定値を `4096` から `-1`（無制限）に変更しました。思考の深さは `reasoning_effort` で調整します。
+- トークン制御の既定値を、1リクエスト128,000トークン以下の運用に合わせて引き下げました。
+  `[graph].token_guard_soft_threshold` 170000 → 100000、`[subagent].token_guard_soft_threshold` 156000 → 86000・
+  `token_guard_hard_threshold` 170000 → 100000、`[context_compaction].single_request_token_threshold` 144000 → 95000・
+  `pre_note_threshold` 128000 → 90000。
+- `[llm].sub_url` の既定の接続先を `http://localhost:12430/v1` から `http://localhost:8080/v1` に変更しました。
 - ナレッジの取り込みで、Word の本文を段落と表の文書の順に読み、コンテンツコントロールの中の文字と変更履歴で挿入した文字も
   取り込むようにしました。PowerPoint のグラフのタイトル、Excel のグラフシートのグラフのタイトルも取り込みます。
 
@@ -37,7 +44,12 @@
 - Excel のグラフのタイトルをセル参照にしているとき、タイトルが取り込まれなかった問題を修正しました。
 - グラフを置いていないグラフシートがある Excel ファイルが、取り込みに失敗していた問題を修正しました。
 
-既存のナレッジに反映するには、ナレッジ画面で「再構築」してください（差分の取り込みでは、変わっていないファイルは読み直しません）。
+### 移行時の注意
+
+- 取り込みの変更・修正を、取り込み済みで内容の変わっていないファイルにも反映するには、ナレッジ画面で「再構築」してください
+  （差分の取り込みでは、変わっていないファイルは読み直しません）。
+- `config.ini` を上書き保存せずに使っている（設定ダッシュボードで値を変えていない）場合、トークン制御の閾値と `[llm].sub_url` は
+  新しい既定値になります。従来の値で使うには、設定ダッシュボードで値を設定してください。
 
 ## [0.4.1] - 2026-10-26
 
@@ -343,7 +355,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.0...v0.3.1
