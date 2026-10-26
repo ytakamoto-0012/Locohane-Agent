@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useChatInteract } from '@chainlit/react-client';
 import type { IStep } from '@chainlit/react-client';
 import type { PendingAttachment } from './Composer';
+import { getStoredReasoningEffort } from './ReasoningEffortButton';
 
 /**
  * チャット開始時のみ表示する定型文ボタン列。クリックすると即座にそのテキストを
@@ -30,7 +31,7 @@ export function StarterPrompts({
       type: 'user_message',
       output: text,
       createdAt: new Date().toISOString(),
-      metadata: {}
+      metadata: { reasoning_effort: getStoredReasoningEffort() }
     };
     const fileReferences = attachments.filter((a) => a.fileRef).map((a) => ({ id: a.fileRef!.id }));
     sendMessage(message, fileReferences);

@@ -1790,6 +1790,24 @@ to the user's own real project folder etc. with an absolute path.
 
 ---
 
+## Switching the reasoning depth (toolbar)
+
+The gauge icon in the chat input toolbar (`frontend/src/components/ReasoningEffortButton.tsx`) lets each user
+override `[llm].reasoning_effort`.
+
+- **Choices**: "config.ini setting" (default; uses `[llm].reasoning_effort` as is), `none`, `minimal`, `low`,
+  `medium`, `high`, `xhigh`, `max`. Which values are accepted depends on the model template, and unsupported values make
+  the request fail (see `reasoning_effort` in "Configuration reference").
+- **How it is applied**: the chosen value is saved in the browser's localStorage (`la-reasoning-effort`) and sent with every
+  message in its metadata (`reasoning_effort`). `on_message` in `app.py` detects the change and rebuilds the graph
+  (`with_reasoning_effort()` in `src/config.py`). It applies to the main agent and to `dispatch_agent` subagents, not to
+  the summaries of context compaction.
+- **When it can be changed**: the icon is disabled while generating (including while waiting for an `askUser` answer).
+  The turn is fixed to the value at the time of sending, so it never switches in the middle of a turn.
+- **Scope**: saved per browser; `config.ini` itself is not changed.
+
+---
+
 ## Language switching (Japanese / English)
 
 The chat screen, the settings dashboard and the AI's responses can be switched between Japanese and English per user.

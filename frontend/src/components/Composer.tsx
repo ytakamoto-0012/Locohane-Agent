@@ -4,6 +4,7 @@ import { useChatData, useChatInteract } from '@chainlit/react-client';
 import type { IFileRef, IStep } from '@chainlit/react-client';
 import { useI18n } from '../i18n';
 import { WorkDirButton } from './WorkDirButton';
+import { ReasoningEffortButton, getStoredReasoningEffort } from './ReasoningEffortButton';
 import { PlanModeBadge } from './PlanModeBadge';
 import { Icon } from './Icon';
 import type { InputLimits } from '../utils/messageTree';
@@ -137,7 +138,7 @@ export function Composer({
       type: 'user_message',
       output: value,
       createdAt: new Date().toISOString(),
-      metadata: {}
+      metadata: { reasoning_effort: getStoredReasoningEffort() }
     };
 
     if (isReplying && askUser) {
@@ -265,6 +266,8 @@ export function Composer({
               onChange={(e) => onAttach(e.target.files)}
             />
             <WorkDirButton disabled={!workDirEditable} />
+            {/* askUser の応答待ち（Plan承認等）も loading は false になるが、ターンの途中なので変更させない */}
+            <ReasoningEffortButton disabled={loading || Boolean(askUser) || Boolean(remoteGenerating)} />
           </div>
           <div className="composer-toolbar-right">
             {showCharCounter ? (

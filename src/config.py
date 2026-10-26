@@ -1636,6 +1636,22 @@ def _as_optional_reasoning_effort(value: str | None) -> str | None:
     return text
 
 
+def with_reasoning_effort(config: Config, value: object) -> Config:
+    """チャット画面で選んだ reasoning_effort を [llm].reasoning_effort へ上書きした Config を返す。
+
+    Args:
+        config: アプリ設定（config.ini の値）。
+        value: 画面で選んだ値。LLM_REASONING_EFFORTS に無い値（空文字・None を含む）は
+            「config.ini の値を使う」とみなす。
+
+    Returns:
+        上書きした Config。上書き不要なら config をそのまま返す。
+    """
+    if not isinstance(value, str) or value not in LLM_REASONING_EFFORTS or value == config.reasoning_effort:
+        return config
+    return replace(config, reasoning_effort=value)
+
+
 def _as_thinking_loop_guard_target(value: str | None) -> str:
     """[thinking_loop_guard].target（THINKING_LOOP_GUARD_TARGETS のいずれか）を検証する。
 

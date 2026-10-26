@@ -11,6 +11,7 @@ import time
 import traceback
 
 from .. import subagent
+from ..config import with_reasoning_effort
 from ..i18n import current_lang, t
 from ..tool_labels import tool_label
 from ..llm import reset_preferred_sub_model, set_preferred_sub_model
@@ -373,7 +374,7 @@ async def _run_dispatch_agent_job(
             task,
             resolved.tools,
             resolved.system_prompt,
-            _state._LLM_CONFIG,
+            with_reasoning_effort(_state._LLM_CONFIG, cl.user_session.get(_state.SESSION_REASONING_EFFORT_KEY)),
             job.max_iterations,
             on_iteration=_on_iteration,
             llm_timeout_max_retries=_state._DISPATCH_AGENT_BACKGROUND_LLM_TIMEOUT_MAX_RETRIES,

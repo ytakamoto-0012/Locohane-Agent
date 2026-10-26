@@ -1,6 +1,7 @@
 type IconName =
   | 'paperclip'
   | 'folder'
+  | 'gauge'
   | 'palette'
   | 'sun'
   | 'moon'
@@ -24,6 +25,8 @@ function IconPath({ name }: { name: IconName }) {
       );
     case 'folder':
       return <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />;
+    case 'gauge':
+      return <path d="M12 14l4-4M3.34 19a10 10 0 1 1 17.32 0" />;
     case 'palette':
       return (
         <>

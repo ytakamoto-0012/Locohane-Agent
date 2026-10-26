@@ -1805,6 +1805,24 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 
 ---
 
+## 推論の深さの切り替え（ツールバー）
+
+チャット入力欄ツールバーのメーターアイコン（`frontend/src/components/ReasoningEffortButton.tsx`）から、
+`[llm].reasoning_effort` を利用者ごとに上書きできる。
+
+- **選択肢**: 「config.ini の設定」（既定。`[llm].reasoning_effort` をそのまま使う）・`none`・`minimal`・`low`・
+  `medium`・`high`・`xhigh`・`max`。受け付ける値はモデルのテンプレート次第で、対応外の値はリクエストがエラーになる
+  （「設定リファレンス」の `reasoning_effort` 参照）。
+- **反映のしかた**: 選んだ値はブラウザの localStorage（`la-reasoning-effort`）に保存し、送信のたびにメッセージの
+  metadata（`reasoning_effort`）で送る。`app.py` の `on_message` が値の変化を検知してグラフを組み直す
+  （`src/config.py` の `with_reasoning_effort()`）。メインエージェントと `dispatch_agent` のサブエージェントに効き、
+  コンテキスト圧縮の要約には効かない。
+- **変更可能なタイミング**: 生成中（`askUser` の応答待ちを含む）はアイコンが無効化される。送信時点の値でそのターンが
+  確定するため、ターンの途中で切り替わることはない。
+- **スコープ**: ブラウザ単位で保存され、`config.ini` 自体は変更されない。
+
+---
+
 ## 言語切り替え（日本語 / 英語）
 
 チャット画面・設定ダッシュボード・AI の応答を、利用者ごとに日本語と英語で切り替えられる。

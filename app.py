@@ -104,6 +104,7 @@ from src.config import (
     load_config,
     render_agent_type_run_script_allowlist_block,
     render_plan_approval_exempt_scripts_block,
+    with_reasoning_effort,
 )
 from src.context_compaction import (
     force_write_thread_note,
@@ -176,6 +177,7 @@ from src.tools import (
 from src.tools.dispatch_agent_batch import BATCH_GROUP_RUN_NAME, interrupted_note_topic
 from src.tools._plan_render import _render_plan_payload
 from src.tools._path_memory_helpers import _register_path_memory
+from src.tools._state import SESSION_REASONING_EFFORT_KEY
 from src.tools._workdir import _build_workdir_status_info, _resolve_exec_workdir
 
 # dispatch_agent（サブエージェント）由来のメッセージに付与する author 名。
@@ -698,7 +700,7 @@ def _patch_chainlit_websocket_ping_timeout() -> None:
 # Chainlit本体側にその区別が無い（_patch_chainlit_ignore_ui_action_first_interaction
 # のdocstring参照）。
 _NON_CHAT_ACTION_NAMES = frozenset(
-    {"pick_work_dir", "suggest_work_dir", "work_dir_server_info", "toggle_plan_mode", "set_language"}
+    {"pick_work_dir", "suggest_work_dir", "work_dir_server_info", "toggle_plan_mode", "set_language", "reasoning_effort_info"}
 )
 
 
@@ -2086,7 +2088,11 @@ async def _rebuild_graph(thread_id: str, *, wait_when_busy: bool = True):
     system_prompt = _apply_session_draft_skills() + i18n.response_language_directive()
     # 組み立てに使った言語。画面で言語を切り替えたら on_message が比べて組み直す。
     cl.user_session.set("graph_lang", i18n.current_lang())
-    graph = await build_graph(_config, system_prompt, _checkpointer, wait_when_busy=wait_when_busy)
+    # 入力欄ツールバーで選んだ reasoning_effort（on_message が送信時の値を入れる）。
+    # 変わったら on_message が比べて組み直す。
+    config = with_reasoning_effort(_config, cl.user_session.get(SESSION_REASONING_EFFORT_KEY))
+    cl.user_session.set("graph_reasoning_effort", config.reasoning_effort)
+    graph = await build_graph(config, system_prompt, _checkpointer, wait_when_busy=wait_when_busy)
     cl.user_session.set("graph", graph)
     return graph
 
@@ -2817,6 +2823,23 @@ async def on_work_dir_server_info(action: cl.Action) -> dict:
     """
     del action
     return {"hostname": server_hostname()}
+
+
+@cl.action_callback("reasoning_effort_info")
+async def on_reasoning_effort_info(action: cl.Action) -> dict:
+    """入力欄ツールバーの reasoning_effort 選択（ReasoningEffortButton.tsx）が、
+    「config.ini の値を使う」選択肢に添える [llm].reasoning_effort の値を返す action_callback。
+
+    選んだ値そのものは送信時にメッセージの metadata で受け取る（on_message 参照）。
+
+    Args:
+        action: 未使用。
+
+    Returns:
+        {"default": str}（config.ini で空欄なら空文字）。
+    """
+    del action
+    return {"default": _config.reasoning_effort or ""}
 
 
 @cl.action_callback("suggest_work_dir")
@@ -3966,7 +3989,16 @@ async def _on_message_impl(message: cl.Message) -> None:
     # 画面で表示言語を切り替えた後も、応答言語の指示を差し替えるため組み直す
     # （set_language アクションは生成中にも届くため、ここで反映する）。
     drafts_changed = skill_drafts.drafts_signature(current_drafts) != cl.user_session.get("drafts_signature")
-    if drafts_changed or i18n.current_lang() != cl.user_session.get("graph_lang"):
+    # 入力欄ツールバーで選んだ reasoning_effort（Composer.tsx が送信時に metadata へ入れる。
+    # 空・不正値は config.ini の値）。画面は生成中に変更させず、ここで送信時の値に確定させる
+    # ため、ターンの途中（サブエージェントを含む）で切り替わることはない。
+    requested_effort = (message.metadata or {}).get("reasoning_effort")
+    cl.user_session.set(SESSION_REASONING_EFFORT_KEY, requested_effort if isinstance(requested_effort, str) else "")
+    effort_changed = (
+        with_reasoning_effort(_config, cl.user_session.get(SESSION_REASONING_EFFORT_KEY)).reasoning_effort
+        != cl.user_session.get("graph_reasoning_effort")
+    )
+    if drafts_changed or effort_changed or i18n.current_lang() != cl.user_session.get("graph_lang"):
         await _rebuild_graph(thread_id, wait_when_busy=False)
     graph = cl.user_session.get("graph")
     config = {

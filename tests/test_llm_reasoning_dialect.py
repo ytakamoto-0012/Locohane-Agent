@@ -288,3 +288,17 @@ def test_llm_endpoints_accept_vllm_provider():
         '[{"base_url": "http://h/v1", "api_key": "k", "model": "m", "provider": "vllm"}]', "main_url"
     )
     assert endpoints[0].provider == "vllm"
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [("high", "high"), ("none", "none"), ("", "low"), (None, "low"), ("bogus", "low"), (3, "low")],
+)
+def test_with_reasoning_effort_overrides_only_valid_values(requested, expected):
+    # チャット画面で選んだ値（メッセージの metadata）だけを上書きし、空・不正値は config.ini の値を使う。
+    base = _FakeConfig(reasoning_effort="low")
+    result = config_module.with_reasoning_effort(base, requested)
+    assert result.reasoning_effort == expected
+    assert base.reasoning_effort == "low"  # 元の Config は変更しない
+    if expected == "low":
+        assert result is base

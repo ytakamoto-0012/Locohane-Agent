@@ -49,6 +49,11 @@ _SUBAGENT_RUN_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar("_
 # _AGENT_TYPE_RUN_SCRIPT_ALLOWLIST によるスキル/スクリプト制限のチェックに使う。
 _SUBAGENT_AGENT_TYPE: contextvars.ContextVar[str | None] = contextvars.ContextVar("_subagent_agent_type", default=None)
 
+# チャット画面（入力欄ツールバー）で選んだ reasoning_effort を入れる cl.user_session のキー。
+# app.py の on_message が送信時の値（空文字なら config.ini の値を使う）を入れ、メインの
+# グラフと dispatch_agent のサブエージェントが config.with_reasoning_effort() で反映する。
+SESSION_REASONING_EFFORT_KEY = "reasoning_effort"
+
 # agent_type ごとに run_script で呼んでよいスキル/スクリプトを制限する（未登録の
 # agent_type は制限なし）。要素は「スキル名の文字列」（そのスキル配下の全スクリプト
 # を許可）または「(スキル名, スクリプトファイル名)」のタプル（そのスクリプトのみ

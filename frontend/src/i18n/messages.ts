@@ -80,6 +80,15 @@ export const ja = {
   'workdir.reset': '既定値に戻す',
   'workdir.apply': '設定',
 
+  'effort.title': '推論の深さ（reasoning_effort）',
+  'effort.setTitle': '推論の深さ（reasoning_effort）を設定',
+  'effort.lockedTitle': '生成中は推論の深さを変更できません',
+  'effort.useConfig': 'config.ini の設定',
+  'effort.useConfigWithValue': 'config.ini の設定（{value}）',
+  'effort.unset': '未指定',
+  'effort.noneLabel': 'none（思考しない）',
+  'effort.note': '次の送信から反映されます。使える値はモデルのテンプレート次第です。',
+
   'usage.input': '入力',
   'usage.output': '出力',
   'usage.total': '合計',
@@ -206,6 +215,15 @@ const en: Record<MessageKey, string> = {
   'workdir.resetTitle': 'Go back to the default folder in config.ini',
   'workdir.reset': 'Use default',
   'workdir.apply': 'Set',
+
+  'effort.title': 'Reasoning depth (reasoning_effort)',
+  'effort.setTitle': 'Set the reasoning depth (reasoning_effort)',
+  'effort.lockedTitle': 'The reasoning depth cannot be changed while generating',
+  'effort.useConfig': 'config.ini setting',
+  'effort.useConfigWithValue': 'config.ini setting ({value})',
+  'effort.unset': 'not set',
+  'effort.noneLabel': 'none (no thinking)',
+  'effort.note': 'Applies from your next message. Supported values depend on the model template.',
 
   'usage.input': 'Input',
   'usage.output': 'Output',
