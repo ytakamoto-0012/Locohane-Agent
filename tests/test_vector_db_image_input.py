@@ -188,6 +188,35 @@ def test_switching_image_input_reingests_only_affected_files(env):
     assert _image_store_sources(cfg, kwargs) == ["manual.pdf"]
 
 
+def test_image_input_extensions_selects_documents_to_render(env):
+    import openpyxl
+
+    cfg, kwargs, docs = env["cfg"], env["kwargs"], env["docs"]
+    wb = openpyxl.Workbook()
+    wb.active.append(["品番", "A-100"])
+    wb.save(docs / "parts.xlsx")
+    # 既定（.pdf .docx .pptx）では Excel は画像にせず、本文だけで埋め込む。
+    default = dataclasses.replace(cfg, vector_db_image_input_extensions=(".pdf", ".docx", ".pptx"))
+    assert (ingest.file_mode(default, docs / "parts.xlsx"), ingest.file_mode(default, docs / "manual.pdf")) == ("text", "text+image")
+    result = ingest.ingest_collection(default, "docs", **kwargs)
+    assert (result.added, result.failed) == (3, [])
+    assert env["rendered"] == [("manual.pdf", 72)]
+    assert _image_store_sources(default, kwargs) == ["manual.pdf"]
+
+    # Excel を加えると、内容の変わっていない Excel も画像を足して取り込み直す（PDF はそのまま）。
+    with_excel = dataclasses.replace(cfg, vector_db_image_input_extensions=(".pdf", ".xlsx"))
+    result = ingest.ingest_collection(with_excel, "docs", **kwargs)
+    assert (result.updated, result.unchanged) == (1, 2)
+    assert env["rendered"][1:] == [("parts.xlsx", 72)]
+    assert _image_store_sources(with_excel, kwargs) == ["manual.pdf", "parts.xlsx"]
+
+    # 空にすると、どの文書もページ画像にしない（画像のベクターを消して本文だけにする）。
+    none = dataclasses.replace(cfg, vector_db_image_input_extensions=())
+    result = ingest.ingest_collection(none, "docs", **kwargs)
+    assert (result.updated, result.unchanged) == (2, 1)
+    assert _image_store_sources(none, kwargs) == []
+
+
 def test_text_less_pdf_is_registered_by_path_until_image_input(env):
     from reportlab.pdfgen import canvas
 
@@ -243,7 +272,7 @@ def test_config_reads_image_input(tmp_path, monkeypatch):
     from src.config import load_config
 
     monkeypatch.setenv("COMMON_DATA_DIR", str(tmp_path / "data" / "${instance}"))
-    for key in ("VECTOR_DB_IMAGE_INPUT", "VECTOR_DB_IMAGE_DPI", "VECTOR_DB_IMAGE_MIN_SCORE"):
+    for key in ("VECTOR_DB_IMAGE_INPUT", "VECTOR_DB_IMAGE_INPUT_EXTENSIONS", "VECTOR_DB_IMAGE_DPI", "VECTOR_DB_IMAGE_MIN_SCORE"):
         monkeypatch.delenv(key, raising=False)
     default = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
     assert (default.vector_db_image_input, default.vector_db_image_dpi, default.vector_db_image_min_score) == (False, 100, 0.1)
@@ -251,6 +280,14 @@ def test_config_reads_image_input(tmp_path, monkeypatch):
     path.write_text(json.dumps({"vector_db": {"image_input": "true", "image_dpi": "150"}}), encoding="utf-8")
     cfg = load_config(overrides_path=path, instance_name="inst1")
     assert (cfg.vector_db_image_input, cfg.vector_db_image_dpi) == (True, 150)
+    assert default.vector_db_image_input_extensions == (".pdf", ".docx", ".pptx")
+    path.write_text(json.dumps({"vector_db": {"image_input_extensions": "PDF, .xlsx"}}), encoding="utf-8")
+    assert load_config(overrides_path=path, instance_name="inst1").vector_db_image_input_extensions == (".pdf", ".xlsx")
+    path.write_text(json.dumps({"vector_db": {"image_input_extensions": ""}}), encoding="utf-8")
+    assert load_config(overrides_path=path, instance_name="inst1").vector_db_image_input_extensions == ()
+    path.write_text(json.dumps({"vector_db": {"image_input_extensions": ".pdf, .md"}}), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"image_input_extensions.*\.md"):
+        load_config(overrides_path=path, instance_name="inst1")
     path.write_text(json.dumps({"vector_db": {"image_dpi": "0"}}), encoding="utf-8")
     with pytest.raises(ValueError, match="image_dpi"):
         load_config(overrides_path=path, instance_name="inst1")

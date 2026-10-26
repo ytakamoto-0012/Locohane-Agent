@@ -503,6 +503,8 @@ class Config:
         vector_db_image_input: True なら .pdf/.docx/.pptx/.xlsx/.xlsm をページごとの
             画像にし、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
             （マルチモーダルの埋め込みモデルが必要）。
+        vector_db_image_input_extensions: image_input = True のときにページ画像も埋め込む文書の形式
+            （PAGE_IMAGE_EXTENSIONS のうちの一部。含めない形式は本文だけで埋め込む）。画像ファイルは常に画像で埋め込む。
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
         vector_db_office_timeout_seconds: image_input で Office ファイルを PDF に書き出す1回の上限秒数。
             超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。
@@ -1074,6 +1076,7 @@ class Config:
     vector_db_include_extensions: tuple[str, ...]
     vector_db_max_file_mb: float
     vector_db_image_input: bool
+    vector_db_image_input_extensions: tuple[str, ...]
     vector_db_image_dpi: int
     vector_db_office_timeout_seconds: float
     vector_db_ingest_workers: int
@@ -1961,6 +1964,21 @@ def _as_extension_list(value: str | None) -> tuple[str, ...]:
         if ext not in result:
             result.append(ext)
     return tuple(result)
+
+
+# ページごとに画像にできる文書の形式（[vector_db].image_input_extensions に書ける値。src/vector_db/render.py もこれを使う）。
+PAGE_IMAGE_EXTENSIONS = (".pdf", ".docx", ".pptx", ".xlsx", ".xlsm")
+
+
+def _as_page_image_extensions(value: str | None) -> tuple[str, ...]:
+    """[vector_db].image_input_extensions を読む（空なら、どの文書もページ画像にしない）。"""
+    extensions = _as_extension_list(value)
+    unknown = [e for e in extensions if e not in PAGE_IMAGE_EXTENSIONS]
+    if unknown:
+        raise ValueError(
+            f"[vector_db].image_input_extensions can only contain {', '.join(PAGE_IMAGE_EXTENSIONS)} (current value: {', '.join(unknown)})"
+        )
+    return extensions
 
 
 def _unquote(value: str | None) -> str:
@@ -3157,6 +3175,9 @@ def load_config(
         ),
         vector_db_max_file_mb=_positive_float(os.getenv("VECTOR_DB_MAX_FILE_MB", vector_db.get("max_file_mb", 50)), "[vector_db].max_file_mb"),
         vector_db_image_input=_as_bool(os.getenv("VECTOR_DB_IMAGE_INPUT", vector_db.get("image_input", False))),
+        vector_db_image_input_extensions=_as_page_image_extensions(
+            os.getenv("VECTOR_DB_IMAGE_INPUT_EXTENSIONS", vector_db.get("image_input_extensions", ".pdf, .docx, .pptx"))
+        ),
         vector_db_image_dpi=_positive_int(os.getenv("VECTOR_DB_IMAGE_DPI", vector_db.get("image_dpi", 100)), "[vector_db].image_dpi"),
         vector_db_office_timeout_seconds=_positive_float(
             os.getenv("VECTOR_DB_OFFICE_TIMEOUT_SECONDS", vector_db.get("office_timeout_seconds", 180)),

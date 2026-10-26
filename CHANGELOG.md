@@ -12,6 +12,30 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-26
+
+### 追加
+
+- ナレッジの取り込みで、Office ファイルの本文以外の文字も取り出すようにしました。Word はテキストボックス・ヘッダー/フッター・
+  脚注/文末脚注・コメント、Excel は図形（テキストボックス・オートシェイプ）の文字・グラフのタイトル・コメント、
+  PowerPoint はグループ化した図形の中の文字です。Excel の図形・コメントは、置かれているセルの行に `[Shape C5] …`・
+  `[Comment B3] …` の形で差し込みます。
+- `[vector_db] image_input_extensions` を追加しました。`image_input = true` のときにページ画像も埋め込む文書の形式を選べます。
+
+### 変更
+
+- `image_input = true` でも、Excel（`.xlsx`・`.xlsm`）は既定でページ画像にせず、本文だけで埋め込むようにしました
+  （`image_input_extensions` の既定は `.pdf, .docx, .pptx`）。Excel の PDF 書き出しは取り込みで一番時間がかかるうえ、
+  大きいシートは1ページに縮めると文字が潰れて画像の埋め込みが役に立ちにくいためです。従来どおり Excel も画像にするには
+  `image_input_extensions` に `.xlsx, .xlsm` を加えます。
+
+### 移行時の注意
+
+- `image_input = true` のインスタンスでは、次の「取り込み（差分）」で Excel ファイルが本文だけで取り込み直され、Excel のページ画像の
+  ベクターは消えます。
+- 図形・コメント等の文字を、取り込み済みで内容の変わっていないファイルにも反映するには、ナレッジ画面で「再構築」してください
+  （差分の取り込みでは、変わっていないファイルは読み直しません）。
+
 ## [0.4.0] - 2026-10-25
 
 ### 追加
@@ -292,7 +316,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.1...v0.3.0

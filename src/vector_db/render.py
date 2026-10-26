@@ -24,10 +24,11 @@ import threading
 from typing import Callable
 import uuid
 
+from ..config import PAGE_IMAGE_EXTENSIONS
 from .extract import PDFIUM_LOCK, ExtractError, normalize_newlines
 
-# ページごとに画像にする文書の形式。
-PAGE_EXTENSIONS = (".pdf", ".docx", ".pptx", ".xlsx", ".xlsm")
+# ページごとに画像にできる文書の形式（実際に画像にする形式は [vector_db].image_input_extensions で選ぶ）。
+PAGE_EXTENSIONS = PAGE_IMAGE_EXTENSIONS
 # そのまま1枚の画像として取り込む画像ファイルの形式（image_input = true のときだけ取り込み対象になる）。
 IMAGE_FILE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".tif", ".tiff", ".heic", ".heif")
 # image_input = true のときに画像で埋め込む形式。

@@ -33,7 +33,7 @@ async function renderKnowledgePanel(container, name) {
     _t(`埋め込みモデル: {0}`, data.embedding_model || _t("未設定")),
     _t(`接頭辞: 検索語 {0}・文書 {1}`, JSON.stringify(data.query_prefix), JSON.stringify(data.document_prefix)),
     _t(`対象の拡張子: {0}`, data.include_extensions.join(" ")),
-    _t(`埋め込み方: {0}`, data.image_input ? _t("本文＋画像（image_input = true。PDF・Office はページ画像も、画像ファイルは画像で埋め込む）") : _t("テキスト")),
+    _t(`埋め込み方: {0}`, data.image_input ? _t("本文＋画像（image_input = true。{0} はページ画像も、画像ファイルは画像で埋め込む）", (data.image_input_extensions || []).join(" ") || _t("（なし）")) : _t("テキスト")),
   ];
   container.append(el("h3", { text: _t("ナレッジ（社内文書の意味検索）") }));
   container.append(el("p", { class: "hint", text: settings.join(" / ") }));
