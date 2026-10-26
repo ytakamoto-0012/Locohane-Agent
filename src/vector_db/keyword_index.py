@@ -123,6 +123,26 @@ class KeywordIndex(SqliteBatchMixin):
             )
             self._conn.execute("INSERT INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
 
+    def source_rows(self, collection: str, source_path: str) -> list[tuple[str, str, str]] | None:
+        """source_path の索引の行 (tokens, locator, text) を入れた順に返す（索引に無ければ None。インスタンス間のコピー用）。"""
+        if not self.has_source(collection, source_path):
+            return None
+        rows = self._conn.execute(
+            "SELECT tokens, locator, text FROM keyword_chunks WHERE collection = ? AND source_path = ? ORDER BY rowid",
+            (collection, source_path),
+        ).fetchall()
+        return [(r[0], r[1], r[2]) for r in rows]
+
+    def replace_source_rows(self, collection: str, source_path: str, rows: list[tuple[str, str, str]]) -> None:
+        """source_rows() で読んだ行で source_path を丸ごと入れ替える（語に区切り直さない）。"""
+        with self._transaction():
+            self._delete_source(collection, source_path)
+            self._conn.executemany(
+                "INSERT INTO keyword_chunks (tokens, collection, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
+                [(tokens, collection, source_path, locator, text) for tokens, locator, text in rows],
+            )
+            self._conn.execute("INSERT INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
+
     def _delete_source(self, collection: str, source_path: str) -> None:
         self._conn.execute("DELETE FROM keyword_chunks WHERE collection = ? AND source_path = ?", (collection, source_path))
         self._conn.execute("DELETE FROM keyword_sources WHERE collection = ? AND source_path = ?", (collection, source_path))

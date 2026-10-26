@@ -146,6 +146,8 @@ class QdrantStore:
         self._preset = QDRANT_PRESETS.get(preset)
         # 検索したコレクションの距離関数（作ったときの設定。今の [vector_db].distance と違うことがある）。
         self._distances: dict[str, str | None] = {}
+        # get_source() で source_path の索引を確かめた Qdrant 上のコレクション名。
+        self._indexed: set[str] = set()
         # begin_batch() から commit() までにためた更新（Qdrant 上のコレクション名 → points/batch の operations）。
         self._batching = False
         self._pending: dict[str, list[dict]] = {}
@@ -288,6 +290,51 @@ class QdrantStore:
         operations = [_delete_operation(source_path)]
         operations += [{"upsert": {"points": points[i : i + _UPSERT_BATCH]}} for i in range(0, len(points), _UPSERT_BATCH)]
         self._queue(name, operations)
+
+    def dim(self, name: str) -> int | None:
+        info = self._request("GET", f"/collections/{self._name(name)}", allow_404=True)
+        if info is None:
+            return None
+        vectors = info.get("result", {}).get("config", {}).get("params", {}).get("vectors", {})
+        size = vectors.get("size") if isinstance(vectors, dict) else None
+        return int(size) if size is not None else None
+
+    def get_source(self, name: str, source_path: str) -> tuple[list[ChunkRecord], list[list[float]]]:
+        """source_path のチャンクとベクターを、replace_source() で入れた順に返す（コレクションが無ければ空）。"""
+        qname = self._name(name)
+        if qname not in self._indexed:
+            # source_path の索引の無い古いコレクションで、ファイルごとの絞り込みが全件の走査にならないよう作る（あれば何もしない）。
+            self._request(
+                "PUT", f"/collections/{qname}/index", allow_404=True, params={"wait": "true"},
+                json={"field_name": "source_path", "field_schema": "keyword"},
+            )
+            self._indexed.add(qname)
+        points: list[dict] = []
+        offset = None
+        while True:
+            body: dict = {
+                "filter": {"must": [{"key": "source_path", "match": {"value": source_path}}]},
+                "limit": _UPSERT_BATCH,
+                "with_payload": True,
+                "with_vector": True,
+            }
+            if offset is not None:
+                body["offset"] = offset
+            result = self._request("POST", f"/collections/{qname}/points/scroll", allow_404=True, json=body)
+            if result is None:
+                return [], []
+            points.extend(result.get("result", {}).get("points", []))
+            offset = result.get("result", {}).get("next_page_offset")
+            if offset is None:
+                break
+        # ポイントの ID は "<source_path>#<連番>" から作る（replace_source）ため、ID から元の順番に戻せる。
+        order = {str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")): i for i in range(len(points))}
+        points.sort(key=lambda p: order.get(str(p.get("id")), len(points)))
+        chunks = [
+            ChunkRecord(locator=str((p.get("payload") or {}).get("locator", "")), text=str((p.get("payload") or {}).get("text", "")))
+            for p in points
+        ]
+        return chunks, [[float(x) for x in p.get("vector") or []] for p in points]
 
     def _search_distance(self, name: str) -> str | None:
         """コレクション name の距離関数（無ければ None）。同じストアでは1回だけ問い合わせる。"""

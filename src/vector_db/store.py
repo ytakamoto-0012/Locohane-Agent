@@ -106,6 +106,12 @@ class VectorStore(Protocol):
     def search(self, name: str, vector: list[float], top_k: int) -> list[Hit]:
         """vector に近い順に最大 top_k 件返す（コレクションが無ければ空リスト）。"""
 
+    def dim(self, name: str) -> int | None:
+        """コレクションのベクターの次元（無ければ None）。"""
+
+    def get_source(self, name: str, source_path: str) -> tuple[list[ChunkRecord], list[list[float]]]:
+        """source_path のチャンクとベクターを入れた順に返す（インスタンス間のコピー用。無ければ空）。"""
+
     def close(self) -> None: ...
 
 

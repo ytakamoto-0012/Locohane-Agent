@@ -568,7 +568,7 @@ Everything is under `data/` (changeable with the `dir` keys of `[paths]`/`[eleme
 | `data/chat_threads.sqlite` | Metadata for the conversation thread list (left sidebar) and resuming (thread names, owners, Chainlit Step history). A separate file from `checkpoints.sqlite` (see `[thread_store]`) | When the list/resume feature is no longer needed | Delete the file (while the app is stopped; `checkpoints.sqlite` itself remains, so conversation state is not lost) |
 | `data/logs/app.log` | App operation log | Any time | Delete the file |
 | `data/memory/` | Persistent memory (`user`/`feedback`/`project`/`reference` subfolders + the `MEMORY.md` index) | When the accumulated memories are no longer needed | Delete the folder contents (`MEMORY.md` is regenerated on the next save) |
-| `data/vector_db/` | The vector DB's `catalog.sqlite` (collection definitions, records of ingested files), the vectors `vectors.sqlite` with `backend = sqlite_vec`, and the keyword index of the text `keywords.sqlite` (`[vector_db] dir`). The source documents themselves are not copied | When a collection is no longer needed | Delete the collection on the Knowledge screen of the settings dashboard (to delete the whole folder, stop the app and the admin tool's ingestion first; with `backend = qdrant` the vectors remain on the Qdrant side) |
+| `data/vector_db/` | The vector DB's `catalog.sqlite` (collection definitions, records of ingested files), the vectors `vectors.sqlite` with `backend = sqlite_vec`, and the keyword index of the text `keywords.sqlite` (`[vector_db] dir`). `catalog.sqlite` also holds references to collections of other instances (the `collection_refs` table). The source documents themselves are not copied | When a collection is no longer needed | Delete the collection on the Knowledge screen of the settings dashboard (to delete the whole folder, stop the app and the admin tool's ingestion first; with `backend = qdrant` the vectors remain on the Qdrant side) |
 | `data/plans/` | Detailed plan Markdown when `create_plan` is passed the `detail_markdown` argument (`[paths] plans_dir`) | When old plans are no longer needed | Delete the folder contents |
 | `data/skill_drafts/<username>/` | Per-user draft skills created by skill-creator (`<skill name>/`) and their evaluation results (`_workspace/`). `[skill_creator] draft_dir`. Rejected drafts also remain as records (not shown in the list) | When there are unneeded drafts | Delete the draft folder (the creator can also delete it with `delete_draft.py` of skill-creator). Not deleted automatically |
 | `data/<instance name>/skill_drafts_archive/<username>/<skill name>_<date time>/` | Where promoted drafts are moved (together with `_workspace/`; `[skill_creator] archive_dir`) | When the records are no longer needed | Delete the folder |
@@ -1331,6 +1331,38 @@ The same operations can also be done from the command line (create the collectio
 python -m src.vector_db.ingest --instance default --collection manuals
 python -m src.vector_db.ingest --instance default --collection manuals --rebuild
 ```
+
+#### Copying and referencing between instances
+
+To use the same documents in another instance without re-ingesting them, use one of the following (Skill Lab instances are excluded).
+
+- **Copy** (the "Copy" button of a collection): choose the destination instance and collection name (the default is the source name; it cannot
+  be the same as a collection or reference in the destination), and the vectors (text, page images and file paths), the keyword index and the
+  records of ingested files are duplicated (`src/vector_db/collection_copy.py`). The destination can search it right away without re-embedding,
+  and later "Ingest (diff)" runs process only changed files. The backend (`sqlite_vec` / `qdrant`) may differ from the source.
+  - The vectors can be used only when the destination's embedding model (`model` of `embedding_url`), `document_prefix` and `distance` are the
+    same as the source collection's. Otherwise only the definition (description, source folder, whether to include subfolders) is copied, and
+    you run "Ingest (diff)" in the destination (the dialog shows the reason).
+  - The scheduled ingestion settings are not copied by default (so that two instances do not ingest the same folder automatically; selectable in the dialog).
+  - The copy runs as a job of the destination collection inside the admin tool process, and the progress is shown in the destination's
+    Knowledge screen. While copying, the source collection cannot be ingested (manually or on schedule) or deleted. "Stop" ends it keeping
+    the files copied so far (the rest is filled in by "Ingest (diff)" in the destination). It is recorded in the change history as `knowledge_collection_copy`.
+- **Reference** ("Reference knowledge of other instances" at the bottom of the Knowledge screen): adds a collection of another instance to the
+  search targets of this instance without copying it. The reference name (the collection name in this instance, also shown to the LLM) cannot
+  be the same as a collection or another reference in this instance. The reference is stored in the `collection_refs` table of this instance's
+  `catalog.sqlite`, and every search reads the backend and keyword index of the source instance's settings (config.ini +
+  `instances/<source>/config_overrides.json`) directly (`src/vector_db/references.py`, `src/vector_db/search.py`).
+  - Ingestion and updates are done in the source instance; the referencing side only reads. Re-ingestion in the source is reflected as is.
+  - The query is embedded with this instance's embedding model, so the source collection must be ingested with the same embedding model and
+    `document_prefix` as this instance. If they differ, the source instance or collection does not exist, or the source has
+    `[vector_db] enabled = false`, the reference is excluded from the search and the reason is returned to the LLM (also shown in the status
+    column of the Knowledge screen). Thresholds (`min_score`, etc.), RRF weights and `top_k` use this instance's settings.
+  - For the source's Qdrant API key, `QDRANT_API_KEY` in the source's `instances/<source>/.env` is used if present. Other environment variable
+    overrides (`VECTOR_DB_DIR`, etc.) come from the referencing process, so specify the source's storage location in config.ini or the
+    settings screen rather than with environment variables.
+  - When deleting a referenced collection, the confirmation dialog lists the referencing instances (it can still be deleted, and the
+    referencing side excludes it from the search as "the source does not exist"). Adding and removing references are recorded in the change
+    history as `knowledge_reference_add` and `knowledge_reference_delete`.
 
 ### Using Qdrant
 

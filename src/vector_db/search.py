@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 import httpx
 
 from ..config import Config
+from . import references
 from .catalog import Collection, catalog_exists, open_catalog
 from .embeddings import embed_texts, embedding_model, shared_client
 from .keyword_index import KEYWORDS_FILENAME, open_keyword_index
@@ -33,12 +34,35 @@ class SearchResult:
     skipped: list[tuple[str, str]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class _Target:
+    """検索するコレクション。name は結果に出す名前、storage は保存先のコレクション名、cfg は読み先の設定
+    （別のインスタンスの参照なら参照元のインスタンスの設定。references.py）。"""
+
+    name: str
+    storage: str
+    cfg: Config
+
+
 def list_collections(cfg: Config) -> list[Collection]:
-    """コレクション一覧（catalog.sqlite がまだ無ければ空）。"""
+    """コレクション一覧（catalog.sqlite がまだ無ければ空。別のインスタンスの参照は含まない）。"""
     if not catalog_exists(cfg.vector_db_dir):
         return []
     with open_catalog(cfg.vector_db_dir) as catalog:
         return catalog.list_collections()
+
+
+def list_references(cfg: Config) -> list[references.ResolvedReference]:
+    """別のインスタンスのコレクションの参照の一覧（参照元を解決したもの）。"""
+    return [references.resolve(cfg, r) for r in references.list_references(cfg)]
+
+
+def _by_location(targets: list[_Target]) -> list[tuple[Config, list[_Target]]]:
+    """読み先の設定（自分のインスタンス・参照元のインスタンス）ごとにまとめる。"""
+    groups: dict[int, tuple[Config, list[_Target]]] = {}
+    for t in targets:
+        groups.setdefault(id(t.cfg), (t.cfg, []))[1].append(t)
+    return list(groups.values())
 
 
 def search(
@@ -78,22 +102,25 @@ def search(
     # 同じページのチャンクを1件にまとめると件数が減るため、各一覧は top_k より多めに取る。
     candidates = limit * _CANDIDATE_FACTOR
     lists: list[tuple[str, float, list[Hit]]] = []
-    store = open_store(cfg, transport=store_transport, shared=True)
-    try:
-        for c in targets:
-            texts = store.search(c.name, vector, candidates)
-            lists.append(("text", cfg.vector_db_rrf_weight_text, [h for h in texts if h.score >= cfg.vector_db_min_score]))
-            if cfg.vector_db_rrf_weight_image > 0:
-                images = store.search(image_collection_name(c.name), vector, candidates)
-                # 保存先の名前（"<名前>.image"）ではなく利用者のコレクション名で返す。
-                images = [replace(h, collection=c.name) for h in images if h.score >= cfg.vector_db_image_min_score]
-                lists.append(("image", cfg.vector_db_rrf_weight_image, images))
-    finally:
-        store.close()
-    if cfg.vector_db_rrf_weight_keyword > 0 and keyword_index_exists(cfg.vector_db_dir):
-        with open_keyword_index(cfg.vector_db_dir) as keywords:
-            for c in targets:
-                lists.append(("keyword", cfg.vector_db_rrf_weight_keyword, keywords.search(c.name, query, candidates)))
+    # 閾値・重みは自分の設定を使い、保存先・キーワード索引は読み先（参照元）の設定で開く。
+    for location, group in _by_location(targets):
+        store = open_store(location, transport=store_transport, shared=True)
+        try:
+            for t in group:
+                texts = [replace(h, collection=t.name) for h in store.search(t.storage, vector, candidates)]
+                lists.append(("text", cfg.vector_db_rrf_weight_text, [h for h in texts if h.score >= cfg.vector_db_min_score]))
+                if cfg.vector_db_rrf_weight_image > 0:
+                    images = store.search(image_collection_name(t.storage), vector, candidates)
+                    # 保存先の名前（"<名前>.image"）ではなく利用者のコレクション名で返す。
+                    images = [replace(h, collection=t.name) for h in images if h.score >= cfg.vector_db_image_min_score]
+                    lists.append(("image", cfg.vector_db_rrf_weight_image, images))
+        finally:
+            store.close()
+        if cfg.vector_db_rrf_weight_keyword > 0 and keyword_index_exists(location.vector_db_dir):
+            with open_keyword_index(location.vector_db_dir) as keywords:
+                for t in group:
+                    hits = [replace(h, collection=t.name) for h in keywords.search(t.storage, query, candidates)]
+                    lists.append(("keyword", cfg.vector_db_rrf_weight_keyword, hits))
     result.hits = _fuse(lists)[:limit]
     return result
 
@@ -125,54 +152,67 @@ def search_paths(
     vector = embed_texts(cfg, [query], kind="query", transport=embedding_transport, client=client)[0]
     candidates = limit * _CANDIDATE_FACTOR
     lists: list[tuple[str, float, list[Hit]]] = []
-    store = open_store(cfg, transport=store_transport, shared=True)
-    try:
-        for c in targets:
-            hits = store.search(path_collection_name(c.name), vector, candidates)
-            # 保存先の名前（"<名前>.path"）ではなく利用者のコレクション名で返す。
-            hits = [replace(h, collection=c.name) for h in hits if h.score >= cfg.vector_db_path_min_score]
-            lists.append(("path", 1.0, hits))
-    finally:
-        store.close()
-    if cfg.vector_db_rrf_weight_path_keyword > 0 and keyword_index_exists(cfg.vector_db_dir):
-        with open_keyword_index(cfg.vector_db_dir) as keywords:
-            for c in targets:
-                hits = [replace(h, collection=c.name) for h in keywords.search(path_collection_name(c.name), query, candidates)]
-                lists.append(("path_keyword", cfg.vector_db_rrf_weight_path_keyword, hits))
+    for location, group in _by_location(targets):
+        store = open_store(location, transport=store_transport, shared=True)
+        try:
+            for t in group:
+                hits = store.search(path_collection_name(t.storage), vector, candidates)
+                # 保存先の名前（"<名前>.path"）ではなく利用者のコレクション名で返す。
+                hits = [replace(h, collection=t.name) for h in hits if h.score >= cfg.vector_db_path_min_score]
+                lists.append(("path", 1.0, hits))
+        finally:
+            store.close()
+        if cfg.vector_db_rrf_weight_path_keyword > 0 and keyword_index_exists(location.vector_db_dir):
+            with open_keyword_index(location.vector_db_dir) as keywords:
+                for t in group:
+                    hits = [replace(h, collection=t.name) for h in keywords.search(path_collection_name(t.storage), query, candidates)]
+                    lists.append(("path_keyword", cfg.vector_db_rrf_weight_path_keyword, hits))
     result.hits = _fuse(lists)[:limit]
     return result
 
 
-def _targets(cfg: Config, collection: str | None, result: SearchResult, *, paths: bool = False) -> list[Collection]:
-    """検索するコレクション（collection が空なら全部）。比べられないものは外して result.skipped に理由を載せる。
+def _targets(cfg: Config, collection: str | None, result: SearchResult, *, paths: bool = False) -> list[_Target]:
+    """検索するコレクション（collection が空なら全部。別のインスタンスの参照も含む）。比べられないものは外して
+    result.skipped に理由を載せる。
 
     paths=True（search_paths）なら、本文のチャンクが無くてもファイルがあれば対象にする
     （image_input = false の画像ファイル等は、ファイルパスだけを登録しているため）。
+    参照は検索語を自分の埋め込みモデルで埋め込むため、参照元のコレクションも自分の設定と同じモデル・document_prefix で
+    取り込まれている必要がある。
     """
     model = embedding_model(cfg)
-    collections = list_collections(cfg)
+    # (結果に出す名前, コレクション, 読み先の設定, 使えない理由)
+    entries: list[tuple[str, Collection | None, Config | None, str | None]] = [(c.name, c, cfg, None) for c in list_collections(cfg)]
+    for r in references.list_references(cfg):
+        if collection and r.name != collection:
+            continue
+        resolved = references.resolve(cfg, r)
+        entries.append((r.name, resolved.collection, resolved.config, resolved.reason))
     if collection:
-        collections = [c for c in collections if c.name == collection]
-        if not collections:
+        entries = [e for e in entries if e[0] == collection]
+        if not entries:
             raise SearchError(f"Collection {collection} does not exist. Check the list with list_document_collections.")
     targets = []
-    for c in collections:
-        if not c.model or not c.file_count:
-            result.skipped.append((c.name, "no documents ingested yet"))
+    for name, c, location, reason in entries:
+        fix = "an administrator needs to rebuild it" if location is cfg else "an administrator needs to rebuild it in the source instance"
+        if reason or c is None or location is None:
+            result.skipped.append((name, f"the referenced collection of another instance cannot be used: {reason}"))
+        elif not c.model or not c.file_count:
+            result.skipped.append((name, "no documents ingested yet"))
         elif not paths and not c.chunk_count:
-            result.skipped.append((c.name, "no documents with text (file and folder names can be searched with search_document_paths)"))
+            result.skipped.append((name, "no documents with text (file and folder names can be searched with search_document_paths)"))
         elif c.model != model:
-            result.skipped.append((c.name, f"built with embedding model {c.model} (current setting: {model}; an administrator needs to rebuild it)"))
+            result.skipped.append((name, f"built with embedding model {c.model} (current setting: {model}; {fix})"))
         elif c.document_prefix is not None and c.document_prefix != cfg.vector_db_document_prefix:
             result.skipped.append(
                 (
-                    c.name,
+                    name,
                     f"ingested with document_prefix {c.document_prefix!r} "
-                    f"(current setting: {cfg.vector_db_document_prefix!r}; an administrator needs to rebuild it)",
+                    f"(current setting: {cfg.vector_db_document_prefix!r}; {fix})",
                 )
             )
         else:
-            targets.append(c)
+            targets.append(_Target(name=name, storage=c.name, cfg=location))
     if not targets:
         reasons = ", ".join(f"{n}: {r}" for n, r in result.skipped) or "no collections"
         raise SearchError(f"No searchable collections ({reasons}).")

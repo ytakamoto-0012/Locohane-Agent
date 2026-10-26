@@ -142,6 +142,14 @@ class FakeQdrant:
                 else:
                     self._delete(coll, op["delete"]["filter"])
             return httpx.Response(200, json={"result": [{"status": "completed"}] * len(body["operations"])})
+        if rest == ["points", "scroll"]:
+            # source_path の一致だけの filter と、整数の offset でのページ送り。
+            value = body["filter"]["must"][0]["match"]["value"]
+            matched = [{"id": k, **p} for k, p in coll["points"].items() if p["payload"]["source_path"] == value]
+            start = int(body.get("offset") or 0)
+            page = matched[start : start + body["limit"]]
+            next_offset = start + body["limit"] if start + body["limit"] < len(matched) else None
+            return httpx.Response(200, json={"result": {"points": page, "next_page_offset": next_offset}})
         if rest == ["points", "query"]:
             self.queries.append(body)
             q = body["query"]

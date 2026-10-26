@@ -572,7 +572,7 @@ Locohane/
 | `data/chat_threads.sqlite` | 会話スレッド一覧（画面左サイドバー）・再開用のメタデータ（スレッド名・所有者・Chainlitの Step 履歴）。`checkpoints.sqlite` とは別ファイル（`[thread_store]`参照） | 一覧・再開機能が不要になったとき | ファイルを削除（アプリ停止中に。`checkpoints.sqlite` 自体は消えないため会話状態は失われない） |
 | `data/logs/app.log` | アプリの動作ログ | いつでも | ファイルを削除 |
 | `data/memory/` | 永続メモリー（`user`/`feedback`/`project`/`reference` サブフォルダ＋`MEMORY.md`索引） | 蓄積した記憶が不要になったとき | フォルダ内を削除（`MEMORY.md`は次回保存時に再生成される） |
-| `data/vector_db/` | ベクターDB の `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`backend = sqlite_vec` 時のベクター `vectors.sqlite`、本文のキーワード索引 `keywords.sqlite`（`[vector_db] dir`）。取り込み元の文書そのものは複製しない | コレクションが不要になったとき | 設定ダッシュボードのナレッジ画面でコレクションを削除する（フォルダごと消す場合はアプリと管理ツールの取り込みを止めてから。`backend = qdrant` のベクターは Qdrant 側に残る） |
+| `data/vector_db/` | ベクターDB の `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`backend = sqlite_vec` 時のベクター `vectors.sqlite`、本文のキーワード索引 `keywords.sqlite`（`[vector_db] dir`）。`catalog.sqlite` には別のインスタンスのコレクションの参照（`collection_refs` 表）も入る。取り込み元の文書そのものは複製しない | コレクションが不要になったとき | 設定ダッシュボードのナレッジ画面でコレクションを削除する（フォルダごと消す場合はアプリと管理ツールの取り込みを止めてから。`backend = qdrant` のベクターは Qdrant 側に残る） |
 | `data/plans/` | `create_plan` が `detail_markdown` 引数を渡した場合の詳細計画Markdown（`[paths] plans_dir`） | 古い計画が不要になったとき | フォルダ内を削除 |
 | `data/skill_drafts/<ユーザー名>/` | skill-creator が作ったユーザー別ドラフトスキル（`<スキル名>/`）と、その評価結果（`_workspace/`）。`[skill_creator] draft_dir`。不採用のドラフトも記録として残る（一覧には出ない） | 不要なドラフトがあるとき | ドラフトのフォルダを削除（作成者は skill-creator の `delete_draft.py` でも消せる）。自動削除はされない |
 | `data/<インスタンス名>/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
@@ -1344,6 +1344,38 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
 python -m src.vector_db.ingest --instance default --collection manuals
 python -m src.vector_db.ingest --instance default --collection manuals --rebuild
 ```
+
+#### インスタンス間のコピーと参照
+
+別のインスタンスでも同じ文書群を使いたいときは、取り込み直さずに次のどちらかを使える（スキル研究室のインスタンスは対象外）。
+
+- **コピー**（コレクションの「コピー」ボタン）: コピー先のインスタンスとコレクション名（既定はコピー元と同じ名前。コピー先の
+  コレクション・参照と同じ名前は不可）を選ぶと、ベクター（本文・ページ画像・ファイルパス）・キーワード索引・取り込み済みファイルの
+  記録までを複製する（`src/vector_db/collection_copy.py`）。コピー先では埋め込み直さず、そのまま検索でき、以後の
+  「取り込み（差分）」も変わったファイルだけを処理する。保存先（`sqlite_vec` / `qdrant`）はコピー元と違ってもよい。
+  - ベクターを使えるのは、コピー先の埋め込みモデル（`embedding_url` の `model`）・`document_prefix`・`distance` がコピー元の
+    コレクションと同じ場合だけ。違うときは定義（説明・取り込み元フォルダ・サブフォルダの有無）だけをコピーし、
+    コピー先で「取り込み（差分）」を実行する（ダイアログに理由が出る）。
+  - 自動取り込みの設定は既定では引き継がない（同じフォルダを2つのインスタンスで自動取り込みしないため。ダイアログで選べる）。
+  - コピーはコピー先のコレクションのジョブとして管理ツールのプロセス内で動き、進捗はコピー先のナレッジ画面に出る。
+    コピー中はコピー元のコレクションの取り込み（手動・自動とも）・削除はできない。「停止」で止めると、そこまでのファイルを
+    残して終わる（残りはコピー先での「取り込み（差分）」で補われる）。変更履歴には `knowledge_collection_copy` で残る。
+- **参照**（ナレッジ画面の下の「他のインスタンスのナレッジを参照」）: 別のインスタンスのコレクションを、複製せずに
+  このインスタンスの検索対象に加える。参照名（このインスタンスでのコレクション名で、LLM にもこの名前で見せる）は
+  このインスタンスのコレクション・他の参照と同じ名前にできない。参照の定義は自分の `catalog.sqlite` の `collection_refs` 表に置き、
+  検索のたびに参照元のインスタンスの設定（config.ini＋`instances/<参照元>/config_overrides.json`）の保存先・キーワード索引を
+  直接読む（`src/vector_db/references.py`・`src/vector_db/search.py`）。
+  - 取り込み・更新は参照元のインスタンスで行い、参照する側は読むだけ。参照元の再取り込みは参照する側にもそのまま反映される。
+  - 検索語はこのインスタンスの埋め込みモデルで埋め込むため、参照元のコレクションもこのインスタンスと同じ埋め込みモデル・
+    `document_prefix` で取り込まれている必要がある。違う・参照元のインスタンスやコレクションが無い・参照元の
+    `[vector_db] enabled = false` のときは、その参照を検索から外して理由を LLM に返す（ナレッジ画面の状態列にも出る）。
+    閾値（`min_score` 等）・RRF の重み・`top_k` はこのインスタンスの設定を使う。
+  - 参照元の Qdrant の API キーは、参照元の `instances/<参照元>/.env` に `QDRANT_API_KEY` があればそれを使う。
+    それ以外の環境変数（`VECTOR_DB_DIR` 等）による上書きは参照する側のプロセスのものが効くため、参照元の保存先は
+    環境変数ではなく config.ini・設定画面で指定しておく。
+  - 参照されているコレクションを削除するときは、確認ダイアログに参照しているインスタンスが出る（削除はでき、
+    参照している側では「参照元がありません」として検索から外れる）。参照の追加・削除は変更履歴に
+    `knowledge_reference_add`・`knowledge_reference_delete` で残る。
 
 ### Qdrant を使う
 

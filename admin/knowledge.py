@@ -8,6 +8,9 @@
 コレクションごとに時刻（と曜日）を指定した自動取り込み（差分）も行う（IngestScheduler）。
 スケジュールは catalog.sqlite に持ち、管理ツールが起動している間だけ動く
 （止まっていた間の時刻の分は、起動後にさかのぼって実行しない）。
+
+インスタンス間のコピー（src/vector_db/collection_copy.py。取り込みと同じくジョブとしてスレッドで動かす）と、
+別のインスタンスのコレクションの参照（catalog.sqlite の collection_refs。検索は src/vector_db/search.py）も扱う。
 """
 
 from __future__ import annotations
@@ -24,7 +27,8 @@ from pydantic import BaseModel
 
 from src.config import Config, load_config
 from src.vector_db import catalog as vcat
-from src.vector_db.embeddings import EmbeddingError
+from src.vector_db.collection_copy import CopyError, check_compatible, copy_collection
+from src.vector_db.embeddings import EmbeddingError, embedding_model
 from src.vector_db.ingest import IngestError, effective_extensions, ingest_collection
 from src.vector_db.keyword_index import open_keyword_index
 from src.vector_db.store import StoreError, open_store, path_collection_name, storage_collection_names
@@ -62,14 +66,29 @@ class IngestBody(BaseModel):
     rebuild: bool = False
 
 
+class CopyBody(BaseModel):
+    dest_instance: str
+    dest_name: str
+    with_vectors: bool = True
+    include_schedule: bool = False
+
+
+class ReferenceBody(BaseModel):
+    name: str
+    source_instance: str
+    source_collection: str
+
+
 @dataclass
 class IngestJob:
-    """1コレクションの取り込みジョブの状態（画面のポーリング用）。"""
+    """1コレクションの取り込み（またはコピー）のジョブの状態（画面のポーリング用）。"""
 
     collection: str
     rebuild: bool
     actor: str
     trigger: str = "manual"  # manual / schedule（時間指定の自動取り込み）
+    kind: str = "ingest"  # ingest / copy（コピー先のコレクションのジョブ）
+    source: str | None = None  # kind=copy のコピー元（"インスタンス名/コレクション名"）
     state: str = "running"  # running / done / error / stopped
     started_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     finished_at: str | None = None
@@ -85,11 +104,43 @@ class IngestJob:
 
 
 class _JobRegistry:
-    """(インスタンス名, コレクション名) ごとに最新の取り込みジョブを1件持つ。"""
+    """(インスタンス名, コレクション名) ごとに最新の取り込みジョブを1件持つ。
+
+    コピー中のコピー元のコレクション（copy_sources）は、コピーの途中で中身が変わらないよう取り込みを始めない。
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._jobs: dict[tuple[str, str], IngestJob] = {}
+        self._copy_sources: dict[tuple[str, str], int] = {}
+
+    def is_copy_source(self, instance: str, collection: str) -> bool:
+        with self._lock:
+            return self._copy_sources.get((instance, collection), 0) > 0
+
+    def start_copy(self, instance: str, job: IngestJob, source_instance: str, source_collection: str) -> bool:
+        """コピー先 (instance, job.collection) のジョブを登録し、コピー元を取り込み不可にする。
+
+        コピー先・コピー元のどちらかが取り込み中なら False。
+        """
+        with self._lock:
+            for key in ((instance, job.collection), (source_instance, source_collection)):
+                current = self._jobs.get(key)
+                if current is not None and current.state == "running":
+                    return False
+            self._jobs[(instance, job.collection)] = job
+            key = (source_instance, source_collection)
+            self._copy_sources[key] = self._copy_sources.get(key, 0) + 1
+            return True
+
+    def finish_copy(self, source_instance: str, source_collection: str) -> None:
+        with self._lock:
+            key = (source_instance, source_collection)
+            count = self._copy_sources.get(key, 0) - 1
+            if count > 0:
+                self._copy_sources[key] = count
+            else:
+                self._copy_sources.pop(key, None)
 
     def get(self, instance: str, collection: str) -> IngestJob | None:
         with self._lock:
@@ -112,6 +163,8 @@ class _JobRegistry:
         with self._lock:
             current = self._jobs.get((instance, job.collection))
             if current is not None and current.state == "running":
+                return False
+            if self._copy_sources.get((instance, job.collection), 0) > 0:
                 return False
             self._jobs[(instance, job.collection)] = job
             return True
@@ -142,6 +195,49 @@ def run_ingest_job(cfg: Config, job: IngestJob, **kwargs) -> None:
     finally:
         job.current = ""
         job.finished_at = datetime.now().isoformat(timespec="seconds")
+
+
+def run_copy_job(
+    src_cfg: Config,
+    src_instance: str,
+    src_name: str,
+    dst_cfg: Config,
+    job: IngestJob,
+    jobs: _JobRegistry,
+    *,
+    with_vectors: bool,
+    include_schedule: bool,
+    store_transport=None,
+) -> None:
+    """コピーを実行し、結果・エラーを job に書き込む（スレッドの本体）。終わったらコピー元の取り込みを再び許す。"""
+
+    def _progress(done: int, total: int, path: str) -> None:
+        job.done, job.total, job.current = done, total, path
+
+    try:
+        job.result = copy_collection(
+            src_cfg,
+            src_name,
+            dst_cfg,
+            job.collection,
+            with_vectors=with_vectors,
+            include_schedule=include_schedule,
+            progress=_progress,
+            should_stop=lambda: job.stop_requested,
+            src_store_transport=store_transport,
+            dst_store_transport=store_transport,
+        )
+        job.state = "stopped" if job.result.get("stopped") else "done"
+    except (CopyError, StoreError, vcat.CatalogError, OSError) as exc:
+        job.error = str(exc)
+        job.state = "error"
+    except Exception as exc:  # noqa: BLE001 - 想定外の例外も画面に出して、ジョブが running のまま残らないようにする
+        job.error = f"{type(exc).__name__}: {exc}"
+        job.state = "error"
+    finally:
+        job.current = ""
+        job.finished_at = datetime.now().isoformat(timespec="seconds")
+        jobs.finish_copy(src_instance, src_name)
 
 
 def next_scheduled_run(c: vcat.Collection, now: datetime) -> datetime | None:
@@ -250,7 +346,7 @@ class IngestScheduler:
                     continue
                 job = IngestJob(collection=c.name, rebuild=False, actor=SCHEDULER_ACTOR, trigger="schedule")
                 if not self._jobs.start(name, job):
-                    logger.info("Scheduled ingestion: %s/%s is already ingesting, skipping this run.", name, c.name)
+                    logger.info("Scheduled ingestion: %s/%s is already ingesting or being copied, skipping this run.", name, c.name)
                     continue
                 threading.Thread(
                     target=run_ingest_job,
@@ -327,22 +423,117 @@ def build_router(
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=400, detail=_t("インスタンス {0} の設定を読めません: {1}", name, exc)) from exc
 
-    def _collection_dict(c: vcat.Collection, job: IngestJob | None) -> dict:
+    def _collection_dict(c: vcat.Collection, job: IngestJob | None, referenced_by: list[str] | None = None) -> dict:
         next_run = next_scheduled_run(c, datetime.now())
         return {
             **asdict(c),
             "next_scheduled_at": next_run.isoformat(timespec="seconds") if next_run else None,
             "job": job.to_dict() if job else None,
+            "referenced_by": referenced_by or [],
         }
+
+    def _app_instances() -> list[str]:
+        """ナレッジを持てるインスタンス（スキル研究室を除く）の名前。"""
+        names = []
+        for n in inst.list_instance_names(instances_root):
+            try:
+                if not inst.read_instance(instances_root, n).is_skill_lab:
+                    names.append(n)
+            except (inst.InstanceError, OSError, ValueError):
+                continue
+        return names
+
+    def _try_cfg(name: str) -> Config | None:
+        try:
+            return loader(name)
+        except Exception:  # noqa: BLE001 - 設定の読めないインスタンスは一覧から外す
+            logger.warning("Knowledge: cannot read the settings of instance %r.", name, exc_info=True)
+            return None
+
+    def _model_or_none(cfg: Config) -> str | None:
+        try:
+            return embedding_model(cfg)
+        except EmbeddingError:
+            return None
+
+    def _source_check(owner: str, source_instance: str) -> str | None:
+        """source_instance を owner の参照元にできなければ理由を返す。"""
+        if source_instance == owner:
+            return _t("自分自身のインスタンスは参照できません。")
+        try:
+            inst.validate_name(source_instance)
+            meta = inst.read_instance(instances_root, source_instance)
+        except inst.InstanceError:
+            return _t("インスタンス {0} がありません。", source_instance)
+        if meta.is_skill_lab:
+            return _t("スキル研究室のインスタンスにはナレッジがありません。")
+        return None
+
+    def _reference_dict(owner: str, owner_cfg: Config, r: vcat.Reference) -> dict:
+        """参照と、参照元のコレクションの状態（ok / incompatible / missing）。"""
+        d = {**asdict(r), "status": "missing", "reason": None, "collection": None}
+        reason = _source_check(owner, r.source_instance)
+        src_cfg = None if reason else _try_cfg(r.source_instance)
+        if reason is None and src_cfg is None:
+            reason = _t("インスタンス {0} の設定を読めません。", r.source_instance)
+        collection = None
+        if src_cfg is not None and vcat.catalog_exists(src_cfg.vector_db_dir):
+            with vcat.open_catalog(src_cfg.vector_db_dir) as catalog:
+                collection = next((c for c in catalog.list_collections() if c.name == r.source_collection), None)
+        if reason is None and collection is None:
+            reason = _t("インスタンス {0} にコレクション {1} がありません。", r.source_instance, r.source_collection)
+        if reason:
+            d["reason"] = reason
+            return d
+        d["collection"] = asdict(collection)
+        model = _model_or_none(owner_cfg)
+        problems = []
+        if not src_cfg.vector_db_enabled:
+            problems.append(_t("参照元の [vector_db] enabled が false です"))
+        if collection.model and collection.model != model:
+            problems.append(_t("埋め込みモデルが違います（参照元 {0}、このインスタンス {1}）", collection.model, model))
+        if collection.model and collection.document_prefix is not None and collection.document_prefix != owner_cfg.vector_db_document_prefix:
+            problems.append(
+                _t(
+                    "document_prefix が違います（参照元 {0}、このインスタンス {1}）",
+                    repr(collection.document_prefix),
+                    repr(owner_cfg.vector_db_document_prefix),
+                )
+            )
+        if problems:
+            d["status"], d["reason"] = "incompatible", _t("、").join(problems)
+        else:
+            d["status"] = "ok"
+        return d
+
+    def _referenced_by(name: str) -> dict[str, list[str]]:
+        """name のコレクションを参照している他のインスタンスの参照（コレクション名 → ["インスタンス/参照名", ...]）。"""
+        result: dict[str, list[str]] = {}
+        for other in _app_instances():
+            if other == name:
+                continue
+            cfg = _try_cfg(other)
+            if cfg is None or not vcat.catalog_exists(cfg.vector_db_dir):
+                continue
+            with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+                refs = catalog.list_references()
+            for r in refs:
+                if r.source_instance == name:
+                    result.setdefault(r.source_collection, []).append(f"{other}/{r.name}")
+        return result
 
     @router.get("/api/instances/{name}/knowledge")
     def get_knowledge(name: str, user: str = Depends(require_login)):
         cfg = _cfg(name)
         collections = []
+        refs = []
         if vcat.catalog_exists(cfg.vector_db_dir):
             with vcat.open_catalog(cfg.vector_db_dir) as catalog:
                 collections = catalog.list_collections()
+                refs = catalog.list_references()
         running = jobs.for_instance(name)
+        referenced_by = _referenced_by(name)
+        names = {c.name for c in collections}
         endpoints = cfg.vector_db_embedding_endpoints
         return {
             "enabled": cfg.vector_db_enabled,
@@ -359,8 +550,39 @@ def build_router(
             "image_input": cfg.vector_db_image_input,
             "image_input_extensions": list(cfg.vector_db_image_input_extensions),
             "max_file_mb": cfg.vector_db_max_file_mb,
-            "collections": [_collection_dict(c, running.get(c.name)) for c in collections],
+            "collections": [_collection_dict(c, running.get(c.name), referenced_by.get(c.name)) for c in collections],
+            # コピーを始めた直後で、まだ catalog にできていないコピー先のジョブ・定義の作成で失敗したコピーのジョブ。
+            "copy_jobs": [j.to_dict() for c, j in running.items() if j.kind == "copy" and c not in names],
+            "references": [_reference_dict(name, cfg, r) for r in refs],
         }
+
+    @router.get("/api/knowledge/sources")
+    def get_knowledge_sources(user: str = Depends(require_login)):
+        """コピー先・参照元に選べるインスタンスと、そのコレクションの一覧（埋め込みの設定と合わせて返す）。"""
+        result = []
+        for n in _app_instances():
+            cfg = _try_cfg(n)
+            if cfg is None:
+                continue
+            collections = []
+            if vcat.catalog_exists(cfg.vector_db_dir):
+                with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+                    collections = catalog.list_collections()
+            meta = inst.read_instance(instances_root, n)
+            keys = ("name", "description", "model", "dim", "document_prefix", "file_count", "chunk_count")
+            result.append(
+                {
+                    "name": n,
+                    "display_name": meta.display_name,
+                    "enabled": cfg.vector_db_enabled,
+                    "backend": cfg.vector_db_backend,
+                    "distance": cfg.vector_db_distance,
+                    "embedding_model": _model_or_none(cfg),
+                    "document_prefix": cfg.vector_db_document_prefix,
+                    "collections": [{k: v for k, v in asdict(c).items() if k in keys} for c in collections],
+                }
+            )
+        return {"instances": result}
 
     @router.post("/api/instances/{name}/knowledge/collections")
     def create_collection(name: str, body: CreateCollectionBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
@@ -421,6 +643,8 @@ def build_router(
         job = jobs.get(name, collection)
         if job is not None and job.state == "running":
             raise HTTPException(status_code=409, detail=_t("取り込み中のコレクションは削除できません。先に停止してください。"))
+        if jobs.is_copy_source(name, collection):
+            raise HTTPException(status_code=409, detail=_t("コピー中のコレクションは削除できません。コピーが終わってから削除してください。"))
         with vcat.open_catalog(cfg.vector_db_dir) as catalog:
             try:
                 catalog.get(collection)
@@ -455,6 +679,8 @@ def build_router(
                 catalog.get(collection)
             except vcat.CatalogError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
+        if jobs.is_copy_source(name, collection):
+            raise HTTPException(status_code=409, detail=_t("このコレクションはコピー中です。コピーが終わってから取り込んでください。"))
         job = IngestJob(collection=collection, rebuild=body.rebuild, actor=user)
         if not jobs.start(name, job):
             raise HTTPException(status_code=409, detail=_t("このコレクションは取り込み中です。"))
@@ -463,6 +689,100 @@ def build_router(
         ).start()
         _audit(request, user, name, "knowledge_ingest_start", collection=collection, rebuild=body.rebuild)
         return job.to_dict()
+
+    @router.post("/api/instances/{name}/knowledge/collections/{collection}/copy")
+    def copy_collection_to(
+        name: str, collection: str, body: CopyBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)
+    ):
+        src_cfg = _cfg(name)
+        dst_cfg = _cfg(body.dest_instance)
+        dest_name = body.dest_name.strip()
+        with vcat.open_catalog(src_cfg.vector_db_dir) as catalog:
+            try:
+                catalog.get(collection)
+            except vcat.CatalogError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+        try:
+            vcat.validate_name(dest_name)
+        except vcat.CatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if vcat.catalog_exists(dst_cfg.vector_db_dir):
+            with vcat.open_catalog(dst_cfg.vector_db_dir) as catalog:
+                taken = {c.name for c in catalog.list_collections()} | {r.name for r in catalog.list_references()}
+            if dest_name in taken:
+                raise HTTPException(
+                    status_code=400,
+                    detail=_t("インスタンス {0} には {1} という名前のコレクション（または参照）が既にあります。別の名前を指定してください。", body.dest_instance, dest_name),
+                )
+        if body.with_vectors:
+            reasons = check_compatible(src_cfg, collection, dst_cfg)
+            if reasons:
+                raise HTTPException(
+                    status_code=400,
+                    detail=_t("コピー先ではこのベクターを使えないため、ベクターごとはコピーできません（{0}）。定義だけをコピーしてコピー先で取り込んでください。", "; ".join(reasons)),
+                )
+        job = IngestJob(collection=dest_name, rebuild=False, actor=user, kind="copy", source=f"{name}/{collection}")
+        if not jobs.start_copy(body.dest_instance, job, name, collection):
+            raise HTTPException(status_code=409, detail=_t("コピー元かコピー先のコレクションが取り込み中です。終わってからコピーしてください。"))
+        threading.Thread(
+            target=run_copy_job,
+            args=(src_cfg, name, collection, dst_cfg, job, jobs),
+            kwargs={
+                "with_vectors": body.with_vectors,
+                "include_schedule": body.include_schedule,
+                "store_transport": extra_ingest_kwargs.get("store_transport"),
+            },
+            name=f"knowledge-copy-{name}-{collection}",
+            daemon=True,
+        ).start()
+        _audit(
+            request,
+            user,
+            name,
+            "knowledge_collection_copy",
+            collection=collection,
+            dest_instance=body.dest_instance,
+            dest_name=dest_name,
+            with_vectors=body.with_vectors,
+            include_schedule=body.include_schedule,
+        )
+        return job.to_dict()
+
+    @router.post("/api/instances/{name}/knowledge/references")
+    def add_reference(name: str, body: ReferenceBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
+        cfg = _cfg(name)
+        reason = _source_check(name, body.source_instance)
+        if reason:
+            raise HTTPException(status_code=400, detail=reason)
+        src_cfg = _cfg(body.source_instance)
+        exists = False
+        if vcat.catalog_exists(src_cfg.vector_db_dir):
+            with vcat.open_catalog(src_cfg.vector_db_dir) as catalog:
+                exists = any(c.name == body.source_collection for c in catalog.list_collections())
+        if not exists:
+            raise HTTPException(status_code=400, detail=_t("インスタンス {0} にコレクション {1} がありません。", body.source_instance, body.source_collection))
+        try:
+            with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+                ref = catalog.add_reference(body.name.strip(), body.source_instance, body.source_collection)
+        except vcat.CatalogError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        _audit(
+            request, user, name, "knowledge_reference_add",
+            reference=ref.name, source_instance=ref.source_instance, source_collection=ref.source_collection,
+        )
+        return _reference_dict(name, cfg, ref)
+
+    @router.delete("/api/instances/{name}/knowledge/references/{reference}")
+    def delete_reference(name: str, reference: str, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
+        cfg = _cfg(name)
+        with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+            try:
+                catalog.get_reference(reference)
+            except vcat.CatalogError as exc:
+                raise HTTPException(status_code=404, detail=str(exc)) from exc
+            catalog.delete_reference(reference)
+        _audit(request, user, name, "knowledge_reference_delete", reference=reference)
+        return {"ok": True}
 
     @router.get("/api/instances/{name}/knowledge/collections/{collection}/job")
     def get_job(name: str, collection: str, user: str = Depends(require_login)):

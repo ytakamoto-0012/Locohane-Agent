@@ -48,6 +48,13 @@ CREATE TABLE IF NOT EXISTS files (
     path_indexed INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (collection, source_path)
 );
+-- 別のインスタンスのコレクションの参照（複製せずに検索対象に加える。references.py・search.py）。
+CREATE TABLE IF NOT EXISTS collection_refs (
+    name TEXT PRIMARY KEY,
+    source_instance TEXT NOT NULL,
+    source_collection TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
 """
 
 
@@ -90,6 +97,16 @@ class FileRecord:
     chunk_count: int
     mode: str = "text"
     path_indexed: bool = False
+
+
+@dataclass(frozen=True)
+class Reference:
+    """別のインスタンス source_instance のコレクション source_collection を、name の名前で検索対象に加える参照。"""
+
+    name: str
+    source_instance: str
+    source_collection: str
+    created_at: str
 
 
 def validate_name(name: str) -> str:
@@ -191,6 +208,8 @@ class Catalog(SqliteBatchMixin):
         validate_name(name)
         if not source_folder.strip():
             raise CatalogError("Specify the source folder.")
+        if self._reference_row(name) is not None:
+            raise CatalogError(f"A reference named {name} already exists.")
         try:
             with self._conn:
                 self._conn.execute(
@@ -248,6 +267,45 @@ class Catalog(SqliteBatchMixin):
     def mark_ingested(self, name: str) -> None:
         with self._conn:
             self._conn.execute("UPDATE collections SET last_ingested_at = ? WHERE name = ?", (_now(), name))
+
+    def set_last_ingested(self, name: str, value: str | None) -> None:
+        """最終取り込み日時をそのまま書く（インスタンス間のコピーでコピー元の日時を写す）。"""
+        with self._conn:
+            self._conn.execute("UPDATE collections SET last_ingested_at = ? WHERE name = ?", (value, name))
+
+    # --- 別のインスタンスのコレクションの参照 ---
+
+    def _reference_row(self, name: str) -> sqlite3.Row | None:
+        return self._conn.execute("SELECT * FROM collection_refs WHERE name = ?", (name,)).fetchone()
+
+    def list_references(self) -> list[Reference]:
+        rows = self._conn.execute("SELECT * FROM collection_refs ORDER BY name").fetchall()
+        return [Reference(**dict(r)) for r in rows]
+
+    def get_reference(self, name: str) -> Reference:
+        row = self._reference_row(name)
+        if row is None:
+            raise CatalogError(f"Reference {name} does not exist.")
+        return Reference(**dict(row))
+
+    def add_reference(self, name: str, source_instance: str, source_collection: str) -> Reference:
+        validate_name(name)
+        validate_name(source_collection)
+        if self._conn.execute("SELECT 1 FROM collections WHERE name = ?", (name,)).fetchone():
+            raise CatalogError(f"Collection {name} already exists.")
+        try:
+            with self._conn:
+                self._conn.execute(
+                    "INSERT INTO collection_refs (name, source_instance, source_collection, created_at) VALUES (?, ?, ?, ?)",
+                    (name, source_instance, source_collection, _now()),
+                )
+        except sqlite3.IntegrityError as e:
+            raise CatalogError(f"A reference named {name} already exists.") from e
+        return self.get_reference(name)
+
+    def delete_reference(self, name: str) -> None:
+        with self._conn:
+            self._conn.execute("DELETE FROM collection_refs WHERE name = ?", (name,))
 
     # --- 取り込み済みファイル ---
 
@@ -319,6 +377,7 @@ __all__ = [
     "CatalogError",
     "Collection",
     "FileRecord",
+    "Reference",
     "catalog_exists",
     "normalize_schedule_times",
     "normalize_schedule_weekdays",

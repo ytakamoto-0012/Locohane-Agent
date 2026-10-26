@@ -56,17 +56,28 @@ def list_document_collections() -> str:
         return _DISABLED_MESSAGE
     try:
         collections = vector_search.list_collections(cfg)
+        references = vector_search.list_references(cfg)
     except (CatalogError, OSError) as e:
         return f"Error: {e}"
     except Exception as e:  # noqa: BLE001 - sqlite3.Error 等。ツールの例外は会話のターンごと止めるため文字列で返す
         return _unexpected_error("list_document_collections", e)
-    if not collections:
+    if not collections and not references:
         return "There are no collections yet (an administrator needs to ingest documents in the \"Knowledge\" tab of the settings dashboard)."
-    lines = [f"There are {len(collections)} collections."]
+    lines = [f"There are {len(collections) + len(references)} collections."]
     for c in collections:
         description = f" - {c.description}" if c.description else ""
         ingested = c.last_ingested_at or "not ingested"
         lines.append(f"- {c.name}{description} ({c.file_count} documents / {c.chunk_count} chunks / last ingested {ingested})")
+    # 別のインスタンスのコレクションの参照（取り込みは参照元のインスタンスで行う）。
+    for r in references:
+        source = f"references collection {r.reference.source_collection} of instance {r.reference.source_instance}"
+        c = r.collection
+        if c is None:
+            lines.append(f"- {r.reference.name} ({source}; cannot be used: {r.reason})")
+            continue
+        description = f" - {c.description}" if c.description else ""
+        ingested = c.last_ingested_at or "not ingested"
+        lines.append(f"- {r.reference.name}{description} ({source} / {c.file_count} documents / {c.chunk_count} chunks / last ingested {ingested})")
     return "\n".join(lines)
 
 

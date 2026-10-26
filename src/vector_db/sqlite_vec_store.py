@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+from array import array
 from pathlib import Path
 import sqlite3
 
@@ -142,6 +143,30 @@ class SqliteVecStore(SqliteBatchMixin):
                 f"INSERT INTO vec_c{cid} (rowid, embedding) VALUES (?, ?)",
                 [(i, sqlite_vec.serialize_float32(vector)) for i, (_c, vector) in zip(ids, pairs)],
             )
+
+    def dim(self, name: str) -> int | None:
+        existing = self._collection(name)
+        return existing[1] if existing else None
+
+    def get_source(self, name: str, source_path: str) -> tuple[list[ChunkRecord], list[list[float]]]:
+        """source_path のチャンクとベクターを、replace_source() で入れた順に返す（コレクションが無ければ空）。"""
+        existing = self._collection(name)
+        if existing is None:
+            return [], []
+        cid = existing[0]
+        rows = self._conn.execute(
+            "SELECT id, locator, text FROM chunks WHERE collection_id = ? AND source_path = ? ORDER BY id", (cid, source_path)
+        ).fetchall()
+        chunks: list[ChunkRecord] = []
+        vectors: list[list[float]] = []
+        for rowid, locator, text in rows:
+            # vec0 は rowid の一致（=）でしか索引を使わないため、1件ずつ読む。
+            row = self._conn.execute(f"SELECT embedding FROM vec_c{cid} WHERE rowid = ?", (rowid,)).fetchone()
+            if row is None:
+                continue
+            chunks.append(ChunkRecord(locator=locator, text=text))
+            vectors.append(array("f", row[0]).tolist())
+        return chunks, vectors
 
     def search(self, name: str, vector: list[float], top_k: int) -> list[Hit]:
         """Hit.score は、Cosine では 1 - コサイン距離（コサイン類似度）、Euclid・Manhattan では 1 / (1 + 距離)。"""

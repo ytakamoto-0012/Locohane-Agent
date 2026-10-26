@@ -41,7 +41,7 @@ def env(tmp_path):
     app.include_router(router)
     # スケジューラーのスレッドは起動せず、テストから tick() を直接呼ぶ
     app.state.knowledge_scheduler = router.ingest_scheduler
-    return {"client": TestClient(app), "docs": docs, "configs": configs, "tmp": tmp_path}
+    return {"client": TestClient(app), "docs": docs, "configs": configs, "tmp": tmp_path, "router": router}
 
 
 def _wait_job(client, collection):
@@ -220,3 +220,114 @@ def test_running_jobs_by_instance():
     assert list(running) == ["org_a"]
     assert [j.collection for j in running["org_a"]] == ["a", "b"]
     assert running["org_a"][0].trigger == "schedule"
+
+
+# --- インスタンス間のコピーと、別のインスタンスの参照 ---
+
+
+@pytest.fixture
+def multi(env):
+    """org_a に取り込み済みの docs、org_b（同じ埋め込みモデル）・org_c（別の埋め込みモデル）を足した環境。"""
+    root, tmp = env["tmp"] / "instances", env["tmp"]
+    for i, name in enumerate(("org_b", "org_c")):
+        (root / name).mkdir(parents=True)
+        inst.write_instance(root, inst.InstanceMeta(name=name, display_name=name, app_port=18002 + i))
+    env["configs"]["org_b"] = make_config(tmp / "org_b")
+    other = make_config(tmp / "org_c")
+    env["configs"]["org_c"] = dataclasses.replace(
+        other, vector_db_embedding_endpoints=(dataclasses.replace(other.vector_db_embedding_endpoints[0], model="other-embed"),)
+    )
+    client = env["client"]
+    client.post("/api/instances/org_a/knowledge/collections", json={"name": "docs", "source_folder": str(env["docs"]), "description": "品質"})
+    client.post("/api/instances/org_a/knowledge/collections/docs/ingest", json={})
+    assert _wait_job(client, "docs")["state"] == "done"
+    return env
+
+
+def _wait_job_of(client, instance, collection):
+    for _ in range(200):
+        job = client.get(f"/api/instances/{instance}/knowledge/collections/{collection}/job").json()["job"]
+        if job and job["state"] != "running":
+            return job
+        time.sleep(0.05)
+    raise AssertionError("ジョブが終わらない")
+
+
+def test_copy_collection_to_another_instance(multi):
+    client = multi["client"]
+    res = client.post("/api/instances/org_a/knowledge/collections/docs/copy", json={"dest_instance": "org_b", "dest_name": "manuals"})
+    assert res.status_code == 200 and (res.json()["kind"], res.json()["source"]) == ("copy", "org_a/docs")
+    job = _wait_job_of(client, "org_b", "manuals")
+    assert job["state"] == "done" and (job["result"]["files"], job["result"]["with_vectors"]) == (1, True)
+    [c] = client.get("/api/instances/org_b/knowledge").json()["collections"]
+    assert (c["name"], c["file_count"], c["model"], c["description"]) == ("manuals", 1, "fake-embed", "品質")
+
+    # 同じ名前は拒否し、埋め込みモデルの違うインスタンスへは定義だけならコピーできる。
+    again = client.post("/api/instances/org_a/knowledge/collections/docs/copy", json={"dest_instance": "org_b", "dest_name": "manuals"})
+    assert again.status_code == 400 and "manuals" in again.json()["detail"]
+    bad = client.post("/api/instances/org_a/knowledge/collections/docs/copy", json={"dest_instance": "org_c", "dest_name": "docs"})
+    assert bad.status_code == 400 and "embedding model differs" in bad.json()["detail"]
+    ok = client.post("/api/instances/org_a/knowledge/collections/docs/copy", json={"dest_instance": "org_c", "dest_name": "docs", "with_vectors": False})
+    assert ok.status_code == 200 and _wait_job_of(client, "org_c", "docs")["state"] == "done"
+    [c] = client.get("/api/instances/org_c/knowledge").json()["collections"]
+    assert (c["file_count"], c["model"]) == (0, None)
+    assert client.post("/api/instances/org_a/knowledge/collections/docs/copy", json={"dest_instance": "lab1", "dest_name": "x"}).status_code == 400
+
+    actions = [json.loads(line)["action"] for line in (multi["tmp"] / "audit.log").read_text(encoding="utf-8").splitlines()]
+    assert actions.count("knowledge_collection_copy") == 2
+
+
+def test_copy_source_cannot_be_ingested_or_deleted_while_copying(multi):
+    client, jobs = multi["client"], multi["router"].ingest_jobs
+    assert jobs.start_copy("org_b", knowledge.IngestJob(collection="manuals", rebuild=False, actor="admin", kind="copy"), "org_a", "docs")
+    res = client.post("/api/instances/org_a/knowledge/collections/docs/ingest", json={})
+    assert res.status_code == 409 and "コピー中" in res.json()["detail"]
+    assert client.delete("/api/instances/org_a/knowledge/collections/docs").status_code == 409
+    # コピー先が「コピー中」なので、同じコピー先への2つ目のコピーも始めない。
+    res = client.post("/api/instances/org_a/knowledge/collections/docs/copy", json={"dest_instance": "org_b", "dest_name": "manuals"})
+    assert res.status_code == 409
+    jobs.finish_copy("org_a", "docs")
+    assert not jobs.is_copy_source("org_a", "docs")
+    assert client.post("/api/instances/org_a/knowledge/collections/docs/ingest", json={}).status_code == 200
+    _wait_job(client, "docs")
+    # コピー元が取り込み中ならコピーも始めない。
+    busy = knowledge._JobRegistry()
+    busy.start("org_a", knowledge.IngestJob(collection="docs", rebuild=False, actor="admin"))
+    assert not busy.start_copy("org_b", knowledge.IngestJob(collection="m", rebuild=False, actor="admin", kind="copy"), "org_a", "docs")
+
+
+def test_references_between_instances(multi):
+    client = multi["client"]
+    res = client.post("/api/instances/org_b/knowledge/references", json={"name": "a_docs", "source_instance": "org_a", "source_collection": "docs"})
+    assert res.status_code == 200 and (res.json()["status"], res.json()["collection"]["file_count"]) == ("ok", 1)
+    [ref] = client.get("/api/instances/org_b/knowledge").json()["references"]
+    assert (ref["name"], ref["source_instance"], ref["status"]) == ("a_docs", "org_a", "ok")
+    [c] = client.get("/api/instances/org_a/knowledge").json()["collections"]
+    assert c["referenced_by"] == ["org_b/a_docs"]
+
+    # 埋め込みモデルの違うインスタンスからの参照は追加できるが、状態は incompatible。
+    res = client.post("/api/instances/org_c/knowledge/references", json={"name": "a_docs", "source_instance": "org_a", "source_collection": "docs"})
+    assert res.json()["status"] == "incompatible" and "other-embed" in res.json()["reason"]
+
+    for body in (
+        {"name": "x", "source_instance": "org_b", "source_collection": "docs"},  # 自分自身
+        {"name": "x", "source_instance": "lab1", "source_collection": "docs"},  # スキル研究室
+        {"name": "x", "source_instance": "org_a", "source_collection": "none"},  # 無いコレクション
+        {"name": "a_docs", "source_instance": "org_a", "source_collection": "docs"},  # 名前の重複
+        {"name": "bad name", "source_instance": "org_a", "source_collection": "docs"},
+    ):
+        assert client.post("/api/instances/org_b/knowledge/references", json=body).status_code == 400, body
+    # 参照と同じ名前のコレクションは作れない。
+    assert client.post("/api/instances/org_b/knowledge/collections", json={"name": "a_docs", "source_folder": str(multi["docs"])}).status_code == 400
+
+    sources = client.get("/api/knowledge/sources").json()["instances"]
+    assert [s["name"] for s in sources] == ["org_a", "org_b", "org_c"]
+    assert sources[0]["collections"][0]["name"] == "docs" and sources[2]["embedding_model"] == "other-embed"
+
+    # 参照元のコレクションを消すと missing になる。
+    assert client.delete("/api/instances/org_a/knowledge/collections/docs").status_code == 200
+    [ref] = client.get("/api/instances/org_b/knowledge").json()["references"]
+    assert ref["status"] == "missing"
+    assert client.delete("/api/instances/org_b/knowledge/references/a_docs").json() == {"ok": True}
+    assert client.delete("/api/instances/org_b/knowledge/references/a_docs").status_code == 404
+    assert client.get("/api/instances/org_b/knowledge").json()["references"] == []

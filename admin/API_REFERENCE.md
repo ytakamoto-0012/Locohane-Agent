@@ -549,6 +549,19 @@ $C $BASE/api/instances/default/knowledge/collections/manuals/job
 $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/stop -H "$H"
 # コレクションの削除（ベクターも削除。取り込み元の文書は消えない）
 $C -X DELETE $BASE/api/instances/default/knowledge/collections/manuals -H "$H"
+# 別のインスタンス（org_b）へコピー。with_vectors=true はベクター・キーワード索引・ファイル記録まで複製する
+# （コピー先と埋め込みモデル・document_prefix・距離関数が違えば 400。false なら定義だけ）。進捗はコピー先の
+# .../org_b/knowledge/collections/<dest_name>/job（kind が "copy"）。コピー中のコピー元は取り込み・削除が 409
+$C -X POST $BASE/api/instances/default/knowledge/collections/manuals/copy -H "$H" -H "$J" \
+  -d '{"dest_instance":"org_b","dest_name":"manuals","with_vectors":true,"include_schedule":false}'
+# コピー先・参照元に選べるインスタンスと、そのコレクション・埋め込みの設定の一覧
+$C $BASE/api/knowledge/sources
+# 別のインスタンス（org_a）のコレクションを複製せずに参照する（name はこのインスタンスでの名前）。
+# 一覧の references に status（ok / incompatible / missing）と reason が付く
+$C -X POST $BASE/api/instances/default/knowledge/references -H "$H" -H "$J" \
+  -d '{"name":"org_a_manuals","source_instance":"org_a","source_collection":"manuals"}'
+# 参照をやめる（参照元のコレクションは消えない）
+$C -X DELETE $BASE/api/instances/default/knowledge/references/org_a_manuals -H "$H"
 ```
 
 cmd:

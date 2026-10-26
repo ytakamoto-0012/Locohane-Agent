@@ -549,6 +549,19 @@ $C $BASE/api/instances/default/knowledge/collections/manuals/job
 $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/stop -H "$H"
 # Delete a collection (the vectors are deleted too; the source documents are not)
 $C -X DELETE $BASE/api/instances/default/knowledge/collections/manuals -H "$H"
+# Copy to another instance (org_b). with_vectors=true duplicates the vectors, keyword index and file records
+# (400 if the embedding model, document_prefix or distance differs from the destination; false copies only the definition).
+# Progress: the destination's .../org_b/knowledge/collections/<dest_name>/job (kind "copy"). Ingesting/deleting the source while copying is 409
+$C -X POST $BASE/api/instances/default/knowledge/collections/manuals/copy -H "$H" -H "$J" \
+  -d '{"dest_instance":"org_b","dest_name":"manuals","with_vectors":true,"include_schedule":false}'
+# Instances selectable as a copy destination or reference source, with their collections and embedding settings
+$C $BASE/api/knowledge/sources
+# Reference a collection of another instance (org_a) without copying it (name is the name in this instance).
+# Each entry of references in the overview has status (ok / incompatible / missing) and reason
+$C -X POST $BASE/api/instances/default/knowledge/references -H "$H" -H "$J" \
+  -d '{"name":"org_a_manuals","source_instance":"org_a","source_collection":"manuals"}'
+# Remove a reference (the source collection is not deleted)
+$C -X DELETE $BASE/api/instances/default/knowledge/references/org_a_manuals -H "$H"
 ```
 
 cmd:

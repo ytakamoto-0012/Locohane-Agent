@@ -1,6 +1,7 @@
 "use strict";
 /* 設定ダッシュボードの「ナレッジ」画面（インスタンス詳細のサブタブ）。
  * ベクターDB（src/vector_db/）のコレクションの作成・編集・削除と、文書の取り込み。
+ * インスタンス間のコピーと、別のインスタンスのコレクションの参照も扱う。
  * API は admin/knowledge.py。共通ヘルパー（api / el / dataTable / fmtTime /
  * startMonitorPolling 等）は admin.js のものを使う。
  */
@@ -10,6 +11,9 @@ function knowledgePath(name, suffix) {
 }
 
 const KNOWLEDGE_JOB_LABELS = { running: _t("取り込み中"), done: _t("完了"), error: _t("エラー"), stopped: _t("停止") };
+const KNOWLEDGE_COPY_LABELS = { running: _t("コピー中"), done: _t("コピー完了"), error: _t("コピーのエラー"), stopped: _t("コピーを停止") };
+// 参照の状態（admin/knowledge.py の _reference_dict）。
+const KNOWLEDGE_REF_LABELS = { ok: _t("検索できます"), incompatible: _t("検索できません（設定が違います）"), missing: _t("検索できません（参照元がありません）") };
 // 自動取り込みの曜日（catalog.sqlite の schedule_weekdays。0=月〜6=日、Python の weekday() と同じ）。
 const KNOWLEDGE_WEEKDAYS = [_t("月"), _t("火"), _t("水"), _t("木"), _t("金"), _t("土"), _t("日")];
 
@@ -49,8 +53,10 @@ async function renderKnowledgePanel(container, name) {
   const list = el("div");
   container.append(list);
   container.append(buildCreateCollectionForm(container, name));
+  container.append(buildReferencesSection(container, name, data.references));
 
-  const draw = (collections) => {
+  const draw = (d) => {
+    const collections = d.collections;
     list.innerHTML = "";
     const rows = collections.map((c) => [
       el("div", {}, [el("strong", { text: c.name }), c.description ? el("div", { class: "hint", text: c.description }) : null]),
@@ -65,18 +71,23 @@ async function renderKnowledgePanel(container, name) {
     list.append(
       dataTable([_t("コレクション"), _t("取り込み元フォルダ"), _t("文書"), _t("埋め込みモデル"), _t("最終取り込み"), _t("自動取り込み"), _t("状態"), _t("操作")], rows, _t("まだコレクションはありません。"))
     );
+    // コピーを始めた直後（コピー先の定義ができる前）と、定義を作れずに終わったコピーのジョブ。
+    for (const job of d.copy_jobs || []) {
+      list.append(el("div", { class: "hint" }, [_t(`{0}（{1} から）: `, job.collection, job.source), knowledgeJobCell(job, d.max_file_mb)]));
+    }
   };
-  draw(data.collections);
+  draw(data);
 
-  // 取り込み中のジョブがある間（と、終わった直後の1回）だけ表示を更新する
+  // 取り込み・コピー中のジョブがある間（と、終わった直後の1回）だけ表示を更新する
   // （編集中の追加フォームを描き直さないよう、一覧の表だけを差し替える）。
-  const hasRunning = (collections) => collections.some((c) => c.job && c.job.state === "running");
-  let wasRunning = hasRunning(data.collections);
+  const hasRunning = (d) =>
+    d.collections.some((c) => c.job && c.job.state === "running") || (d.copy_jobs || []).some((j) => j.state === "running");
+  let wasRunning = hasRunning(data);
   startMonitorPolling(container, async () => {
     if (!wasRunning) return;
     const latest = await api(knowledgePath(name));
-    wasRunning = hasRunning(latest.collections);
-    draw(latest.collections);
+    wasRunning = hasRunning(latest);
+    draw(latest);
   });
 }
 
@@ -96,14 +107,27 @@ function knowledgeScheduleCell(c, enabled) {
 function knowledgeJobCell(job, maxFileMb) {
   if (!job) return "-";
   // 停止を求めた後は、処理中のファイルが終わるまで running のままのため「停止中」と出す。
-  const label = job.state === "running" && job.stop_requested ? _t("停止中") : KNOWLEDGE_JOB_LABELS[job.state] || job.state;
+  const labels = job.kind === "copy" ? KNOWLEDGE_COPY_LABELS : KNOWLEDGE_JOB_LABELS;
+  const label = job.state === "running" && job.stop_requested ? _t("停止中") : labels[job.state] || job.state;
   const parts = [el("strong", { text: job.trigger === "schedule" ? _t(`{0}（自動）`, label) : label })];
+  if (job.kind === "copy" && job.source) parts.push(el("div", { class: "hint", text: _t(`コピー元 {0}`, job.source) }));
   if (job.state === "running") {
     parts.push(knowledgeProgressBar(job.done, job.total));
     parts.push(el("div", { class: "hint", text: _t(`{0} / {1} ファイル`, job.done, job.total || "?") }));
     if (job.current) parts.push(el("div", { class: "hint", text: job.current }));
   }
-  if (job.result) {
+  if (job.result && job.result.kind === "copy") {
+    const r = job.result;
+    parts.push(
+      el("div", {
+        class: "hint",
+        text: r.with_vectors
+          ? _t(`{0} / {1} ファイル（{2} チャンク）をコピーしました。`, r.files, r.total, r.chunks)
+          : _t("定義だけをコピーしました。「取り込み（差分）」で文書を取り込んでください。"),
+      })
+    );
+    if (r.stopped) parts.push(el("div", { class: "hint", text: _t("途中で止めました。残りのファイルは「取り込み（差分）」で取り込めます。") }));
+  } else if (job.result) {
     const r = job.result;
     parts.push(el("div", { class: "hint", text: _t(`追加 {0} / 更新 {1} / 変更なし {2} / 削除 {3} / 失敗 {4}`, r.added, r.updated, r.unchanged, r.removed, r.failed.length) }));
     // 中身を埋め込まずにファイル名・フォルダ名だけで探せるようにしたファイル（画像ファイル・文字の無い PDF 等）。
@@ -196,12 +220,17 @@ function knowledgeActions(container, name, c, enabled) {
     rebuildBtn.disabled = !enabled;
     buttons.push(ingestBtn, rebuildBtn);
     buttons.push(el("button", { text: _t("編集"), onclick: () => openEditCollectionForm(container, name, c) }));
+    buttons.push(el("button", { text: _t("コピー"), onclick: () => openCopyCollectionDialog(container, name, c) }));
     buttons.push(
       el("button", {
         class: "btn-danger",
         text: _t("削除"),
         onclick: async () => {
-          if (!confirm(_t(`コレクション {0} と取り込み済みのベクターを削除します（取り込み元の文書は消えません）。よろしいですか？`, c.name))) return;
+          let message = _t(`コレクション {0} と取り込み済みのベクターを削除します（取り込み元の文書は消えません）。よろしいですか？`, c.name);
+          if (c.referenced_by && c.referenced_by.length) {
+            message += "\n" + _t(`このコレクションは {0} から参照されています（削除すると参照している側では検索できなくなります）。`, c.referenced_by.join(_t("、")));
+          }
+          if (!confirm(message)) return;
           if (await knowledgeAction(() => api(knowledgePath(name, path), { method: "DELETE" }))) renderKnowledgePanel(container, name);
         },
       })
@@ -328,4 +357,174 @@ function openEditCollectionForm(container, name, c) {
   });
   backdrop.append(el("div", { class: "modal" }, form));
   document.body.append(backdrop);
+}
+
+// コピー先・参照元に選べるインスタンスとそのコレクション（admin/knowledge.py の /api/knowledge/sources）。
+function knowledgeInstanceLabel(i) {
+  return i.display_name && i.display_name !== i.name ? `${i.display_name}（${i.name}）` : i.name;
+}
+
+// コレクション c のベクターをコピー先 dest で使えない理由（admin/knowledge.py の check_compatible と同じ条件）。
+function knowledgeCopyProblems(c, source, dest) {
+  if (!c.model) return [_t("まだ取り込まれていません")];
+  const problems = [];
+  if (dest.embedding_model !== c.model) problems.push(_t(`埋め込みモデルが違います（コピー元 {0}、コピー先 {1}）`, c.model, dest.embedding_model || _t("未設定")));
+  if (c.document_prefix !== null && c.document_prefix !== dest.document_prefix) {
+    problems.push(_t(`document_prefix が違います（コピー元 {0}、コピー先 {1}）`, JSON.stringify(c.document_prefix), JSON.stringify(dest.document_prefix)));
+  }
+  if (source && source.distance !== dest.distance) problems.push(_t(`距離関数が違います（コピー元 {0}、コピー先 {1}）`, source.distance, dest.distance));
+  return problems;
+}
+
+async function openCopyCollectionDialog(container, name, c) {
+  const sources = await knowledgeAction(() => api("/api/knowledge/sources"));
+  if (!sources) return;
+  const instances = sources.instances;
+  const source = instances.find((i) => i.name === name);
+  const destSelect = el(
+    "select",
+    {},
+    instances.map((i) => el("option", { value: i.name, text: knowledgeInstanceLabel(i) }))
+  );
+  const other = instances.find((i) => i.name !== name);
+  if (other) destSelect.value = other.name;
+  const nameInput = el("input", { type: "text", value: c.name, maxlength: "48" });
+  const withVectors = el("input", { type: "checkbox" });
+  const schedule = el("input", { type: "checkbox" });
+  const compat = el("p", { class: "hint" });
+  const update = () => {
+    const dest = instances.find((i) => i.name === destSelect.value);
+    const problems = knowledgeCopyProblems(c, source, dest);
+    withVectors.checked = problems.length === 0;
+    withVectors.disabled = problems.length > 0;
+    compat.className = problems.length ? "warn-box" : "hint";
+    compat.textContent = problems.length
+      ? _t("ベクターはコピーできないため、定義（説明・取り込み元フォルダ等）だけをコピーします。コピー後にコピー先で「取り込み（差分）」を実行してください。") + " " + problems.join(_t("、"))
+      : _t("ベクター・キーワード索引・取り込み済みファイルの記録までコピーします（コピー先で埋め込み直しません）。");
+  };
+  destSelect.addEventListener("change", update);
+  update();
+  const error = el("div", { class: "error" });
+  const backdrop = el("div", { class: "modal-backdrop" });
+  const close = () => backdrop.remove();
+  const form = el("form", {}, [
+    el("h3", { text: _t(`コレクション {0} をコピー`, c.name) }),
+    el("label", {}, [_t("コピー先のインスタンス"), destSelect]),
+    el("label", {}, [_t("コピー先のコレクション名（半角英数字・_・- の48文字以内）"), nameInput]),
+    el("label", { class: "checkbox" }, [withVectors, _t(" ベクターごとコピーする")]),
+    compat,
+    el("label", { class: "checkbox" }, [schedule, _t(" 自動取り込みの設定も引き継ぐ")]),
+    el("p", { class: "hint", text: _t("進捗はコピー先のインスタンスのナレッジ画面に出ます。コピー中はコピー元のコレクションの取り込み・削除はできません。") }),
+    error,
+    el("div", { class: "modal-actions" }, [el("button", { type: "button", text: _t("キャンセル"), onclick: close }), el("button", { type: "submit", class: "primary", text: _t("コピー") })]),
+  ]);
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    error.textContent = "";
+    try {
+      await api(knowledgePath(name, `/collections/${encodeURIComponent(c.name)}/copy`), {
+        method: "POST",
+        body: { dest_instance: destSelect.value, dest_name: nameInput.value.trim(), with_vectors: withVectors.checked, include_schedule: schedule.checked },
+      });
+      close();
+      renderKnowledgePanel(container, name);
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  });
+  backdrop.append(el("div", { class: "modal" }, form));
+  document.body.append(backdrop);
+}
+
+function knowledgeReferenceStatus(r) {
+  const parts = [el("strong", { text: KNOWLEDGE_REF_LABELS[r.status] || r.status })];
+  if (r.reason) parts.push(el("div", { class: r.status === "ok" ? "hint" : "error", text: r.reason }));
+  return el("div", {}, parts);
+}
+
+function buildReferencesSection(container, name, references) {
+  const section = el("div", { class: "knowledge-references" }, [
+    el("h3", { text: _t("他のインスタンスのナレッジを参照") }),
+    el("p", {
+      class: "hint",
+      text: _t("別のインスタンスのコレクションを、複製せずにこのインスタンスの検索対象に加えます。取り込み・更新は参照元のインスタンスで行います（このインスタンスと同じ埋め込みモデル・document_prefix で取り込まれている必要があります）。"),
+    }),
+  ]);
+  const rows = (references || []).map((r) => [
+    el("strong", { text: r.name }),
+    `${r.source_instance} / ${r.source_collection}`,
+    r.collection && r.collection.description ? r.collection.description : "-",
+    r.collection ? _t(`{0} 件 / {1} チャンク`, r.collection.file_count, r.collection.chunk_count) : "-",
+    r.collection ? fmtTime(r.collection.last_ingested_at) : "-",
+    knowledgeReferenceStatus(r),
+    el("button", {
+      class: "btn-danger",
+      text: _t("参照をやめる"),
+      onclick: async () => {
+        if (!confirm(_t(`参照 {0} をやめます（参照元のコレクションは消えません）。よろしいですか？`, r.name))) return;
+        if (await knowledgeAction(() => api(knowledgePath(name, `/references/${encodeURIComponent(r.name)}`), { method: "DELETE" }))) renderKnowledgePanel(container, name);
+      },
+    }),
+  ]);
+  section.append(dataTable([_t("参照名"), _t("参照元（インスタンス / コレクション）"), _t("説明"), _t("文書"), _t("最終取り込み"), _t("状態"), _t("操作")], rows, _t("参照はありません。")));
+  section.append(buildAddReferenceForm(container, name));
+  return section;
+}
+
+function buildAddReferenceForm(container, name) {
+  const instanceSelect = el("select", {});
+  const collectionSelect = el("select", {});
+  const nameInput = el("input", { type: "text", maxlength: "48", placeholder: _t("例: org_a_manuals（半角英数字・_・- の48文字以内）") });
+  const error = el("div", { class: "error" });
+  let instances = [];
+  // 参照名は、利用者が書き換えるまで「インスタンス名_コレクション名」に追従させる。
+  let nameEdited = false;
+  nameInput.addEventListener("input", () => {
+    nameEdited = true;
+  });
+  const suggestName = () => {
+    if (!nameEdited && instanceSelect.value && collectionSelect.value) nameInput.value = `${instanceSelect.value}_${collectionSelect.value}`.slice(0, 48);
+  };
+  const fillCollections = () => {
+    const i = instances.find((x) => x.name === instanceSelect.value);
+    collectionSelect.innerHTML = "";
+    for (const c of i ? i.collections : []) {
+      collectionSelect.append(el("option", { value: c.name, text: c.description ? `${c.name}（${c.description}）` : c.name }));
+    }
+    suggestName();
+  };
+  instanceSelect.addEventListener("change", fillCollections);
+  collectionSelect.addEventListener("change", suggestName);
+  api("/api/knowledge/sources")
+    .then((data) => {
+      instances = data.instances.filter((i) => i.name !== name && i.collections.length);
+      for (const i of instances) instanceSelect.append(el("option", { value: i.name, text: knowledgeInstanceLabel(i) }));
+      if (!instances.length) error.textContent = _t("参照できるコレクションを持つ他のインスタンスがありません。");
+      fillCollections();
+    })
+    .catch((e) => {
+      error.textContent = e.message;
+    });
+  const form = el("form", { class: "knowledge-form" }, [
+    el("h3", { text: _t("参照を追加") }),
+    el("label", {}, [_t("参照元のインスタンス"), instanceSelect]),
+    el("label", {}, [_t("参照元のコレクション"), collectionSelect]),
+    el("label", {}, [_t("参照名（このインスタンスでのコレクション名。LLM にもこの名前で見せる）"), nameInput]),
+    error,
+    el("button", { type: "submit", class: "primary", text: _t("追加") }),
+  ]);
+  form.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    error.textContent = "";
+    try {
+      await api(knowledgePath(name, "/references"), {
+        method: "POST",
+        body: { name: nameInput.value.trim(), source_instance: instanceSelect.value, source_collection: collectionSelect.value },
+      });
+      renderKnowledgePanel(container, name);
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  });
+  return form;
 }

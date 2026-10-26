@@ -235,7 +235,8 @@ The admin tool started by `admin.bat` lets you do the following in the browser.
   let the AI fix their own problems until they are ready for production, and promote the approved ones to that instance
   (research themes are separate for each instance and do not mix with other departments' or roles' instances)
 - **Knowledge**: register folders of internal documents as collections and ingest them so the AI can search them
-  (when documents are added or updated, only the differences are re-ingested. For settings, see
+  (when documents are added or updated, only the differences are re-ingested. Ingested collections can also be copied to another instance
+  without re-ingesting, or referenced from another instance without copying. For settings, see
   [README_DETAIL.en.md "Vector DB (semantic search of internal documents)"](README_DETAIL.en.md#vector-db-semantic-search-of-internal-documents))
 
 The admin tool also works in smartphone browsers (tabs scroll horizontally and the settings screen uses one column).
