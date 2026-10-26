@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-26
+
 ### 追加
 
 - ナレッジの取り込みで、Office ファイルの本文以外の文字も取り出すようにしました。Word はテキストボックス・ヘッダー/フッター・
@@ -314,7 +316,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.2.1...v0.3.0
