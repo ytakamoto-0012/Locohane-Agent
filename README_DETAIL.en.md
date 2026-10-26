@@ -1095,11 +1095,13 @@ Documents are ingested not by users but by administrators from the settings dash
   (per slide, including notes) and `.md`/`.txt`/`.csv` (can be narrowed with `[vector_db] include_extensions`; Office temporary files `~$*` are excluded).
   For Office files, besides body paragraphs, cells and shape text, the following are also extracted as text (`src/vector_db/extract.py`):
   - `.docx`: text boxes, headers/footers, footnotes/endnotes and comments (listed after the body with labels such as `[Text box]` and `[Header]`).
-  - `.xlsx`/`.xlsm`: text of shapes (text boxes, AutoShapes, shapes inside groups), chart titles and comments (including threaded comments).
+    The body is read in document order (paragraphs and tables), including text inside content controls and text inserted with tracked changes (deleted text is not included).
+  - `.xlsx`/`.xlsm`: text of shapes (text boxes, AutoShapes, shapes inside groups), chart titles (for titles that refer to a cell, the cell's value) and
+    comments (both threaded comments and legacy "notes").
     Shapes are inserted after the row of their anchor (the cell their top-left corner sits on) and comments after the row of their cell, as `[Shape C5] …` and
-    `[Comment B3] …`, so that they land in the same chunk as nearby cells (shapes placed by position rather than by cell go at the end of the sheet).
-    Legacy form buttons (VML) are not read.
-  - `.pptx`: text inside grouped shapes (including nested groups).
+    `[Comment B3] …`, so that they land in the same chunk as nearby cells (shapes placed by position rather than by cell, or whose position cannot be read,
+    go at the end of the sheet). Chart sheets are ingested as a sheet segment holding their chart titles. Legacy form buttons (VML) are not read.
+  - `.pptx`: text inside grouped shapes (including nested groups) and chart titles.
   The text is split into chunks of at most `chunk_size` characters (preferring paragraph and line breaks, overlapping neighbors by `chunk_overlap` characters),
   and the embedding of each chunk is saved. From the second time on, **only the differences** are processed (files with the same size and modification time are not reread,
   and those with the same content are not re-embedded; chunks of files gone from the folder are deleted). Unreadable files (broken, password-protected, etc.) and

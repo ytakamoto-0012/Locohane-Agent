@@ -253,6 +253,140 @@ def test_extract_pptx_reads_text_in_nested_group_shapes(tmp_path):
     assert extract_segments(tmp_path / "a.pptx")[0].text.split("\n") == ["工程A", "工程B"]
 
 
+def test_extract_xlsx_reads_legacy_notes_on_cells_without_threaded_comments(tmp_path):
+    import zipfile
+
+    import openpyxl
+    from openpyxl.comments import Comment
+
+    wb = openpyxl.Workbook()
+    wb.active.append(["品番", "", "単価"])
+    # Excel 365 は、スレッド形式のコメント（A1）の互換用の複製と、従来形式の「メモ」（C1）を同じ comments1.xml に書く。
+    wb.active["A1"].comment = Comment("[Threaded comment] Your version of Excel allows you to read this threaded comment", "tc={1}")
+    wb.active["C1"].comment = Comment("暫定の値", "yt")
+    wb.save(tmp_path / "a.xlsx")
+    rels_path = "xl/worksheets/_rels/sheet1.xml.rels"
+    rebuilt = tmp_path / "b.xlsx"
+    with zipfile.ZipFile(tmp_path / "a.xlsx") as src, zipfile.ZipFile(rebuilt, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == rels_path:
+                data = data.replace(b"</Relationships>", _rels(("rIdT", "threadedComment", "../threadedComments/tc1.xml")).split(">", 1)[1].encode())
+            dst.writestr(item, data)
+    _add_parts(rebuilt, {
+        "xl/threadedComments/tc1.xml": '<ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">'
+        '<threadedComment ref="A1" id="{1}"><text>単価は税抜</text></threadedComment></ThreadedComments>'
+    })
+    assert extract_segments(rebuilt)[0].text.split("\n") == ["品番\t\t単価", "[Comment A1] 単価は税抜", "[Comment C1] 暫定の値"]
+
+
+def _xlsx_with_drawing(path, drawing: str, extra_parts: dict[str, str] | None = None):
+    """3行のシートに図形の一覧（drawing1.xml）を付けた xlsx を作る。"""
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    for value in ("r1", "r2", "r3"):
+        wb.active.append([value])
+    wb.save(path)
+    _add_parts(path, {
+        "xl/worksheets/_rels/sheet1.xml.rels": _rels(("rIdD", "drawing", "../drawings/drawing1.xml")),
+        "xl/drawings/drawing1.xml": f"<xdr:wsDr {_XDR} {_MC}>{drawing}</xdr:wsDr>",
+        **(extra_parts or {}),
+    })
+    return path
+
+
+def test_extract_xlsx_reads_anchors_wrapped_in_alternate_content(tmp_path):
+    # スライサー・フォームコントロール等は、アンカーごと mc:AlternateContent に包まれる。
+    drawing = (
+        f'<mc:AlternateContent><mc:Choice Requires="a14">{_cell_anchor(1, 1, _shape("包まれた図形"))}</mc:Choice>'
+        f"<mc:Fallback>{_cell_anchor(1, 1, _shape('包まれた図形'))}</mc:Fallback></mc:AlternateContent>"
+    )
+    path = _xlsx_with_drawing(tmp_path / "a.xlsx", drawing)
+    assert extract_segments(path)[0].text.split("\n") == ["r1", "r2", "[Shape B2] 包まれた図形", "r3"]
+
+
+def test_extract_xlsx_keeps_other_shapes_when_an_anchor_is_broken(tmp_path):
+    broken = f"<xdr:twoCellAnchor><xdr:from><xdr:col>0</xdr:col><xdr:row></xdr:row></xdr:from>{_shape('位置不明')}</xdr:twoCellAnchor>"
+    path = _xlsx_with_drawing(tmp_path / "a.xlsx", broken + _cell_anchor(1, 0, _shape("正常な図形")))
+    # セルの位置が読めない図形は、位置で置いた図形と同じくシートの末尾に付ける。
+    assert extract_segments(path)[0].text.split("\n") == ["r1", "r2", "[Shape A2] 正常な図形", "r3", "[Shape] 位置不明"]
+
+
+def test_extract_xlsx_reads_chart_titles_that_refer_to_cells(tmp_path):
+    c = 'xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart"'
+    frame = (
+        f'<xdr:graphicFrame><a:graphic><a:graphicData><c:chart {c} '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/></a:graphicData></a:graphic></xdr:graphicFrame>'
+    )
+    chart = (
+        f"<c:chartSpace {c}><c:chart><c:title><c:tx><c:strRef><c:f>Sheet!$A$1</c:f><c:strCache><c:ptCount val=\"1\"/>"
+        '<c:pt idx="0"><c:v>セル参照のタイトル</c:v></c:pt></c:strCache></c:strRef></c:tx></c:title></c:chart></c:chartSpace>'
+    )
+    path = _xlsx_with_drawing(tmp_path / "a.xlsx", _cell_anchor(0, 0, frame), {
+        "xl/drawings/_rels/drawing1.xml.rels": _rels(("rId1", "chart", "../charts/chart1.xml")),
+        "xl/charts/chart1.xml": chart,
+    })
+    assert extract_segments(path)[0].text.split("\n") == ["r1", "[Shape A1] セル参照のタイトル", "r2", "r3"]
+
+
+def test_extract_xlsx_reads_chart_titles_on_chartsheets(tmp_path):
+    import openpyxl
+    from openpyxl.chart import BarChart, Reference
+
+    wb = openpyxl.Workbook()
+    for row in (["a", 1], ["b", 2]):
+        wb.active.append(row)
+    chart = BarChart()
+    chart.title = "月別の出荷数"
+    chart.add_data(Reference(wb.active, min_col=2, min_row=1, max_row=2))
+    wb.create_chartsheet("グラフ").add_chart(chart)
+    wb.create_chartsheet("空のグラフ")  # グラフを置いていないグラフシート（関係のパーツが無く、openpyxl がそのままでは開けない）
+    wb.save(tmp_path / "a.xlsx")
+    segments = extract_segments(tmp_path / "a.xlsx")
+    assert [(s.locator, s.text) for s in segments] == [("Sheet: Sheet", "a\t1\nb\t2"), ("Sheet: グラフ", "[Shape] 月別の出荷数")]
+
+
+def test_extract_docx_reads_content_controls_and_tracked_insertions_in_order(tmp_path):
+    import docx
+    from docx.oxml import parse_xml
+
+    w = 'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
+    d = docx.Document()
+    d.add_paragraph("最初の段落")
+    table = d.add_table(rows=1, cols=2)
+    table.cell(0, 0).text = "左"
+    table.cell(0, 1).text = "右"
+    # 本文レベルのコンテンツコントロール（社内テンプレートで多い）と、変更履歴で挿入した文字。
+    d.element.body.insert(1, parse_xml(f"<w:sdt {w}><w:sdtContent><w:p><w:r><w:t>入力欄の文字</w:t></w:r></w:p></w:sdtContent></w:sdt>"))
+    d.element.body.insert(
+        len(d.element.body) - 1,  # 最後の要素（w:sectPr）の前
+        parse_xml(f'<w:p {w}><w:r><w:t>前</w:t></w:r><w:ins w:id="1" w:author="a"><w:r><w:t>挿入</w:t></w:r></w:ins>'
+                  f'<w:del w:id="2" w:author="a"><w:r><w:delText>削除</w:delText></w:r></w:del></w:p>'),
+    )
+    d.save(tmp_path / "a.docx")
+    lines = [line for line in extract_segments(tmp_path / "a.docx")[0].text.split("\n") if line]
+    assert lines == ["最初の段落", "入力欄の文字", "左\t右", "前挿入"]
+
+
+def test_extract_pptx_reads_chart_titles(tmp_path):
+    from pptx import Presentation
+    from pptx.chart.data import CategoryChartData
+    from pptx.enum.chart import XL_CHART_TYPE
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    data = CategoryChartData()
+    data.categories = ["4月"]
+    data.add_series("出荷", (1,))
+    chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED, Inches(1), Inches(1), Inches(4), Inches(3), data).chart
+    chart.has_title = True
+    chart.chart_title.text_frame.text = "月別の出荷数"
+    prs.save(tmp_path / "a.pptx")
+    assert extract_segments(tmp_path / "a.pptx")[0].text == "月別の出荷数"
+
+
 def test_extract_rejects_unsupported_and_broken_files(tmp_path):
     (tmp_path / "a.bin").write_bytes(b"x")
     with pytest.raises(ExtractError):
