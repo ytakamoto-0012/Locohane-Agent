@@ -921,8 +921,9 @@ DESCRIPTIONS: dict[str, str] = {
     'vector_db.image_input': (
         'Whether to input images to the embeddings (true/false).\n'
         'false (default): extract text from all formats, split it into chunks and embed it as text.\n'
-        'true         : for .pdf .docx .pptx .xlsx .xlsm, in addition to the text chunks, also keep embeddings of each page (each sheet for Excel) rendered as an image,\n'
-        'the same as the render skills (docx-render, etc.) (figures, tables and scanned PDFs become searchable too). .md .txt .csv are embedded as text only, as before.\n'
+        'true         : for the formats in image_input_extensions (default .pdf .docx .pptx), in addition to the text chunks, also keep embeddings of each page\n'
+        '(each sheet for Excel) rendered as an image, the same as the render skills (docx-render, etc.) (figures, tables and scanned PDFs become searchable too).\n'
+        'Other formats (.md .txt .csv and formats not in image_input_extensions) are embedded as text only, as before.\n'
         'Image vectors go into a collection separate from the text (<name>.image), and search merges the text and image results by rank (see image_min_score).\n'
         'Image files (.png .jpg .heic, etc.) are also ingested, each embedded as one chunk (multi-page TIFFs per page).\n'
         'Image files have their EXIF rotation applied and are shrunk so that the long side is at most the long side of A4 rendered at image_dpi (1169px at 100 DPI).\n'
@@ -932,6 +933,13 @@ DESCRIPTIONS: dict[str, str] = {
         'and deleted once written (the source of search results is the original file and page position).\n'
         'Macros in Office files are not run, and password-protected files are listed in the failure list (see office_timeout_seconds).\n'
         'In the ingestion (differential) after switching, files of the affected formats are re-ingested with the new method.'
+    ),
+    'vector_db.image_input_extensions': (
+        'Document formats whose page images are also embedded when image_input = true (comma-separated; choose from .pdf .docx .pptx .xlsx .xlsm; if empty, none are rendered).\n'
+        'Formats not included are embedded as text only. Image files (.png .jpg .heic, etc.) are embedded as images whenever image_input = true, regardless of this setting.\n'
+        'Excel (.xlsx .xlsm) is not included by default: exporting each sheet to PDF with Excel takes the longest time in ingestion, large sheets shrunk to one page\n'
+        'become too small to read so their image embeddings are of little use, and cell values, shapes, comments and chart titles are ingested as text.\n'
+        'In the ingestion (differential) after changing it, files of the formats whose embedding method changes are re-ingested (image vectors are deleted or added).'
     ),
     'vector_db.image_dpi': (
         'Resolution (DPI) at which pages are rendered as images when image_input = true. Raising it captures finer text, but images get larger and embedding takes longer.'

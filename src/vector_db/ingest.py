@@ -33,7 +33,7 @@ from .chunking import split_text
 from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_model, open_client
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
 from .keyword_index import KeywordIndex, open_keyword_index
-from .render import IMAGE_EXTENSIONS, IMAGE_FILE_EXTENSIONS, PageImage, close_office_apps, keep_office_apps, render_pages
+from .render import IMAGE_FILE_EXTENSIONS, PageImage, close_office_apps, keep_office_apps, render_pages
 from .store import ChunkRecord, image_collection_name, open_store, path_collection_name, storage_collection_names
 
 logger = logging.getLogger(__name__)
@@ -330,7 +330,7 @@ def list_source_files(folder: Path, recursive: bool, extensions: tuple[str, ...]
 def file_mode(cfg: Config, path: Path) -> str:
     """path の埋め込み方。
 
-    [vector_db].image_input = true で画像化に対応した形式なら "text+image"（本文のチャンクに加えて
+    [vector_db].image_input = true で、画像ファイルか image_input_extensions の形式なら "text+image"（本文のチャンクに加えて
     ページ画像も埋め込む。画像ファイルは本文が無いため画像だけ）。image_input = false の画像ファイルは
     "path"（中身は埋め込まず、ファイルパスだけを登録する）。それ以外は "text"。
     """
@@ -502,6 +502,7 @@ class _LoadOptions:
     chunk_size: int
     chunk_overlap: int
     image_input: bool
+    image_input_extensions: tuple[str, ...]
     image_dpi: int
     max_file_mb: float
     office_timeout: float = 0.0
@@ -514,6 +515,7 @@ class _LoadOptions:
             cfg.vector_db_chunk_size,
             cfg.vector_db_chunk_overlap,
             cfg.vector_db_image_input,
+            cfg.vector_db_image_input_extensions,
             cfg.vector_db_image_dpi,
             cfg.vector_db_max_file_mb,
             cfg.vector_db_office_timeout_seconds,
@@ -527,7 +529,7 @@ class _LoadOptions:
 
 def _file_mode(options: _LoadOptions, path: Path) -> str:
     suffix = path.suffix.lower()
-    if options.image_input and suffix in IMAGE_EXTENSIONS:
+    if options.image_input and (suffix in IMAGE_FILE_EXTENSIONS or suffix in options.image_input_extensions):
         return "text+image"
     return "path" if suffix in IMAGE_FILE_EXTENSIONS else "text"
 
@@ -565,7 +567,7 @@ def _load(
     ページ画像は options.pages_dir の下のファイルごとの一時フォルダへ PNG で書き出し（_Prepared.page_dir）、
     メモリーには全ページの画像を持たない（400ページの PDF 等でもメモリーを使い切らないため）。
     """
-    # image_input を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
+    # image_input・image_input_extensions を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
     mode = _file_mode(options, path)
     path_text = relative_path_text(folder, path)
     if _is_unchanged(record, mode, st):

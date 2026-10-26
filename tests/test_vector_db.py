@@ -95,6 +95,164 @@ def test_extract_office_and_pdf_formats(tmp_path):
     assert "page two text" in segments[1].text
 
 
+_XDR = 'xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+_MC = 'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+
+
+def _shape(text: str) -> str:
+    return f"<xdr:sp><xdr:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></xdr:txBody></xdr:sp>"
+
+
+def _cell_anchor(row: int, col: int, inner: str) -> str:
+    return f"<xdr:twoCellAnchor><xdr:from><xdr:col>{col}</xdr:col><xdr:row>{row}</xdr:row></xdr:from>{inner}</xdr:twoCellAnchor>"
+
+
+def _add_parts(path, parts: dict[str, str]) -> None:
+    """xlsx（ZIP）にパーツを足す（openpyxl では書けない図形・スレッド形式のコメントのテスト用）。"""
+    import zipfile
+
+    with zipfile.ZipFile(path, "a") as z:
+        for name, xml in parts.items():
+            z.writestr(name, xml)
+
+
+def _rels(*items: tuple[str, str, str]) -> str:
+    body = "".join(
+        f'<Relationship Id="{rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/{kind}" Target="{target}"/>'
+        for rel_id, kind, target in items
+    )
+    return f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{body}</Relationships>'
+
+
+def test_extract_xlsx_inserts_shapes_and_comments_at_their_rows(tmp_path):
+    import openpyxl
+    from openpyxl.comments import Comment
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "集計"
+    for row in (["品番", 10], ["型式", 20], ["数量", 30]):
+        ws.append(row)
+    ws["B2"].comment = Comment("前年比で確認", "yt")
+    path = tmp_path / "a.xlsx"
+    wb.save(path)
+    drawing = (
+        f"<xdr:wsDr {_XDR} {_MC}>"
+        + _cell_anchor(0, 2, _shape("承認欄"))  # C1
+        # グループの中の図形。新旧両形式（mc:Fallback）を持つ図形は1回だけ読む。
+        + _cell_anchor(1, 0, f"<xdr:grpSp>{_shape('段取り手順')}<mc:AlternateContent><mc:Choice>{_shape('注意')}</mc:Choice>"
+                             f"<mc:Fallback>{_shape('注意')}</mc:Fallback></mc:AlternateContent></xdr:grpSp>")  # A2
+        + _cell_anchor(9, 0, _shape("欄外のメモ"))  # A10（データより下）
+        + _cell_anchor(2, 0, '<xdr:graphicFrame><a:graphic><a:graphicData><c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+                             'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" r:id="rId1"/></a:graphicData></a:graphic></xdr:graphicFrame>')
+        + f"<xdr:absoluteAnchor>{_shape('ロゴ')}</xdr:absoluteAnchor>"
+        + "</xdr:wsDr>"
+    )
+    chart = (
+        '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main">'
+        "<c:chart><c:title><c:tx><c:rich><a:p><a:r><a:t>月別の出荷数</a:t></a:r></a:p></c:rich></c:tx></c:title></c:chart></c:chartSpace>"
+    )
+    import zipfile
+
+    with zipfile.ZipFile(path) as z:
+        sheet_rels = z.read("xl/worksheets/_rels/sheet1.xml.rels").decode()
+    sheet_rels = sheet_rels.replace("</Relationships>", _rels(("rIdD", "drawing", "../drawings/drawing9.xml")).split(">", 1)[1])
+    # 既存の sheet1.xml.rels（コメント）を差し替えるため、新しい ZIP に書き直す。
+    rebuilt = tmp_path / "b.xlsx"
+    with zipfile.ZipFile(path) as src, zipfile.ZipFile(rebuilt, "w") as dst:
+        for item in src.infolist():
+            data = sheet_rels.encode() if item.filename == "xl/worksheets/_rels/sheet1.xml.rels" else src.read(item.filename)
+            dst.writestr(item, data)
+    _add_parts(rebuilt, {
+        "xl/drawings/drawing9.xml": drawing,
+        "xl/drawings/_rels/drawing9.xml.rels": _rels(("rId1", "chart", "../charts/chart1.xml")),
+        "xl/charts/chart1.xml": chart,
+    })
+    [segment] = extract_segments(rebuilt)
+    # 図形・コメントはその行の後ろ（同じ行なら列の順）、データより下の図形は末尾、位置で置いた図形は最後。
+    assert segment.text.split("\n") == [
+        "品番\t10",
+        "[Shape C1] 承認欄",
+        "型式\t20",
+        "[Shape A2] 段取り手順",
+        "[Shape A2] 注意",
+        "[Comment B2] 前年比で確認",
+        "数量\t30",
+        "[Shape A3] 月別の出荷数",
+        "[Shape A10] 欄外のメモ",
+        "[Shape] ロゴ",
+    ]
+
+
+def test_extract_xlsx_prefers_threaded_comments_over_their_legacy_copies(tmp_path):
+    import zipfile
+
+    import openpyxl
+    from openpyxl.comments import Comment
+
+    wb = openpyxl.Workbook()
+    wb.active.append(["品番"])
+    # スレッド形式のコメントを付けると、Excel は古いバージョン向けの説明文入りの複製も古い形式で書く。
+    wb.active["A1"].comment = Comment("[Threaded comment] Your version of Excel allows you to read this threaded comment", "tc")
+    path = tmp_path / "a.xlsx"
+    wb.save(path)
+    rebuilt = tmp_path / "b.xlsx"
+    with zipfile.ZipFile(path) as src, zipfile.ZipFile(rebuilt, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/_rels/sheet1.xml.rels":
+                data = data.replace(b"</Relationships>", _rels(("rIdT", "threadedComment", "../threadedComments/tc1.xml")).split(">", 1)[1].encode())
+            dst.writestr(item, data)
+    _add_parts(rebuilt, {
+        "xl/threadedComments/tc1.xml": '<ThreadedComments xmlns="http://schemas.microsoft.com/office/spreadsheetml/2018/threadedcomments">'
+        '<threadedComment ref="A1" id="{1}"><text>単価は税抜</text></threadedComment></ThreadedComments>'
+    })
+    assert extract_segments(rebuilt)[0].text == "品番\n[Comment A1] 単価は税抜"
+
+
+def test_extract_docx_reads_text_boxes_headers_footers_and_comments(tmp_path):
+    import docx
+    from docx.oxml import parse_xml
+
+    d = docx.Document()
+    para = d.add_paragraph("docx body")
+    d.sections[0].header.paragraphs[0].text = "社外秘"
+    d.sections[0].footer.paragraphs[0].text = "品質保証部"
+    d.add_comment(para.runs, text="要確認", author="yt")
+    # 新旧両形式（mc:Fallback に VML の複製）を持つテキストボックス。文字は1回だけ読む。
+    textbox = (
+        '<w:txbxContent xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:p><w:r><w:t>{0}</w:t></w:r></w:p></w:txbxContent>'
+    )
+    d.element.body.insert(
+        0,
+        parse_xml(
+            '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+            'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"><w:r><mc:AlternateContent>'
+            f"<mc:Choice>{textbox.format('吹き出しの説明')}</mc:Choice><mc:Fallback>{textbox.format('吹き出しの説明')}</mc:Fallback>"
+            "</mc:AlternateContent></w:r></w:p>"
+        ),
+    )
+    d.save(tmp_path / "a.docx")
+    lines = extract_segments(tmp_path / "a.docx")[0].text.split("\n")
+    assert "docx body" in lines
+    assert lines.count("[Text box] 吹き出しの説明") == 1
+    assert {"[Header] 社外秘", "[Footer] 品質保証部", "[Comment] 要確認"} <= set(lines)
+
+
+def test_extract_pptx_reads_text_in_nested_group_shapes(tmp_path):
+    from pptx import Presentation
+    from pptx.util import Inches
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    group = slide.shapes.add_group_shape()
+    group.shapes.add_textbox(Inches(1), Inches(1), Inches(2), Inches(1)).text_frame.text = "工程A"
+    inner = group.shapes.add_group_shape()
+    inner.shapes.add_textbox(Inches(1), Inches(2), Inches(2), Inches(1)).text_frame.text = "工程B"
+    prs.save(tmp_path / "a.pptx")
+    assert extract_segments(tmp_path / "a.pptx")[0].text.split("\n") == ["工程A", "工程B"]
+
+
 def test_extract_rejects_unsupported_and_broken_files(tmp_path):
     (tmp_path / "a.bin").write_bytes(b"x")
     with pytest.raises(ExtractError):

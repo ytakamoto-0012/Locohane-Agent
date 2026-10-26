@@ -1108,6 +1108,12 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   キーワード検索用に入れる（`src/vector_db/keyword_index.py`）。
 - **取り込み**（`src/vector_db/ingest.py`）: 対応形式は `.pdf`（ページ単位）・`.docx`・`.xlsx`/`.xlsm`（シート単位）・`.pptx`
   （スライド単位、ノート含む）・`.md`/`.txt`/`.csv`（`[vector_db] include_extensions` で絞れる。Office の一時ファイル `~$*` は除く）。
+  Office ファイルは本文の段落・セル・図形の文字に加えて、次のものも本文として取り出す（`src/vector_db/extract.py`）:
+  - `.docx`: テキストボックス・ヘッダー/フッター・脚注/文末脚注・コメント（本文の後ろに `[Text box]`・`[Header]` 等の見出しを付けて並べる）。
+  - `.xlsx`/`.xlsm`: 図形（テキストボックス・オートシェイプ・グループ内の図形）の文字・グラフのタイトル・コメント（スレッド形式を含む）。
+    図形はアンカー（左上が乗っているセル）の行、コメントは付いているセルの行の後ろに `[Shape C5] …`・`[Comment B3] …` の形で差し込み、
+    近くのセルと同じチャンクに入るようにする（セルではなく位置で置いた図形はシートの末尾）。古い形式のフォームのボタン（VML）は読まない。
+  - `.pptx`: グループ化した図形の中の文字（入れ子のグループも）。
   本文を `chunk_size` 文字以内のチャンクに分け（段落・改行の切れ目を優先し、隣と `chunk_overlap` 文字重ねる）、
   チャンクごとの埋め込みを保存する。2回目以降は**差分だけ**を処理する（サイズ・更新日時が同じファイルは読み直さず、
   内容が同じなら埋め込み直さない。フォルダから消えたファイルのチャンクは削除する）。読めないファイル（壊れている・パスワード付き等）・
@@ -1214,10 +1220,15 @@ sqlite-vec では `Euclid` が vec0 の `l2`、`Manhattan` が `l1` に当たり
 
 ### ページを画像として取り込む（image_input）
 
-`[vector_db] image_input = true` にすると、`.pdf`・`.docx`・`.pptx`・`.xlsx`/`.xlsm` は本文のチャンクに加えて
-1ページずつの画像も埋め込む（`src/vector_db/render.py`）。本文は型番・数値等の細かい語句に、画像は図・表・写真・
-スキャンした PDF のように文字を取り出せない内容に強いため、両方を持たせて補い合う。`.md`/`.txt`/`.csv` は従来どおり
-本文だけを埋め込む。
+`[vector_db] image_input = true` にすると、`[vector_db] image_input_extensions` の形式（既定 `.pdf`・`.docx`・`.pptx`。
+`.xlsx`/`.xlsm` も選べる）は本文のチャンクに加えて1ページずつの画像も埋め込む（`src/vector_db/render.py`）。
+本文は型番・数値等の細かい語句に、画像は図・表・写真・スキャンした PDF のように文字を取り出せない内容に強いため、
+両方を持たせて補い合う。`.md`/`.txt`/`.csv` と、`image_input_extensions` に含めない形式は従来どおり本文だけを埋め込む。
+
+Excel を既定で含めないのは、取り込みで一番時間がかかるうえ効果が小さいため。シートごとに Excel で PDF に書き出すので
+1ブック数秒かかり（実測で1シート0.2〜1秒）、Excel を並列に増やしても3つ程度で頭打ちになる（Office の PDF 書き出しが
+並列に伸びないため。子プロセス（`ingest_processes`）に分けても変わらない）。また大きいシートは1ページに縮めると文字が潰れて
+画像の埋め込みが役に立ちにくく、セルの値・図形の文字・グラフのタイトル・コメントは本文として取り込む。
 画像ファイル（`.png`・`.jpg`/`.jpeg`・`.gif`・`.bmp`・`.webp`・`.tif`/`.tiff`・`.heic`/`.heif`）も画像として埋め込む
 （`image_input = false` のときは中身を読まず、ファイルパスだけを登録する）。
 
@@ -1256,7 +1267,7 @@ sqlite-vec では `Euclid` が vec0 の `l2`、`Manhattan` が `l1` に当たり
 llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models\mmproj-Qwen3-VL-Embedding-2B-f16.gguf --alias qwen3-vl-embedding --embedding --pooling last --port 12440 -c 8192 -b 8192 -ub 8192
 ```
 
-- **切り替え**: 取り込み済みファイルの記録には埋め込み方（`text` / `text+image`）も残すため、`image_input` を切り替えて
+- **切り替え**: 取り込み済みファイルの記録には埋め込み方（`text` / `text+image`）も残すため、`image_input`・`image_input_extensions` を切り替えて
   「取り込み（差分）」を押すと、内容が変わっていなくても該当する形式のファイルだけを新しい方式で取り込み直す
   （false に戻すとページ画像のベクターは消え、画像ファイルはファイルパスだけの登録になる）。
   埋め込みモデルも変えた場合は、これまでどおり「再構築」が必要。
@@ -1590,7 +1601,8 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `chunk_size` / `chunk_overlap` | チャンク1つの最大文字数（既定800）と、隣り合うチャンクで重ねる文字数（既定100、`chunk_size` 未満） | `VECTOR_DB_CHUNK_SIZE` / `VECTOR_DB_CHUNK_OVERLAP` |
 | `[vector_db]` | `include_extensions` | 取り込む拡張子（カンマ区切り。対応形式は `.pdf .docx .xlsx .xlsm .pptx .md .txt .csv` と画像ファイル `.png .jpg .jpeg .gif .bmp .webp .tif .tiff .heic .heif`。画像ファイルは `image_input = false` ならファイルパスだけを登録する） | `VECTOR_DB_INCLUDE_EXTENSIONS` |
 | `[vector_db]` | `max_file_mb` | 取り込む1ファイルの上限サイズ（MB、既定50。超えると失敗一覧に載る） | `VECTOR_DB_MAX_FILE_MB` |
-| `[vector_db]` | `image_input` | 埋め込みに画像を入力するか（既定 false）。true なら `.pdf .docx .pptx .xlsx .xlsm` は本文に加えてページごとの画像も埋め込み、画像ファイル（`.png .jpg .heic` 等）も画像として埋め込む。画像入力に対応した埋め込みモデルと、Office ファイルには Windows・Microsoft Office が必要（「ページを画像として取り込む（image_input）」参照） | `VECTOR_DB_IMAGE_INPUT` |
+| `[vector_db]` | `image_input` | 埋め込みに画像を入力するか（既定 false）。true なら `image_input_extensions` の形式（既定 `.pdf .docx .pptx`）は本文に加えてページごとの画像も埋め込み、画像ファイル（`.png .jpg .heic` 等）も画像として埋め込む。画像入力に対応した埋め込みモデルと、Office ファイルには Windows・Microsoft Office が必要（「ページを画像として取り込む（image_input）」参照） | `VECTOR_DB_IMAGE_INPUT` |
+| `[vector_db]` | `image_input_extensions` | `image_input = true` のときにページ画像も埋め込む文書の形式（既定 `.pdf, .docx, .pptx`。`.pdf .docx .pptx .xlsx .xlsm` から選ぶ。空ならどれも画像にしない）。含めない形式は本文だけで埋め込む。画像ファイルはこの設定に関係なく画像で埋め込む | `VECTOR_DB_IMAGE_INPUT_EXTENSIONS` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | `image_input = true` で Office ファイルを PDF に書き出す1回の上限秒数（既定180）。超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、そのファイルを失敗一覧に載せる | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
 | `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照） | `VECTOR_DB_INGEST_WORKERS` |
@@ -1827,7 +1839,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_dpi`・`office_timeout_seconds`・`ingest_workers`・`ingest_processes`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_input_extensions`・`image_dpi`・`office_timeout_seconds`・`ingest_workers`・`ingest_processes`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 

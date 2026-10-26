@@ -627,7 +627,7 @@ const I18N_EN = {
   "埋め込みモデル: {0}": "Embedding model: {0}",
   "接頭辞: 検索語 {0}・文書 {1}": "Prefixes: query {0} / document {1}",
   "対象の拡張子: {0}": "Target extensions: {0}",
-  "本文＋画像（image_input = true。PDF・Office はページ画像も、画像ファイルは画像で埋め込む）": "Text + images (image_input = true; PDF and Office also embed page images, image files are embedded as images)",
+  "本文＋画像（image_input = true。{0} はページ画像も、画像ファイルは画像で埋め込む）": "Text + images (image_input = true; {0} also embed page images, image files are embedded as images)",
   "テキスト": "Text",
   "埋め込み方: {0}": "Embedding: {0}",
   "ナレッジ（社内文書の意味検索）": "Knowledge (semantic search over internal documents)",
