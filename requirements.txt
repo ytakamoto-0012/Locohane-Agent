@@ -79,5 +79,5 @@ python-pptx==1.0.2
 # openai は langchain-openai が要求する 2.x 系。src/llm.py が直接 import するため明示ピン。
 
 # 画像
-pillow
+pillow>=13.0.0                       # 12.x 以前は画像のデコード（JPEG・TIFF・FlashPix 等）に既知の脆弱性があり、ナレッジの取り込みで利用者の置いた画像を開くため
 pillow-heif
