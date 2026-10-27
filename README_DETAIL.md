@@ -1093,6 +1093,10 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
 （RAG）。既定では無効（`[vector_db] enabled = false`）。ロジックは `src/vector_db/` に集約し、LLM 向けには
 `src/tools/vector_db_tools.py` の3ツール（`list_document_collections`/`search_documents`/`search_document_paths`、読み取り専用）を公開する。
 文書の取り込みは利用者ではなく管理者が設定ダッシュボードから行う。
+メインエージェントのシステムプロンプト（`system_prompt.md` の「Knowledge」節）には、会話のグラフを組み立てるたび
+（新しい会話・再開時。`app.py` の `_rebuild_graph`）にコレクションの名前・説明・文書数の一覧を `{{document_collections}}` へ差し込み、
+事実・数値・文書の内容を探すときは作業フォルダやWeb検索より先に `search_documents` を使うよう指示している
+（無効・未取り込みのときは「(none: ...)」が入る）。
 
 - **コレクション**: 取り込み元フォルダ1つに対応する文書群。インスタンス内の全ユーザーが検索できる。名前は半角英数字・`_`・`-`
   （48文字以内）で、日本語の説明は「説明」欄に書く（`list_document_collections` で LLM にも見せる）。

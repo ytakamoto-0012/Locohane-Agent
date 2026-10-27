@@ -72,6 +72,7 @@ from src.config import (  # noqa: E402
     render_plan_approval_exempt_scripts_block,
 )
 from src.memory import render_memory_block  # noqa: E402
+from src.tools.vector_db_tools import render_document_collections_block  # noqa: E402
 from src.project_instructions import render_project_instructions_block  # noqa: E402
 from src.skills import (  # noqa: E402
     build_system_prompt_from_block,
@@ -168,6 +169,7 @@ def build_production_system_prompt(config) -> tuple[str, str]:
 
     system_prompt = system_prompt.replace("{{memory}}", render_memory_block(config.memory_dir))
     system_prompt = system_prompt.replace("{{agent_types}}", agent_types_block)
+    system_prompt = system_prompt.replace("{{document_collections}}", render_document_collections_block(config))
     system_prompt = system_prompt.replace(
         "{{plan_approval_exempt_scripts}}",
         render_plan_approval_exempt_scripts_block(config.plan_approval_exempt_scripts),

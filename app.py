@@ -179,6 +179,7 @@ from src.tools._plan_render import _render_plan_payload
 from src.tools._path_memory_helpers import _register_path_memory
 from src.tools._state import SESSION_REASONING_EFFORT_KEY
 from src.tools._workdir import _build_workdir_status_info, _resolve_exec_workdir
+from src.tools.vector_db_tools import render_document_collections_block
 
 # dispatch_agent（サブエージェント）由来のメッセージに付与する author 名。
 # frontend/src/utils/messageTree.ts の SUBAGENT_MESSAGE_AUTHOR、
@@ -2085,7 +2086,11 @@ async def _rebuild_graph(thread_id: str, *, wait_when_busy: bool = True):
     # がタブをまたいで混線しないようにする（set_current_session docstring参照。
     # 2026-08-26 監査で発見した既存の軽微なエッジケースの修正）。
     set_current_session(thread_id, tab_id=cl.context.session.id)
-    system_prompt = _apply_session_draft_skills() + i18n.response_language_directive()
+    # ナレッジのコレクション一覧は取り込みで変わるため、起動時ではなく組み立てのたびに差し込む。
+    system_prompt = (
+        _apply_session_draft_skills().replace("{{document_collections}}", render_document_collections_block(_config))
+        + i18n.response_language_directive()
+    )
     # 組み立てに使った言語。画面で言語を切り替えたら on_message が比べて組み直す。
     cl.user_session.set("graph_lang", i18n.current_lang())
     # 入力欄ツールバーで選んだ reasoning_effort（on_message が送信時の値を入れる）。

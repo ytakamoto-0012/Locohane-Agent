@@ -68,6 +68,21 @@ def test_list_document_collections(env):
     assert "docs - 品質文書" in text and "2 documents" in text
 
 
+def test_render_document_collections_block(env):
+    assert vector_db_tools.render_document_collections_block(env["cfg"]) == "- docs - 品質文書 (2 documents)"
+
+
+def test_render_document_collections_block_disabled_or_empty(tmp_path):
+    disabled = vector_db_tools.render_document_collections_block(make_config(tmp_path, vector_db_enabled=False))
+    assert disabled.startswith("(none: ") and "disabled" in disabled
+    assert vector_db_tools.render_document_collections_block(make_config(tmp_path)).startswith("(none: ")
+
+
+def test_render_document_collections_block_truncates(env, monkeypatch):
+    monkeypatch.setattr(vector_db_tools, "_PROMPT_COLLECTIONS_MAX", 0)
+    assert vector_db_tools.render_document_collections_block(env["cfg"]) == "- ... and 1 more (see list_document_collections)"
+
+
 def test_search_documents_returns_sources_with_path_memory_refs(env):
     text = tools.search_documents.func(query="溶接ビードの幅", top_k=1)
     assert text.startswith("1 found.")

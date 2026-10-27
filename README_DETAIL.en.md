@@ -1078,6 +1078,10 @@ A feature (RAG) that ingests internal documents such as regulations, procedures 
 Disabled by default (`[vector_db] enabled = false`). The logic is centralized in `src/vector_db/`, and for the LLM,
 the 3 tools in `src/tools/vector_db_tools.py` (`list_document_collections`/`search_documents`/`search_document_paths`, read-only) are exposed.
 Documents are ingested not by users but by administrators from the settings dashboard.
+Each time the conversation graph is built (new conversation or resume; `_rebuild_graph` in `app.py`), the list of collections
+(name, description, number of documents) is inserted into `{{document_collections}}` in the "Knowledge" section of the main agent's
+system prompt (`system_prompt.md`), which instructs it to use `search_documents` before the working directory or web search
+when looking for facts, figures or document contents (when disabled or nothing is ingested, "(none: ...)" is inserted).
 
 - **Collections**: a group of documents corresponding to one source folder. All users in the instance can search them. Names are half-width letters, digits, `_` and `-`
   (48 characters or fewer), and a description (in any language) goes in the "description" field (also shown to the LLM by `list_document_collections`).

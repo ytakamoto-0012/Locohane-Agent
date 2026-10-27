@@ -319,6 +319,7 @@ async def _run(
     from src.graph import ainvoke_ensuring_final_text, build_graph
     from src.llm import ThinkingLoopDetected, mark_user_turn
     from src.memory import render_memory_block
+    from src.tools.vector_db_tools import render_document_collections_block
     from src.skills import build_system_prompt, filter_skills_for_agent_type, render_skills_block, scan_skills
     from src.tools import get_all_tools, init_tools
 
@@ -448,6 +449,7 @@ async def _run(
         ]
         system_prompt = system_prompt.replace("{{memory}}", render_memory_block(config.memory_dir))
         system_prompt = system_prompt.replace("{{agent_types}}", agent_types_block)
+        system_prompt = system_prompt.replace("{{document_collections}}", render_document_collections_block(config))
         # config.ini の値を ${変数名} として埋め込めるよう展開する（app.py の
         # _setup() と同じ手順、{{...}}置換完了後に行う）。
         system_prompt = expand_config_vars(system_prompt, config)

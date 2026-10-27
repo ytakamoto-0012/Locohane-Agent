@@ -39,6 +39,38 @@ def _enabled_config():
     return cfg
 
 
+# render_document_collections_block() に載せるコレクションの上限（超えた分は list_document_collections で見る）。
+_PROMPT_COLLECTIONS_MAX = 30
+
+
+def render_document_collections_block(cfg) -> str:
+    """system_prompt.md の {{document_collections}} へ差し込むテキストを組み立てる。
+
+    取り込みで一覧が変わるため、起動時ではなくグラフを組み立てるたびに呼ぶ（app.py の _rebuild_graph）。
+    取り込み日時・チャンク数は載せない（取り込みのたびにプロンプトが変わるのを減らすため）。
+    使えない参照（参照元が無い等）は載せない。
+    """
+    if cfg is None or not cfg.vector_db_enabled:
+        return "(none: the knowledge feature is disabled. Do not use search_documents etc.)"
+    try:
+        collections = vector_search.list_collections(cfg)
+        references = vector_search.list_references(cfg)
+    except Exception:  # noqa: BLE001 - 一覧が読めなくても会話は始められるようにする
+        logger.exception("render_document_collections_block: failed to list collections")
+        return "(the list could not be loaded; check it with list_document_collections)"
+    entries = [(c.name, c.description, c.file_count) for c in collections]
+    entries += [(r.reference.name, r.collection.description, r.collection.file_count) for r in references if r.collection is not None]
+    if not entries:
+        return "(none: no documents have been ingested yet)"
+    lines = [
+        f"- {name}{f' - {description}' if description else ''} ({count} documents)"
+        for name, description, count in entries[:_PROMPT_COLLECTIONS_MAX]
+    ]
+    if len(entries) > _PROMPT_COLLECTIONS_MAX:
+        lines.append(f"- ... and {len(entries) - _PROMPT_COLLECTIONS_MAX} more (see list_document_collections)")
+    return "\n".join(lines)
+
+
 @tool
 def list_document_collections() -> str:
     """Return the list of searchable collections (groups of documents) of internal documents.
@@ -85,7 +117,9 @@ def list_document_collections() -> str:
 def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
     """Search ingested internal documents for passages close in meaning to query.
 
-    Use it when asked about the contents of internal rules, procedures, specifications, etc. It
+    Use it when asked about facts, figures, records or document contents that may be in the
+    ingested documents (internal rules, procedures, specifications, fees, costs, past results,
+    etc.), before investigating the working directory or searching the web. It
     searches by meaning rather than exact keywords, so write query as a question or a short
     sentence with the key points.
     Results are excerpts, so if you need to check details, pass the `@N` of the source to Read and
