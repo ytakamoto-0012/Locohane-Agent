@@ -538,6 +538,10 @@ $C -X POST $BASE/api/instances/default/knowledge/collections -H "$H" -H "$J" \
   -d '{"name":"manuals","description":"Quality control rules","source_folders":["D:/shared/manuals","D:/shared/procedures"],"recursive":true}'
 # Change the description, folder or subfolder setting (only the fields to change)
 $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"description":"Quality rules"}'
+# Exclusion keywords (paths/folder/file names below the source folder containing one are not ingested; *.ext = extension; also at creation; [] clears)
+$C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"exclude_keywords":["draft","/old/","*.xlsx"]}'
+# Target keywords (if any, only files whose path/folder/file name contains one are ingested; same syntax as exclusion; [] clears)
+$C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"include_keywords":["*.pdf","*.docx"]}'
 # Scheduled automatic ingestion (incremental). schedule_times is an array of "HH:MM", schedule_weekdays is 0=Mon to 6=Sun (every day if empty).
 # The same keys can be passed when creating. Each collection in the list gets next_scheduled_at (the next scheduled time), and automatically started jobs have trigger "schedule"
 $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" \

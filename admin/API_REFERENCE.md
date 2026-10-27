@@ -538,6 +538,10 @@ $C -X POST $BASE/api/instances/default/knowledge/collections -H "$H" -H "$J" \
   -d '{"name":"manuals","description":"品質管理規程","source_folders":["D:/shared/manuals","D:/shared/procedures"],"recursive":true}'
 # 説明・フォルダ・サブフォルダ有無の変更（変える項目だけ）
 $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"description":"品質規程"}'
+# 取り込み除外キーワード（取り込み元フォルダより下のパス・フォルダ名・ファイル名に含むものは取り込まない。作成時にも指定できる。*. で始めると拡張子の指定。[] で解除）
+$C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"exclude_keywords":["旧版","/old/","*.xlsx"]}'
+# 取り込み対象キーワード（あれば、パス・フォルダ名・ファイル名にどれかを含むファイルだけを取り込む。書き方は除外と同じ。[] で解除）
+$C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"include_keywords":["*.pdf","*.docx"]}'
 # 時間指定の自動取り込み（差分）。schedule_times は "HH:MM" の配列、schedule_weekdays は 0=月〜6=日（空なら毎日）。
 # 作成時にも同じキーを渡せる。一覧の各コレクションに next_scheduled_at（次回の予定）が付き、自動で始まったジョブは trigger が "schedule"
 $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" \

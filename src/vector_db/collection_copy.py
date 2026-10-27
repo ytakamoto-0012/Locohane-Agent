@@ -99,7 +99,7 @@ def copy_collection(
 
     with open_catalog(dst_cfg.vector_db_dir) as dst_catalog:
         try:
-            dst_catalog.create(dst_name, src.source_folders, src.description, src.recursive)
+            dst_catalog.create(dst_name, src.source_folders, src.description, src.recursive, src.exclude_keywords, src.include_keywords)
             if include_schedule:
                 dst_catalog.update(
                     dst_name,

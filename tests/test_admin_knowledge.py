@@ -124,6 +124,20 @@ def test_collection_with_multiple_source_folders(env):
     assert client.post(base, json={"name": "none"}).status_code == 400
 
 
+def test_collection_exclude_keywords(env):
+    client, docs = env["client"], env["docs"]
+    base = "/api/instances/org_a/knowledge/collections"
+    res = client.post(base, json={"name": "docs", "source_folder": str(docs), "exclude_keywords": ["draft", " ", "DRAFT"]})
+    assert res.status_code == 200 and res.json()["exclude_keywords"] == ["draft"], res.text
+    res = client.put(f"{base}/docs", json={"exclude_keywords": ["old", "tmp"]})
+    assert res.status_code == 200 and res.json()["exclude_keywords"] == ["old", "tmp"]
+    res = client.put(f"{base}/docs", json={"include_keywords": ["*.pdf", " "]})
+    assert res.status_code == 200 and res.json()["include_keywords"] == ["*.pdf"]
+    # 指定しなければ変わらない。
+    res = client.put(f"{base}/docs", json={"description": "x"}).json()
+    assert (res["exclude_keywords"], res["include_keywords"]) == (["old", "tmp"], ["*.pdf"])
+
+
 def test_run_ingest_job_marks_stop(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()

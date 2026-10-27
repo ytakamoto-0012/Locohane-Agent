@@ -60,7 +60,12 @@ async function renderKnowledgePanel(container, name) {
     list.innerHTML = "";
     const rows = collections.map((c) => [
       el("div", {}, [el("strong", { text: c.name }), c.description ? el("div", { class: "hint", text: c.description }) : null]),
-      el("div", {}, [...c.source_folders.map((p) => el("div", { text: p })), el("div",{ class: "hint", text: c.recursive ? _t("サブフォルダも含む") : _t("直下のみ") })]),
+      el("div", {}, [
+        ...c.source_folders.map((p) => el("div", { text: p })),
+        el("div", { class: "hint", text: c.recursive ? _t("サブフォルダも含む") : _t("直下のみ") }),
+        c.include_keywords.length ? el("div", { class: "hint", text: _t("対象: {0}", c.include_keywords.join(", ")) }) : null,
+        c.exclude_keywords.length ? el("div", { class: "hint", text: _t("除外: {0}", c.exclude_keywords.join(", ")) }) : null,
+      ]),
       _t(`{0} 件 / {1} チャンク`, c.file_count, c.chunk_count),
       c.model ? _t(`{0}（{1} 次元）`, c.model, c.dim) : "-",
       fmtTime(c.last_ingested_at),
@@ -258,9 +263,17 @@ function collectionFields(c) {
   // 取り込み元フォルダは1行に1つ（複数指定できる）。
   const folder = el("textarea", { rows: 3, placeholder: _t("例: D:\\shared\\manuals（管理ツールの PC から見える絶対パス。複数は1行に1つ）") });
   folder.value = c ? c.source_folders.join("\n") : "";
+  // 取り込み除外キーワードも1行に1つ。
+  const excludes = el("textarea", { rows: 2, placeholder: _t("例: 旧版（1行に1つ。パス・フォルダ名・ファイル名に含むものを除外）") });
+  excludes.value = c ? c.exclude_keywords.join("\n") : "";
+  // 取り込み対象キーワードも1行に1つ（空なら絞り込まない）。
+  const includes = el("textarea", { rows: 2, placeholder: _t("例: *.pdf（1行に1つ。空ならすべて。パス・フォルダ名・ファイル名に含むものだけを取り込む）") });
+  includes.value = c ? c.include_keywords.join("\n") : "";
   return {
     description: el("input", { type: "text", value: c ? c.description : "", placeholder: _t("例: 品質管理規程・手順書") }),
     folder,
+    excludes,
+    includes,
     recursive: el("input", { type: "checkbox" }),
     scheduleEnabled,
     scheduleTimes: el("input", { type: "text", value: c ? c.schedule_times.join(", ") : "", placeholder: _t("例: 02:00（複数はカンマ区切り。例: 07:30, 19:00）") }),
@@ -291,8 +304,28 @@ function scheduleFieldElements(f) {
   ];
 }
 
+function lineList(textarea) {
+  return textarea.value.split(/\r?\n/).map((s) => s.trim()).filter((s) => s);
+}
+
 function folderList(f) {
-  return f.folder.value.split(/\r?\n/).map((s) => s.trim()).filter((s) => s);
+  return lineList(f.folder);
+}
+
+// 取り込み対象・除外キーワードの入力欄（追加フォームと編集ダイアログで共通）。
+function keywordFieldElements(f) {
+  return [
+    el("label", {}, [_t("取り込み対象キーワード"), f.includes]),
+    el("p", {
+      class: "hint",
+      text: _t("書いた場合は、取り込み元フォルダより下のパス（フォルダ名・ファイル名を含む）にどれかのキーワードを含むファイルだけを取り込みます。書き方は除外キーワードと同じで、除外キーワードにも当てはまるファイルは取り込みません。"),
+    }),
+    el("label", {}, [_t("取り込み除外キーワード"), f.excludes]),
+    el("p", {
+      class: "hint",
+      text: _t("取り込み元フォルダより下のパス（フォルダ名・ファイル名を含む）にキーワードを含むものは取り込みません（大文字小文字は区別しない）。/old/ のように / で囲むと、名前がちょうど old のフォルダだけを除外します。*.xlsx のように *. で始めると、その拡張子のファイルだけを除外します。"),
+    }),
+  ];
 }
 
 function scheduleBody(f) {
@@ -314,6 +347,7 @@ function buildCreateCollectionForm(container, name) {
     el("label", {}, [_t("説明（LLM にも一覧で見せる）"), f.description]),
     el("label", {}, [_t("取り込み元フォルダ"), f.folder]),
     el("label", { class: "checkbox" }, [f.recursive, _t(" サブフォルダも取り込む")]),
+    ...keywordFieldElements(f),
     ...scheduleFieldElements(f),
     error,
     el("button", { type: "submit", class: "primary", text: _t("追加") }),
@@ -329,6 +363,8 @@ function buildCreateCollectionForm(container, name) {
           description: f.description.value,
           source_folders: folderList(f),
           recursive: f.recursive.checked,
+          exclude_keywords: lineList(f.excludes),
+          include_keywords: lineList(f.includes),
           ...scheduleBody(f),
         },
       });
@@ -352,6 +388,8 @@ function openEditCollectionForm(container, name, c) {
     el("label", {}, [_t("取り込み元フォルダ"), f.folder]),
     el("label", { class: "checkbox" }, [f.recursive, _t(" サブフォルダも取り込む")]),
     el("p", { class: "hint", text: _t("フォルダを変えた場合、次の取り込みで新しいフォルダに無いファイルのベクターは削除されます。") }),
+    ...keywordFieldElements(f),
+    el("p", { class: "hint", text: _t("キーワードを変えて取り込み対象から外れた取り込み済みのファイルは、次の取り込みで削除されます。") }),
     ...scheduleFieldElements(f),
     error,
     el("div", { class: "modal-actions" }, [el("button", { type: "button", text: _t("キャンセル"), onclick: close }), el("button", { type: "submit", class: "primary", text: _t("保存") })]),
@@ -362,7 +400,14 @@ function openEditCollectionForm(container, name, c) {
     try {
       await api(knowledgePath(name, `/collections/${encodeURIComponent(c.name)}`), {
         method: "PUT",
-        body: { description: f.description.value, source_folders: folderList(f), recursive: f.recursive.checked, ...scheduleBody(f) },
+        body: {
+          description: f.description.value,
+          source_folders: folderList(f),
+          recursive: f.recursive.checked,
+          exclude_keywords: lineList(f.excludes),
+          include_keywords: lineList(f.includes),
+          ...scheduleBody(f),
+        },
       });
       close();
       renderKnowledgePanel(container, name);

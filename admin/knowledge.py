@@ -51,6 +51,10 @@ class CreateCollectionBody(BaseModel):
     source_folder: str | None = None
     description: str = ""
     recursive: bool = True
+    # 取り込み除外キーワード（取り込み元フォルダより下のパスに含むフォルダ・ファイルは取り込まない）。
+    exclude_keywords: list[str] = []
+    # 取り込み対象キーワード（あれば、取り込み元フォルダより下のパスにどれかを含むファイルだけを取り込む）。
+    include_keywords: list[str] = []
     schedule_enabled: bool = False
     schedule_times: list[str] = []
     schedule_weekdays: list[int] = []
@@ -61,6 +65,8 @@ class UpdateCollectionBody(BaseModel):
     source_folder: str | None = None
     description: str | None = None
     recursive: bool | None = None
+    exclude_keywords: list[str] | None = None
+    include_keywords: list[str] | None = None
     schedule_enabled: bool | None = None
     schedule_times: list[str] | None = None
     schedule_weekdays: list[int] | None = None
@@ -603,7 +609,7 @@ def build_router(
             if body.schedule_enabled and not times:
                 raise vcat.CatalogError(_t("自動取り込みを有効にするときは時刻を1つ以上指定してください。"))
             with vcat.open_catalog(cfg.vector_db_dir) as catalog:
-                catalog.create(body.name, folders, body.description, body.recursive)
+                catalog.create(body.name, folders, body.description, body.recursive, body.exclude_keywords, body.include_keywords)
                 created = catalog.update(body.name, schedule_enabled=body.schedule_enabled, schedule_times=times, schedule_weekdays=weekdays)
         except vcat.CatalogError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -614,6 +620,8 @@ def build_router(
             "knowledge_collection_create",
             collection=body.name,
             source_folders=list(created.source_folders),
+            exclude_keywords=list(created.exclude_keywords),
+            include_keywords=list(created.include_keywords),
             schedule_enabled=created.schedule_enabled,
             schedule_times=list(created.schedule_times),
             schedule_weekdays=list(created.schedule_weekdays),
@@ -639,6 +647,8 @@ def build_router(
                     source_folders=folders,
                     description=body.description,
                     recursive=body.recursive,
+                    exclude_keywords=body.exclude_keywords,
+                    include_keywords=body.include_keywords,
                     schedule_enabled=body.schedule_enabled,
                     schedule_times=body.schedule_times,
                     schedule_weekdays=body.schedule_weekdays,

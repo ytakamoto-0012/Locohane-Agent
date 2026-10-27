@@ -183,8 +183,67 @@ class _Subdirectory:
     link_target: str | None = None
 
 
-def _read_directory(directory: Path, recursive: bool, allowed: set[str]) -> tuple[list[tuple[Path, os.stat_result]], list[_Subdirectory]]:
-    """directory 直下の取り込み対象のファイルと、たどるサブフォルダを返す（読めなければ空）。"""
+def _keyword_patterns(keywords: Sequence[str]) -> tuple[str, ...]:
+    """取り込み除外・対象キーワードを、_matches_keywords() で比べる形（区切りを / にそろえ、大文字小文字を区別しない）にする。"""
+    return tuple(k.strip().replace("\\", "/").casefold() for k in keywords if k.strip())
+
+
+def _matches_keywords(root: Path, path: Path, is_dir: bool, patterns: tuple[str, ...]) -> bool:
+    """取り込み元フォルダ root より下の path（"/" で始め、フォルダなら "/" で終える）が、キーワードのどれかを含むか。
+
+    フォルダ名・ファイル名もパスの一部なので、名前に含むものも当てはまる。前後に / を付けて比べるため、
+    "/old/" のように書けば名前が old ちょうどのフォルダ（とその中）だけに当てられる。取り込み元フォルダ自身のパスは比べない。
+    "*.xlsx" のように "*." で始まるキーワードは拡張子の指定とし、ファイル名がそれで終わるファイルだけに当てる
+    （フォルダには当てない）。
+    """
+    try:
+        relative = path.relative_to(root).as_posix()
+    except ValueError:
+        relative = path.name
+    text = f"/{relative}/" if is_dir else f"/{relative}"
+    text = text.casefold()
+    for p in patterns:
+        if p.startswith("*."):
+            if not is_dir and text.endswith(p[1:]):
+                return True
+        elif p in text:
+            return True
+    return False
+
+
+@dataclass(frozen=True)
+class _PathFilter:
+    """コレクションの取り込み除外・対象キーワード（_keyword_patterns() の形）による絞り込み。
+
+    除外キーワードに当てはまるフォルダはたどらず、ファイルは取り込まない。対象キーワードがあれば、
+    当てはまるファイルだけを取り込む（中に当てはまるファイルがあり得るため、フォルダは対象キーワードでは絞らない）。
+    両方に当てはまるファイルは取り込まない（除外が優先）。
+    """
+
+    excludes: tuple[str, ...] = ()
+    includes: tuple[str, ...] = ()
+
+    @classmethod
+    def from_keywords(cls, exclude_keywords: Sequence[str] = (), include_keywords: Sequence[str] = ()) -> "_PathFilter":
+        return cls(_keyword_patterns(exclude_keywords), _keyword_patterns(include_keywords))
+
+    def allows_directory(self, root: Path, path: Path) -> bool:
+        return not (self.excludes and _matches_keywords(root, path, True, self.excludes))
+
+    def allows_file(self, root: Path, path: Path) -> bool:
+        if self.excludes and _matches_keywords(root, path, False, self.excludes):
+            return False
+        return not self.includes or _matches_keywords(root, path, False, self.includes)
+
+
+def _read_directory(
+    directory: Path, recursive: bool, allowed: set[str], root: Path | None = None, path_filter: _PathFilter = _PathFilter()
+) -> tuple[list[tuple[Path, os.stat_result]], list[_Subdirectory]]:
+    """directory 直下の取り込み対象のファイルと、たどるサブフォルダを返す（読めなければ空）。
+
+    root は directory を含む取り込み元フォルダ（path_filter のキーワードは root より下のパスと比べる）。
+    """
+    root = directory if root is None else root
     try:
         entries = list(os.scandir(directory))
     except OSError as e:
@@ -200,14 +259,19 @@ def _read_directory(directory: Path, recursive: bool, allowed: set[str]) -> tupl
         except OSError:
             continue
         if is_dir:
-            if recursive and not _is_hidden(path, st):
+            if recursive and not _is_hidden(path, st) and path_filter.allows_directory(root, path):
                 if _is_link(entry):
                     target = _link_target(path)
                     if target is not None:
                         subdirectories.append(_Subdirectory(path, target))
                 else:
                     subdirectories.append(_Subdirectory(path))
-        elif path.suffix.lower() in allowed and not entry.name.startswith("~$") and not _is_hidden(path, st):
+        elif (
+            path.suffix.lower() in allowed
+            and not entry.name.startswith("~$")
+            and not _is_hidden(path, st)
+            and path_filter.allows_file(root, path)
+        ):
             files.append((path, st))
     return files, subdirectories
 
@@ -278,11 +342,15 @@ def scan_source_files(
     workers: int = 1,
     max_files: int | None = None,
     known: Collection[str] = (),
+    exclude_keywords: Sequence[str] = (),
+    include_keywords: Sequence[str] = (),
 ) -> ScanResult:
     """取り込み対象のファイルとその stat を探す（Office の一時ファイル ~$*.docx 等と、隠しファイル・隠しフォルダ配下は除く）。
 
     folders は取り込み元フォルダ（1つでも複数でもよい。複数ならすべてを走査する）。
     取り込み元フォルダ自身が隠しフォルダでも対象にする（判定は取り込み元より下の名前だけ）。
+    exclude_keywords（取り込み除外キーワード）のどれかを取り込み元フォルダより下のパスに含むフォルダ・ファイルも除き、
+    include_keywords（取り込み対象キーワード）があれば、どれかを含むファイルだけにする（大文字小文字は区別しない。_PathFilter）。
     シンボリックリンク・ジャンクションのフォルダもたどるが、ループ・重複になるものはたどらない（_LinkGuard）。
     拡張子は effective_extensions() で絞る。stat は os.scandir() のもの（Windows ではフォルダを読むときに
     サイズ・更新日時・属性も得られるため、ファイルごとに問い合わせずに済む）。
@@ -295,6 +363,7 @@ def scan_source_files(
     2倍程度のファイルまで。
     """
     allowed = set(effective_extensions(extensions))
+    path_filter = _PathFilter.from_keywords(exclude_keywords, include_keywords)
     roots = _scan_roots(folders, recursive)
     links = _LinkGuard(roots)
     known_files: list[tuple[str, Path, os.stat_result]] = []
@@ -320,21 +389,27 @@ def scan_source_files(
                 heapq.heapreplace(new_files, item)
 
     if workers <= 1:
-        directories = list(reversed(roots))
+        # (読むフォルダ, そのフォルダを含む取り込み元フォルダ)
+        directories = [(root, root) for root in reversed(roots)]
         while directories:
-            found, subdirectories = _read_directory(directories.pop(), recursive, allowed)
+            directory, root = directories.pop()
+            found, subdirectories = _read_directory(directory, recursive, allowed, root, path_filter)
             collect(found)
-            directories.extend(d.path for d in subdirectories if links.allow(d))
+            directories.extend((d.path, root) for d in subdirectories if links.allow(d))
     else:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vector_db_scan") as pool:
-            running = {pool.submit(_read_directory, root, recursive, allowed) for root in roots}
+            # 読んでいるフォルダごとの、そのフォルダを含む取り込み元フォルダ。
+            running = {pool.submit(_read_directory, root, recursive, allowed, root, path_filter): root for root in roots}
             try:
                 while running:
-                    done, running = wait(running, return_when=FIRST_COMPLETED)
+                    done, _pending = wait(running, return_when=FIRST_COMPLETED)
                     for future in done:
+                        root = running.pop(future)
                         found, subdirectories = future.result()
                         collect(found)
-                        running |= {pool.submit(_read_directory, d.path, recursive, allowed) for d in subdirectories if links.allow(d)}
+                        for d in subdirectories:
+                            if links.allow(d):
+                                running[pool.submit(_read_directory, d.path, recursive, allowed, root, path_filter)] = root
             except BaseException:
                 for future in running:
                     future.cancel()
@@ -351,9 +426,16 @@ def scan_source_files(
     return ScanResult(selected, total, found_known)
 
 
-def list_source_files(folders: Path | Sequence[Path], recursive: bool, extensions: tuple[str, ...]) -> list[Path]:
+def list_source_files(
+    folders: Path | Sequence[Path],
+    recursive: bool,
+    extensions: tuple[str, ...],
+    exclude_keywords: Sequence[str] = (),
+    include_keywords: Sequence[str] = (),
+) -> list[Path]:
     """scan_source_files() のファイルのパスだけを返す。"""
-    return [path for path, _st in scan_source_files(folders, recursive, extensions).files]
+    scan = scan_source_files(folders, recursive, extensions, exclude_keywords=exclude_keywords, include_keywords=include_keywords)
+    return [path for path, _st in scan.files]
 
 
 def file_mode(cfg: Config, path: Path) -> str:
@@ -462,6 +544,7 @@ def ingest_collection(
             _ingest(
                 cfg, catalog, store, keywords, name, collection.dim, model, folders, collection.recursive,
                 result, progress, should_stop, embedding_client,
+                exclude_keywords=collection.exclude_keywords, include_keywords=collection.include_keywords,
             )
         finally:
             embedding_client.close()
@@ -1102,9 +1185,10 @@ def _embed_page(cfg: Config, page: PageImage, client, should_stop) -> list[list[
 
 
 def _ingest(
-    cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folders, recursive, result, progress, should_stop, embedding_client
+    cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folders, recursive, result, progress, should_stop, embedding_client,
+    *, exclude_keywords: Sequence[str] = (), include_keywords: Sequence[str] = (),
 ) -> None:
-    """取り込み元のファイルを _Pipeline で処理し、フォルダから消えたファイルを消す。
+    """取り込み元のファイルを _Pipeline で処理し、フォルダから消えたファイル（除外・対象キーワードで外れたものも）を消す。
 
     停止したときは、埋め込みまで終わったファイルだけを記録する（途中のファイルは次回の取り込みで処理する）。
     """
@@ -1113,6 +1197,7 @@ def _ingest(
     scan = scan_source_files(
         folders, recursive, cfg.vector_db_include_extensions,
         workers=cfg.vector_db_scan_workers, max_files=max_files, known=known,
+        exclude_keywords=exclude_keywords, include_keywords=include_keywords,
     )
     files = scan.files
     result.found_files, result.max_files, result.over_limit = scan.total, max_files, scan.over_limit

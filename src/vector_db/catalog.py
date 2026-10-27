@@ -36,7 +36,9 @@ CREATE TABLE IF NOT EXISTS collections (
     last_ingested_at TEXT,
     schedule_enabled INTEGER NOT NULL DEFAULT 0,
     schedule_times TEXT NOT NULL DEFAULT '',
-    schedule_weekdays TEXT NOT NULL DEFAULT ''
+    schedule_weekdays TEXT NOT NULL DEFAULT '',
+    exclude_keywords TEXT NOT NULL DEFAULT '',
+    include_keywords TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS files (
     collection TEXT NOT NULL,
@@ -82,6 +84,12 @@ class Collection:
     schedule_enabled: bool = False
     schedule_times: tuple[str, ...] = ()
     schedule_weekdays: tuple[int, ...] = ()
+    # 取り込み除外キーワード（取り込み元フォルダより下のパスに含むフォルダ・ファイルは取り込まない。
+    # catalog.sqlite の exclude_keywords 列に改行区切りで持つ）。
+    exclude_keywords: tuple[str, ...] = ()
+    # 取り込み対象キーワード（あれば、取り込み元フォルダより下のパスにどれかを含むファイルだけを取り込む。
+    # catalog.sqlite の include_keywords 列に改行区切りで持つ）。
+    include_keywords: tuple[str, ...] = ()
 
     @property
     def source_folder(self) -> str:
@@ -138,6 +146,23 @@ def normalize_source_folders(folders: str | list[str] | tuple[str, ...]) -> tupl
             result.append(value)
     if not result:
         raise CatalogError("Specify the source folder.")
+    return tuple(result)
+
+
+def normalize_path_keywords(keywords: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """取り込み除外・対象キーワード（文字列なら改行区切り）の前後の空白・空行と、大文字小文字だけ違う重複を除く（順序は保つ。空でもよい）。"""
+    if isinstance(keywords, str):
+        keywords = keywords.splitlines()
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in keywords:
+        value = raw.strip()
+        if not value:
+            continue
+        key = value.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(value)
     return tuple(result)
 
 
@@ -198,6 +223,10 @@ class Catalog(SqliteBatchMixin):
             ("schedule_enabled", "INTEGER NOT NULL DEFAULT 0"),
             ("schedule_times", "TEXT NOT NULL DEFAULT ''"),
             ("schedule_weekdays", "TEXT NOT NULL DEFAULT ''"),
+            # 取り込み除外キーワードの列（既存のコレクションは除外なし）。
+            ("exclude_keywords", "TEXT NOT NULL DEFAULT ''"),
+            # 取り込み対象キーワードの列（既存のコレクションは絞り込みなし）。
+            ("include_keywords", "TEXT NOT NULL DEFAULT ''"),
         ):
             if column not in columns:
                 with self._conn:
@@ -231,18 +260,27 @@ class Catalog(SqliteBatchMixin):
         raise CatalogError(f"Collection {name} does not exist.")
 
     def create(
-        self, name: str, source_folders: str | list[str] | tuple[str, ...], description: str = "", recursive: bool = True
+        self,
+        name: str,
+        source_folders: str | list[str] | tuple[str, ...],
+        description: str = "",
+        recursive: bool = True,
+        exclude_keywords: str | list[str] | tuple[str, ...] = (),
+        include_keywords: str | list[str] | tuple[str, ...] = (),
     ) -> Collection:
-        """source_folders は取り込み元フォルダのリスト（文字列なら改行区切りで複数指定できる）。"""
+        """source_folders は取り込み元フォルダのリスト（文字列なら改行区切りで複数指定できる）。exclude_keywords・include_keywords も同じ。"""
         validate_name(name)
         folders = normalize_source_folders(source_folders)
+        excludes = normalize_path_keywords(exclude_keywords)
+        includes = normalize_path_keywords(include_keywords)
         if self._reference_row(name) is not None:
             raise CatalogError(f"A reference named {name} already exists.")
         try:
             with self._conn:
                 self._conn.execute(
-                    "INSERT INTO collections (name, description, source_folder, recursive, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (name, description.strip(), "\n".join(folders), int(recursive), _now()),
+                    "INSERT INTO collections (name, description, source_folder, recursive, exclude_keywords, include_keywords, created_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (name, description.strip(), "\n".join(folders), int(recursive), "\n".join(excludes), "\n".join(includes), _now()),
                 )
         except sqlite3.IntegrityError as e:
             raise CatalogError(f"Collection {name} already exists.") from e
@@ -258,6 +296,8 @@ class Catalog(SqliteBatchMixin):
         schedule_enabled: bool | None = None,
         schedule_times: list[str] | tuple[str, ...] | None = None,
         schedule_weekdays: list[int] | tuple[int, ...] | None = None,
+        exclude_keywords: str | list[str] | tuple[str, ...] | None = None,
+        include_keywords: str | list[str] | tuple[str, ...] | None = None,
     ) -> Collection:
         current = self.get(name)
         times = normalize_schedule_times(schedule_times) if schedule_times is not None else current.schedule_times
@@ -278,6 +318,12 @@ class Catalog(SqliteBatchMixin):
                 self._conn.execute("UPDATE collections SET description = ? WHERE name = ?", (description.strip(), name))
             if recursive is not None:
                 self._conn.execute("UPDATE collections SET recursive = ? WHERE name = ?", (int(recursive), name))
+            if exclude_keywords is not None:
+                excludes = normalize_path_keywords(exclude_keywords)
+                self._conn.execute("UPDATE collections SET exclude_keywords = ? WHERE name = ?", ("\n".join(excludes), name))
+            if include_keywords is not None:
+                includes = normalize_path_keywords(include_keywords)
+                self._conn.execute("UPDATE collections SET include_keywords = ? WHERE name = ?", ("\n".join(includes), name))
         return self.get(name)
 
     def delete(self, name: str) -> None:
@@ -387,6 +433,8 @@ def _to_collection(row: sqlite3.Row) -> Collection:
         schedule_enabled=bool(row["schedule_enabled"]),
         schedule_times=tuple(t for t in row["schedule_times"].split(",") if t),
         schedule_weekdays=tuple(int(d) for d in row["schedule_weekdays"].split(",") if d),
+        exclude_keywords=tuple(k for k in row["exclude_keywords"].split("\n") if k),
+        include_keywords=tuple(k for k in row["include_keywords"].split("\n") if k),
     )
 
 
@@ -406,6 +454,7 @@ __all__ = [
     "FileRecord",
     "Reference",
     "catalog_exists",
+    "normalize_path_keywords",
     "normalize_schedule_times",
     "normalize_schedule_weekdays",
     "normalize_source_folders",

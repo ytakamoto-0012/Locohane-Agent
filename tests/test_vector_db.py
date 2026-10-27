@@ -1117,6 +1117,63 @@ def test_scan_skips_source_folder_inside_another_when_recursive(tmp_path):
     assert ingest.relative_path_text(ingest.source_root([tmp_path, tmp_path / "sub"], tmp_path / "sub" / "b.md"), tmp_path / "sub" / "b.md") == "b.md"
 
 
+def test_scan_skips_paths_matching_exclude_keywords(tmp_path):
+    for rel in ("a.md", "Old/b.md", "sub/old_c.md", "sub/d.md", "sub/older/e.md", "x/old/f.md"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("x", encoding="utf-8")
+    for workers in (1, 4):
+        # 大文字小文字は区別せず、フォルダ名・ファイル名・途中のパスのどこに含んでも除外する。
+        files = [p for p, _ in ingest.scan_source_files(tmp_path, True, (".md",), workers=workers, exclude_keywords=["OLD"]).files]
+        assert files == [tmp_path / "a.md", tmp_path / "sub" / "d.md"]
+    # / で囲むと名前がちょうどそれのフォルダだけ。区切りは \ でもよい。
+    files = ingest.list_source_files(tmp_path, True, (".md",), exclude_keywords=["/old/", "sub\\d"])
+    assert sorted(files) == sorted([tmp_path / "a.md", tmp_path / "sub" / "old_c.md", tmp_path / "sub" / "older" / "e.md"])
+    # "*." で始まれば拡張子の指定（ファイル名の末尾だけ。名前の途中・フォルダには当てない）。
+    for rel in ("g.MD", "h.md.txt", "y.md/i.txt"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("x", encoding="utf-8")
+    files = ingest.list_source_files(tmp_path, True, (".md", ".txt"), exclude_keywords=["*.md"])
+    assert sorted(files) == sorted([tmp_path / "h.md.txt", tmp_path / "y.md" / "i.txt"])
+    # 取り込み元フォルダ自身のパスは比べない。
+    assert len(ingest.list_source_files(tmp_path / "x", True, (".md",), exclude_keywords=[tmp_path.name])) == 1
+
+
+def test_scan_keeps_only_paths_matching_include_keywords(tmp_path):
+    for rel in ("a.md", "b.txt", "manual/c.md", "x/Manual/y/d.txt", "old/manual_e.md"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text("x", encoding="utf-8")
+    for workers in (1, 4):
+        # どれかに当てはまるファイルだけ（フォルダ名でもよい。フォルダは絞らずにたどる）。除外が優先。
+        files = [
+            p for p, _ in ingest.scan_source_files(
+                tmp_path, True, (".md", ".txt"), workers=workers, include_keywords=["MANUAL", "*.txt"], exclude_keywords=["/old/"]
+            ).files
+        ]
+        assert files == [tmp_path / "b.txt", tmp_path / "manual" / "c.md", tmp_path / "x" / "Manual" / "y" / "d.txt"]
+    files = ingest.list_source_files(tmp_path, True, (".md", ".txt"), include_keywords=["*.md"])
+    assert sorted(files) == sorted([tmp_path / "a.md", tmp_path / "manual" / "c.md", tmp_path / "old" / "manual_e.md"])
+
+
+def test_ingest_removes_files_matching_exclude_keywords(env):
+    cfg, kwargs = env["cfg"], env["kwargs"]
+    assert ingest.ingest_collection(cfg, "docs", **kwargs).added == 2
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        # 空行と大文字小文字だけ違う重複は除く。
+        assert catalog.update("docs", exclude_keywords=" weld\n\nWELD").exclude_keywords == ("weld",)
+    # 除外キーワードに当てはまるようになった取り込み済みのファイルは消える。
+    assert ingest.ingest_collection(cfg, "docs", **kwargs).removed == 1
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        assert list(catalog.files("docs")) == [str(env["docs"] / "sub" / "room.txt")]
+        catalog.update("docs", exclude_keywords=[])
+    assert ingest.ingest_collection(cfg, "docs", **kwargs).added == 1
+    # 対象キーワードに当てはまらなくなったファイルも消える。
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        assert catalog.update("docs", include_keywords=["*.txt"]).include_keywords == ("*.txt",)
+    assert ingest.ingest_collection(cfg, "docs", **kwargs).removed == 1
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        assert list(catalog.files("docs")) == [str(env["docs"] / "sub" / "room.txt")]
+
+
 def test_search_filters_by_collection_score_and_top_k(env, tmp_path):
     cfg, kwargs = env["cfg"], env["kwargs"]
     ingest.ingest_collection(cfg, "docs", **kwargs)

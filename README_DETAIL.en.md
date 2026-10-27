@@ -1273,6 +1273,18 @@ Operate it from the "Knowledge" button on the instance card (or the "Knowledge" 
    is unreachable, etc.), ingestion does not start and reports an error, so the documents of that folder are not deleted.
    Files and folders whose names start with `.` or that have Windows' hidden attribute (`.git`, etc.) are
    not ingested (the source folder itself may be hidden).
+   With "Exclusion keywords" (one per line; saved newline-separated in the `exclude_keywords` column of `catalog.sqlite`), anything whose
+   path below the source folder (including folder and file names) contains a keyword is not ingested (case-insensitive; a matching folder
+   is not traversed). Surround a keyword with `/` like `/old/` to exclude only folders named exactly `old` (`\` also works as the separator).
+   A keyword starting with `*.` like `*.xlsx` is an extension: only files whose names end with it are excluded (not names merely
+   containing `.xlsx`, nor folders).
+   The path of the source folder itself is not compared. After adding a keyword, already ingested files that now match it are removed
+   ("deleted") at the next ingestion.
+   Conversely, with "Target keywords" (one per line; the `include_keywords` column), only files whose path below the source folder
+   contains one of them are ingested (all if empty). They are written like the exclusion keywords (case-insensitive, `/` around a name,
+   `*.pdf` for an extension). They apply to files only (a folder name containing one makes the files inside match; folders are still
+   traversed). Files that also match an exclusion keyword are not ingested (exclusion wins). Already ingested files that are no longer
+   targeted are also removed at the next ingestion.
 2. Pressing "Ingest (differential)" starts ingestion inside the admin tool's process, and the progress (number of files processed, file being processed) and
    results (counts of added, updated, unchanged, deleted and failed, with failure reasons) appear in the table. During ingestion it can be interrupted with "Stop"
    (unprocessed files are processed in the next ingestion and are not treated as deleted). During ingestion, the instance list card also shows
