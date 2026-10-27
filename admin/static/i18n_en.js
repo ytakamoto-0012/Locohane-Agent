@@ -116,6 +116,7 @@ const I18N_EN = {
   "設定エラー": "Configuration error",
   "起動中…": "Starting…",
   "停止中…": "Stopping…",
+  "削除中…": "Deleting…",
   "再起動中…": "Restarting…",
   "スキル研究室の実行役（チャット画面なし）": "Runs Skill Lab jobs (no chat screen)",
   "{0} を停止します。生成中の処理は中断されます。よろしいですか？": "Stop {0}? Any generation in progress will be interrupted.",

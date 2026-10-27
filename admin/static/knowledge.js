@@ -221,20 +221,26 @@ function knowledgeActions(container, name, c, enabled) {
     buttons.push(ingestBtn, rebuildBtn);
     buttons.push(el("button", { text: _t("編集"), onclick: () => openEditCollectionForm(container, name, c) }));
     buttons.push(el("button", { text: _t("コピー"), onclick: () => openCopyCollectionDialog(container, name, c) }));
-    buttons.push(
-      el("button", {
-        class: "btn-danger",
-        text: _t("削除"),
-        onclick: async () => {
-          let message = _t(`コレクション {0} と取り込み済みのベクターを削除します（取り込み元の文書は消えません）。よろしいですか？`, c.name);
-          if (c.referenced_by && c.referenced_by.length) {
-            message += "\n" + _t(`このコレクションは {0} から参照されています（削除すると参照している側では検索できなくなります）。`, c.referenced_by.join(_t("、")));
-          }
-          if (!confirm(message)) return;
-          if (await knowledgeAction(() => api(knowledgePath(name, path), { method: "DELETE" }))) renderKnowledgePanel(container, name);
-        },
-      })
-    );
+    // 削除はベクターの削除に時間がかかることがあるため、停止と同じく押したらその場で「削除中…」にして押せなくする。
+    const deleteBtn = el("button", {
+      class: "btn-danger",
+      text: _t("削除"),
+      onclick: async () => {
+        let message = _t(`コレクション {0} と取り込み済みのベクターを削除します（取り込み元の文書は消えません）。よろしいですか？`, c.name);
+        if (c.referenced_by && c.referenced_by.length) {
+          message += "\n" + _t(`このコレクションは {0} から参照されています（削除すると参照している側では検索できなくなります）。`, c.referenced_by.join(_t("、")));
+        }
+        if (!confirm(message)) return;
+        deleteBtn.disabled = true;
+        deleteBtn.textContent = _t("削除中…");
+        if (await knowledgeAction(() => api(knowledgePath(name, path), { method: "DELETE" }))) renderKnowledgePanel(container, name);
+        else {
+          deleteBtn.disabled = false;
+          deleteBtn.textContent = _t("削除");
+        }
+      },
+    });
+    buttons.push(deleteBtn);
   }
   return el("div", { class: "inline-actions" }, buttons);
 }
