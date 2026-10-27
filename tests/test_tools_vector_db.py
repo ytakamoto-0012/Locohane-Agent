@@ -112,8 +112,10 @@ def test_tools_are_registered_for_main_and_subagents():
     for agent in ("explore", "worker", "verifier"):
         resolved = {t.name for t in tools._resolve_agent_types([by_name[agent]])[agent].tools}
         assert {"search_documents", "search_document_paths", "list_document_collections"} <= resolved, agent
+    # メインエージェントには一覧だけを許可する（検索結果で会話履歴が膨らむため、検索はサブエージェントに任せる）
     allowed = {entry for entry, _ in cfg.main_agent_tool_guard_allow_entries}
-    assert {"search_documents", "search_document_paths", "list_document_collections"} <= allowed
+    assert "list_document_collections" in allowed
+    assert not {"search_documents", "search_document_paths"} & allowed
 
 
 def test_search_documents_shows_image_matches(env, monkeypatch, tmp_path):

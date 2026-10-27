@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-10-28
+
 ### 追加
 
 - 設定ダッシュボードで、トークン制御系の閾値（`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・
@@ -19,6 +21,15 @@
   `[graph] token_guard_soft_threshold` を基準とした相対比で自動入力できるようにしました。比率は `config.ini` の
   新しいセクション `[token_ratio]` で設定し、基準値を変えると「基準値×比率」が各閾値へ入ります。
   「トークン制御」プリセットには「比率で再計算」ボタンも出ます。
+
+### 変更
+
+- `[main_agent_tool_guard] allow_entries` の既定から、`search_documents`・`search_document_paths` と
+  `excel-knowledge` スキルを外しました（メインエージェントが文書検索を何度も呼ぶと会話履歴が膨らむため）。
+
+### 削除
+
+- `excel-vba-knowledge` スキルを削除しました。
 
 ### 修正
 
@@ -425,7 +436,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.0...v0.4.1
