@@ -1204,8 +1204,11 @@ function toPyLiteral(v) {
 }
 
 // config.ini と同じ「1要素1行・末尾カンマ・閉じ括弧はインデント付き」の形で書き出す。
+// 空リストは空文字にする。[llm].sub_url のように「値が空なら未指定扱い」のキーは
+// "[]" だと空リストの検証エラーになり保存できないため（空文字はどのリスト値でも
+// 空リストと同じに解釈される）。
 function serializePyList(arr) {
-  if (arr.length === 0) return "[]";
+  if (arr.length === 0) return "";
   return "[\n" + arr.map((x) => `    ${toPyLiteral(x)},\n`).join("") + "    ]";
 }
 
