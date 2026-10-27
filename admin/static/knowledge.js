@@ -222,6 +222,7 @@ function knowledgeActions(container, name, c, enabled) {
     buttons.push(el("button", { text: _t("編集"), onclick: () => openEditCollectionForm(container, name, c) }));
     buttons.push(el("button", { text: _t("コピー"), onclick: () => openCopyCollectionDialog(container, name, c) }));
     // 削除はベクターの削除に時間がかかることがあるため、停止と同じく押したらその場で「削除中…」にして押せなくする。
+    // 削除中に取り込み・編集・コピーが走らないよう、同じ行のボタンもすべて押せなくする（失敗したら元の状態に戻す）。
     const deleteBtn = el("button", {
       class: "btn-danger",
       text: _t("削除"),
@@ -231,11 +232,12 @@ function knowledgeActions(container, name, c, enabled) {
           message += "\n" + _t(`このコレクションは {0} から参照されています（削除すると参照している側では検索できなくなります）。`, c.referenced_by.join(_t("、")));
         }
         if (!confirm(message)) return;
-        deleteBtn.disabled = true;
+        const wasDisabled = buttons.map((b) => b.disabled);
+        buttons.forEach((b) => (b.disabled = true));
         deleteBtn.textContent = _t("削除中…");
         if (await knowledgeAction(() => api(knowledgePath(name, path), { method: "DELETE" }))) renderKnowledgePanel(container, name);
         else {
-          deleteBtn.disabled = false;
+          buttons.forEach((b, i) => (b.disabled = wasDisabled[i]));
           deleteBtn.textContent = _t("削除");
         }
       },
