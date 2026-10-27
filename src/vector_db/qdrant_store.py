@@ -52,6 +52,12 @@ QDRANT_PRESETS: dict[str, QdrantPreset] = {
     "2m": QdrantPreset(m=16, ef_construct=200, hnsw_ef=160, vectors_on_disk=True, segments=6, oversampling=2.0),
     "3m": QdrantPreset(m=24, ef_construct=256, hnsw_ef=200, vectors_on_disk=True, segments=8, oversampling=2.0),
     "4m": QdrantPreset(m=32, ef_construct=256, hnsw_ef=256, vectors_on_disk=True, segments=8, oversampling=2.5),
+    "5m": QdrantPreset(m=32, ef_construct=320, hnsw_ef=288, vectors_on_disk=True, segments=10, oversampling=2.5),
+    "6m": QdrantPreset(m=40, ef_construct=320, hnsw_ef=320, vectors_on_disk=True, segments=10, oversampling=2.5),
+    "7m": QdrantPreset(m=40, ef_construct=384, hnsw_ef=352, vectors_on_disk=True, segments=12, oversampling=3.0),
+    "8m": QdrantPreset(m=48, ef_construct=384, hnsw_ef=384, vectors_on_disk=True, segments=12, oversampling=3.0),
+    "9m": QdrantPreset(m=48, ef_construct=448, hnsw_ef=416, vectors_on_disk=True, segments=16, oversampling=3.0),
+    "10m": QdrantPreset(m=64, ef_construct=512, hnsw_ef=448, vectors_on_disk=True, segments=16, oversampling=3.0),
 }
 _SCALAR_QUANTIZATION = {"scalar": {"type": "int8", "quantile": 0.99, "always_ram": True}}
 

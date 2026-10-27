@@ -28,6 +28,8 @@
   画像として埋め込むようにしました（`[vector_db] embedded_images`、既定 true）。Office は起動せず、ファイルの中の画像をそのまま読みます。
   検索結果の出典は `Slide 3 image (ppt/media/image2.png)`・`Sheet: 集計 C5 image (xl/media/image1.png)` のような位置で、抜粋には
   代替テキストと周りの文字が入ります。幅か高さが `[vector_db] embedded_image_min_px`（既定 64px）より小さい画像（アイコン等）は除きます。
+- `[vector_db] qdrant_preset` に `5m`〜`10m`（〜500万〜1000万件向け）を追加しました。件数が増えるほど HNSW の `m`・`ef_construct`・
+  検索時の `hnsw_ef`・セグメント数・再採点の oversampling を大きくします（中身は README_DETAIL.md「Qdrant を使う」の表を参照）。
 - ナレッジの取り込みで、Office ファイルの画像の代替テキストを本文に入れるようにしました（Word は `[Image: …]`、PowerPoint は `[Image] …`、
   Excel は置かれたセルの行に `[Image C5] …`）。`image_input` に関係なく入ります。
 

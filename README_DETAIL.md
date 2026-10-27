@@ -1102,7 +1102,7 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   保存、サーバー不要、`src/vector_db/sqlite_vec_store.py`）か `qdrant`（Qdrant サーバー、`src/vector_db/qdrant_store.py`）。
   対応できるチャンク件数の目安（インスタンス内の合計、1024 次元の bge-m3 の場合）は、sqlite-vec が **〜10万件で快適・
   〜30万件が実用の上限**（索引を持たず検索のたびに全件と比べるため、30万件で検索1回が1秒前後）、Qdrant が
-  `qdrant_preset = none` で **〜100万件**、`1m`〜`4m` で **100万〜400万件**（「Qdrant を使う」参照）。チャンクは
+  `qdrant_preset = none` で **〜100万件**、`1m`〜`10m` で **100万〜1000万件**（「Qdrant を使う」参照）。チャンクは
   `chunk_size = 800` なら文字の詰まった A4 1ページあたり 1〜2件で、`image_input = true` のページ画像は1ページ1件が、ファイルパス（`search_document_paths` 用）は1ファイル1件が別に加わる。
   どちらもコサイン類似度で比べる。本文のチャンクは保存先によらず、同じフォルダの `keywords.sqlite`（SQLite FTS5）にも
   キーワード検索用に入れる（`src/vector_db/keyword_index.py`）。
@@ -1425,7 +1425,7 @@ python -m src.vector_db.ingest --instance default --collection manuals --rebuild
   距離関数の選び方は「埋め込みサーバーの準備と設定」を参照。
 - `[vector_db] qdrant_preset` で、想定するチャンク件数（1コレクションの本文または画像）の規模に合わせたコレクションの設定を選べる
   （中身は `src/vector_db/qdrant_store.py` の `QDRANT_PRESETS`）。既定の `none` は何も指定しない（Qdrant の既定。ベクターを
-  すべて RAM に置く）。`1m`〜`4m` はどれもベクターを int8 にスカラー量子化した複製を RAM に置いて探し、上位の候補を元の
+  すべて RAM に置く）。`1m`〜`10m` はどれもベクターを int8 にスカラー量子化した複製を RAM に置いて探し、上位の候補を元の
   ベクターで再採点する（チャンク本文の payload はディスク）。RAM の目安は 1024 次元の場合で、次元に比例して増える。
   ディスクは 100万件あたり約 8GB（SSD 推奨）。
 
@@ -1436,10 +1436,16 @@ python -m src.vector_db.ingest --instance default --collection manuals --rebuild
   | `2m` | 〜200万件 | 16 / 200 | 160 | ディスク（mmap） | 6 | 2.0 | 約 3GB＋ディスクキャッシュ（8GB 以上） |
   | `3m` | 〜300万件 | 24 / 256 | 200 | ディスク（mmap） | 8 | 2.0 | 約 4GB＋ディスクキャッシュ（16GB 以上） |
   | `4m` | 〜400万件 | 32 / 256 | 256 | ディスク（mmap） | 8 | 2.5 | 約 5GB＋ディスクキャッシュ（16GB 以上） |
+  | `5m` | 〜500万件 | 32 / 320 | 288 | ディスク（mmap） | 10 | 2.5 | 約 6GB＋ディスクキャッシュ（16GB 以上） |
+  | `6m` | 〜600万件 | 40 / 320 | 320 | ディスク（mmap） | 10 | 2.5 | 約 8GB＋ディスクキャッシュ（32GB 以上） |
+  | `7m` | 〜700万件 | 40 / 384 | 352 | ディスク（mmap） | 12 | 3.0 | 約 9GB＋ディスクキャッシュ（32GB 以上） |
+  | `8m` | 〜800万件 | 48 / 384 | 384 | ディスク（mmap） | 12 | 3.0 | 約 11GB＋ディスクキャッシュ（32GB 以上） |
+  | `9m` | 〜900万件 | 48 / 448 | 416 | ディスク（mmap） | 16 | 3.0 | 約 13GB＋ディスクキャッシュ（32GB 以上） |
+  | `10m` | 〜1000万件 | 64 / 512 | 448 | ディスク（mmap） | 16 | 3.0 | 約 15GB＋ディスクキャッシュ（32GB 以上） |
 
   新しく作るコレクションには作るときに、既存のコレクションには次の「取り込み（差分）」の開始時に（変わったファイルが
   無くても）設定を更新する（`PATCH /collections/{name}`。埋め込み直しは要らず、Qdrant が裏で索引・量子化を作り直す間も
-  検索できる）。`none` に戻しても既存のコレクションの設定は戻らない（戻すには再構築する）。400万件を超える場合は
+  検索できる）。`none` に戻しても既存のコレクションの設定は戻らない（戻すには再構築する）。1000万件を超える場合は
   Qdrant のクラスター（シャーディング）を検討する（Locohane 側の設定は無い）。
 - インスタンスを削除してもデータフォルダの `catalog.sqlite` が消えるだけで、Qdrant 上のコレクションは残る。
   不要なら先にナレッジ画面でコレクションを削除するか、Qdrant 側で `locohane_<インスタンス名>_*` を削除する。
@@ -1653,7 +1659,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `qdrant_url` | `backend = qdrant` 時の Qdrant サーバー URL（例 `http://localhost:6333`）。API キーは `.env` の `QDRANT_API_KEY` | `VECTOR_DB_QDRANT_URL` |
 | `[vector_db]` | `qdrant_collection_prefix` | Qdrant 上のコレクション名の接頭辞（既定 `locohane_${instance}_`）。この接頭辞以外のコレクションには触れない | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
 | `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定30） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
-| `[vector_db]` | `qdrant_preset` | Qdrant のコレクションのチャンク件数の規模別の設定（`none` 既定＝Qdrant の既定 / `1m` / `2m` / `3m` / `4m`＝〜100万〜400万件向け。HNSW・int8 量子化・ベクターのディスク配置・セグメント数・検索時の `hnsw_ef`）。既存のコレクションには次の取り込み時に反映（再構築不要）。「Qdrant を使う」参照 | `VECTOR_DB_QDRANT_PRESET` |
+| `[vector_db]` | `qdrant_preset` | Qdrant のコレクションのチャンク件数の規模別の設定（`none` 既定＝Qdrant の既定 / `1m` / `2m` / … / `10m`＝〜100万〜1000万件向け。HNSW・int8 量子化・ベクターのディスク配置・セグメント数・検索時の `hnsw_ef`）。既存のコレクションには次の取り込み時に反映（再構築不要）。「Qdrant を使う」参照 | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | 埋め込みを計算する接続先（`/v1/embeddings`）。`[llm] main_url` と同じ形式で、全要素同じ `model`・`start`/`end` 指定不可。`enabled = true` のとき必須（`[]` は未設定） | `VECTOR_DB_EMBEDDING_URL` |
 | `[vector_db]` | `embedding_routing_strategy` | `embedding_url` が複数件のときの選び方（`round_robin` / `random` / `priority_failover` 既定。GET /slots の確認はしない）。どの戦略でもエラーが返れば次の接続先へ送り直す（「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
 | `[vector_db]` | `embedding_max_retries` | 取り込みで全接続先がエラーになったとき試し直す回数（既定3）。`0` なら成功するまで無制限。408・429 以外の 4xx だけなら試し直さない | `VECTOR_DB_EMBEDDING_MAX_RETRIES` |

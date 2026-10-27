@@ -780,7 +780,7 @@ DESCRIPTIONS: dict[str, str] = {
         'qdrant     - store in the Qdrant server at qdrant_url below (searches with an HNSW index, so search stays fast as the count grows).\n'
         "Guideline for the number of chunks it can handle: up to 1 million with qdrant_preset = none (Qdrant's default)\n"
         '(all vectors are kept in RAM, so about 4GB of RAM is needed per 1 million at 1024 dimensions),\n'
-        'and 1 to 4 million with qdrant_preset = 1m-4m. Beyond 4 million, consider a Qdrant cluster (sharding).\n'
+        'and 1 to 10 million with qdrant_preset = 1m-10m. Beyond 10 million, consider a Qdrant cluster (sharding).\n'
         'With chunk_size = 800, the number of chunks is roughly 1-2 per densely written A4 page. Page images with image_input = true\n'
         'go into a separate collection (<name>.image), one per page, so add those to the count too.'
     ),
@@ -813,7 +813,7 @@ DESCRIPTIONS: dict[str, str] = {
         'Timeout (seconds) per request to Qdrant.'
     ),
     'vector_db.qdrant_preset': (
-        'With backend = qdrant, Qdrant collection settings matched to the expected scale of the number of chunks (body text or images of one collection). One of these 5 values:\n'
+        'With backend = qdrant, Qdrant collection settings matched to the expected scale of the number of chunks (body text or images of one collection). One of these 11 values:\n'
         "none - specify nothing (Qdrant's default; default value). All vectors are kept in RAM. For up to 1 million.\n"
         '1m   - for up to 1 million. HNSW m=16, ef_construct=128, hnsw_ef=128 when searching. Vectors in RAM.\n'
         'RAM guideline about 6GB (server 8GB or more).\n'
@@ -823,8 +823,20 @@ DESCRIPTIONS: dict[str, str] = {
         'RAM guideline about 4GB + disk cache (server 16GB or more).\n'
         '4m   - for up to 4 million. m=32, ef_construct=256, hnsw_ef=256. Original vectors on disk.\n'
         'RAM guideline about 5GB + disk cache (server 16GB or more).\n'
-        'All of 1m-4m search a copy of the vectors scalar-quantized to int8 kept in RAM, and rescore the top candidates with the original vectors\n'
-        '(oversampling 1.5-2.5x). Chunk text (payload) is kept on disk. The number of segments is 1m=4, 2m=6, 3m/4m=8.\n'
+        '5m   - for up to 5 million. m=32, ef_construct=320, hnsw_ef=288. Original vectors on disk.\n'
+        'RAM guideline about 6GB + disk cache (server 16GB or more).\n'
+        '6m   - for up to 6 million. m=40, ef_construct=320, hnsw_ef=320. Original vectors on disk.\n'
+        'RAM guideline about 8GB + disk cache (server 32GB or more).\n'
+        '7m   - for up to 7 million. m=40, ef_construct=384, hnsw_ef=352. Original vectors on disk.\n'
+        'RAM guideline about 9GB + disk cache (server 32GB or more).\n'
+        '8m   - for up to 8 million. m=48, ef_construct=384, hnsw_ef=384. Original vectors on disk.\n'
+        'RAM guideline about 11GB + disk cache (server 32GB or more).\n'
+        '9m   - for up to 9 million. m=48, ef_construct=448, hnsw_ef=416. Original vectors on disk.\n'
+        'RAM guideline about 13GB + disk cache (server 32GB or more).\n'
+        '10m  - for up to 10 million. m=64, ef_construct=512, hnsw_ef=448. Original vectors on disk.\n'
+        'RAM guideline about 15GB + disk cache (server 32GB or more).\n'
+        'All of 1m-10m search a copy of the vectors scalar-quantized to int8 kept in RAM, and rescore the top candidates with the original vectors\n'
+        '(oversampling 1.5-3.0x). Chunk text (payload) is kept on disk. The number of segments is 1m=4, 2m=6, 3m/4m=8, 5m/6m=10, 7m/8m=12, 9m/10m=16.\n'
         'The RAM guidelines are for 1024 dimensions (bge-m3) and grow in proportion to the dimensions (about double for 2048). Disk is about 8GB per 1 million (SSD recommended).\n'
         'Existing collections are updated to the new settings when the next "ingest (differential)" starts (no re-embedding needed; Qdrant rebuilds the index and quantization\n'
         'in the background, and search keeps working meanwhile). Going back to none does not revert the settings of existing collections (rebuild to revert).'

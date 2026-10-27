@@ -1087,7 +1087,7 @@ Documents are ingested not by users but by administrators from the settings dash
   no server needed, `src/vector_db/sqlite_vec_store.py`) or `qdrant` (a Qdrant server, `src/vector_db/qdrant_store.py`).
   Guidelines for the number of chunks they can handle (total within the instance, for the 1024-dimensional bge-m3): sqlite-vec is **comfortable up to 100,000,
   with 300,000 as the practical limit** (it has no index and compares against everything on every search, so with 300,000 one search takes about 1 second), and Qdrant is
-  **up to 1 million** with `qdrant_preset = none`, and **1 to 4 million** with `1m`-`4m` (see "Using Qdrant"). With
+  **up to 1 million** with `qdrant_preset = none`, and **1 to 10 million** with `1m`-`10m` (see "Using Qdrant"). With
   `chunk_size = 800`, chunks are roughly 1-2 per densely written A4 page; page images with `image_input = true` add one per page, and file paths (for `search_document_paths`) add one per file separately.
   Both compare by cosine similarity. Regardless of the storage, text chunks are also put in `keywords.sqlite` (SQLite FTS5) in the same folder
   for keyword search (`src/vector_db/keyword_index.py`).
@@ -1412,7 +1412,7 @@ With `[vector_db] backend = qdrant` and `qdrant_url = http://localhost:6333`, ve
   see "Preparing and configuring the embedding server".
 - `[vector_db] qdrant_preset` chooses collection settings matched to the expected scale of the number of chunks (body text or images of one collection)
   (the contents are `QDRANT_PRESETS` in `src/vector_db/qdrant_store.py`). The default `none` specifies nothing (Qdrant's default; all vectors
-  are kept in RAM). All of `1m`-`4m` search a copy of the vectors scalar-quantized to int8 kept in RAM, and rescore the top candidates with the original
+  are kept in RAM). All of `1m`-`10m` search a copy of the vectors scalar-quantized to int8 kept in RAM, and rescore the top candidates with the original
   vectors (the chunk text payload is on disk). The RAM guidelines are for 1024 dimensions and grow in proportion to the dimensions.
   Disk is about 8GB per 1 million (SSD recommended).
 
@@ -1423,10 +1423,16 @@ With `[vector_db] backend = qdrant` and `qdrant_url = http://localhost:6333`, ve
   | `2m` | up to 2M | 16 / 200 | 160 | Disk (mmap) | 6 | 2.0 | about 3GB + disk cache (8GB or more) |
   | `3m` | up to 3M | 24 / 256 | 200 | Disk (mmap) | 8 | 2.0 | about 4GB + disk cache (16GB or more) |
   | `4m` | up to 4M | 32 / 256 | 256 | Disk (mmap) | 8 | 2.5 | about 5GB + disk cache (16GB or more) |
+  | `5m` | up to 5M | 32 / 320 | 288 | Disk (mmap) | 10 | 2.5 | about 6GB + disk cache (16GB or more) |
+  | `6m` | up to 6M | 40 / 320 | 320 | Disk (mmap) | 10 | 2.5 | about 8GB + disk cache (32GB or more) |
+  | `7m` | up to 7M | 40 / 384 | 352 | Disk (mmap) | 12 | 3.0 | about 9GB + disk cache (32GB or more) |
+  | `8m` | up to 8M | 48 / 384 | 384 | Disk (mmap) | 12 | 3.0 | about 11GB + disk cache (32GB or more) |
+  | `9m` | up to 9M | 48 / 448 | 416 | Disk (mmap) | 16 | 3.0 | about 13GB + disk cache (32GB or more) |
+  | `10m` | up to 10M | 64 / 512 | 448 | Disk (mmap) | 16 | 3.0 | about 15GB + disk cache (32GB or more) |
 
   New collections get the settings when created, and existing collections get them updated when the next "Ingest (differential)" starts (even if
   no files changed) (`PATCH /collections/{name}`; no re-embedding needed, and search keeps working while Qdrant rebuilds the index and quantization in the background).
-  Going back to `none` does not revert the settings of existing collections (rebuild to revert). Beyond 4 million,
+  Going back to `none` does not revert the settings of existing collections (rebuild to revert). Beyond 10 million,
   consider a Qdrant cluster (sharding) (there are no settings on the Locohane side).
 - Deleting an instance only removes `catalog.sqlite` in its data folder; the collections on Qdrant remain.
   If unneeded, delete the collections on the Knowledge screen first, or delete `locohane_<instance name>_*` on the Qdrant side.
@@ -1642,7 +1648,7 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[vector_db]` | `qdrant_url` | URL of the Qdrant server with `backend = qdrant` (e.g. `http://localhost:6333`). The API key is `QDRANT_API_KEY` in `.env` | `VECTOR_DB_QDRANT_URL` |
 | `[vector_db]` | `qdrant_collection_prefix` | Prefix of collection names on Qdrant (default `locohane_${instance}_`). Collections without this prefix are not touched | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
 | `[vector_db]` | `qdrant_timeout_seconds` | Timeout in seconds per request to Qdrant (default 30) | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
-| `[vector_db]` | `qdrant_preset` | Settings of Qdrant collections by scale of chunk count (`none` default = Qdrant's default / `1m` / `2m` / `3m` / `4m` = for up to 1-4 million. HNSW, int8 quantization, putting vectors on disk, number of segments, `hnsw_ef` when searching). Applied to existing collections on the next ingestion (no rebuild needed). See "Using Qdrant" | `VECTOR_DB_QDRANT_PRESET` |
+| `[vector_db]` | `qdrant_preset` | Settings of Qdrant collections by scale of chunk count (`none` default = Qdrant's default / `1m` / `2m` / ... / `10m` = for up to 1-10 million. HNSW, int8 quantization, putting vectors on disk, number of segments, `hnsw_ef` when searching). Applied to existing collections on the next ingestion (no rebuild needed). See "Using Qdrant" | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | Endpoints that compute embeddings (`/v1/embeddings`). Same format as `[llm] main_url`; all elements must have the same `model`, and `start`/`end` cannot be specified. Required when `enabled = true` (`[]` means not set) | `VECTOR_DB_EMBEDDING_URL` |
 | `[vector_db]` | `embedding_routing_strategy` | How to choose when `embedding_url` has several entries (`round_robin` / `random` / `priority_failover` default; no check with GET /slots). With any strategy, an error makes it resend to the next endpoint (see "Preparing and configuring the embedding server") | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
 | `[vector_db]` | `embedding_max_retries` | Number of retries when all endpoints error during ingestion (default 3). `0` repeats indefinitely until it succeeds. No retry if only 4xx other than 408/429 | `VECTOR_DB_EMBEDDING_MAX_RETRIES` |

@@ -141,8 +141,9 @@ def test_sqlite_vec_rejects_dot(tmp_path):
 def test_qdrant_preset_default_and_validation(tmp_path):
     assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_qdrant_preset == "none"
     assert _load(tmp_path, {"backend": "qdrant", "qdrant_preset": " 3M "}).vector_db_qdrant_preset == "3m"
+    assert _load(tmp_path, {"backend": "qdrant", "qdrant_preset": "10m"}).vector_db_qdrant_preset == "10m"
     with pytest.raises(ValueError, match="qdrant_preset"):
-        _load(tmp_path, {"qdrant_preset": "5m"})
+        _load(tmp_path, {"qdrant_preset": "11m"})
 
 
 def test_admin_catalog_offers_qdrant_preset_choices():

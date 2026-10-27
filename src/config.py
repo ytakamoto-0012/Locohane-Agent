@@ -58,7 +58,7 @@ VECTOR_DB_DISTANCES = ("Cosine", "Euclid", "Dot", "Manhattan")
 VECTOR_DB_SQLITE_VEC_DISTANCES = ("Cosine", "Euclid", "Manhattan")
 # [vector_db].qdrant_preset の選択肢（中身は src/vector_db/qdrant_store.py の QDRANT_PRESETS。
 # admin/ini_catalog.py の _KEY_CHOICES と一致させる）。none は Qdrant の既定のまま。
-VECTOR_DB_QDRANT_PRESETS = ("none", "1m", "2m", "3m", "4m")
+VECTOR_DB_QDRANT_PRESETS = ("none", "1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "10m")
 # [vector_db].embedding_encoding_format の選択肢（/v1/embeddings の encoding_format）。
 VECTOR_DB_EMBEDDING_ENCODING_FORMATS = ("base64", "float")
 

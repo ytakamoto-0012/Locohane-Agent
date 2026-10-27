@@ -741,7 +741,7 @@ def test_qdrant_store_without_preset_keeps_qdrant_defaults():
     assert fake.patches == [] and "params" not in fake.queries[0]
 
 
-@pytest.mark.parametrize("preset", ["1m", "2m", "3m", "4m"])
+@pytest.mark.parametrize("preset", ["1m", "2m", "3m", "4m", "5m", "6m", "7m", "8m", "9m", "10m"])
 def test_qdrant_store_creates_collection_with_preset(preset):
     fake = FakeQdrant()
     store = QdrantStore("http://qdrant:6333", prefix="p_", preset=preset, transport=fake.transport)
