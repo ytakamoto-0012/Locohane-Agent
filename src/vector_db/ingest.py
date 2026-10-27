@@ -23,7 +23,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
-from typing import Callable, Collection
+from typing import Callable, Collection, Sequence
 
 import httpx
 
@@ -215,14 +215,13 @@ def _read_directory(directory: Path, recursive: bool, allowed: set[str]) -> tupl
 class _LinkGuard:
     """シンボリックリンク・ジャンクションのフォルダを、ループ・重複せずにたどるための判定。
 
-    実体が取り込み元フォルダの中（リンクでないフォルダとしていずれたどる）・取り込み元フォルダを含むフォルダ
+    実体がいずれかの取り込み元フォルダの中（リンクでないフォルダとしていずれたどる）・取り込み元フォルダを含むフォルダ
     （たどると取り込み元をもう一度たどる）か、既にたどったリンクの実体と同じなら、たどらない
     （自分の親を指すジャンクション等で同じファイルを何度も取り込まないため）。
     """
 
-    def __init__(self, root: Path):
-        root_target = _link_target(root)
-        self._root = root_target.rstrip("\\/") if root_target else None
+    def __init__(self, roots: list[Path]):
+        self._roots = [t.rstrip("\\/") for t in (_link_target(r) for r in roots) if t]
         self._visited: set[str] = set()
 
     def allow(self, subdirectory: _Subdirectory) -> bool:
@@ -230,10 +229,10 @@ class _LinkGuard:
         if target is None:
             return True
         target = target.rstrip("\\/")
-        if self._root is not None and _is_same_or_inside(target, self._root):
+        if any(_is_same_or_inside(target, root) for root in self._roots):
             logger.info("vector_db ingest: not following a link that points inside the source folder: %s", subdirectory.path)
             return False
-        if self._root is not None and _is_same_or_inside(self._root, target):
+        if any(_is_same_or_inside(root, target) for root in self._roots):
             logger.info("vector_db ingest: not following a link that points to a folder containing the source folder: %s", subdirectory.path)
             return False
         if target in self._visited:
@@ -243,8 +242,36 @@ class _LinkGuard:
         return True
 
 
+def _scan_roots(folders: Path | Sequence[Path], recursive: bool) -> list[Path]:
+    """走査を始めるフォルダ。recursive なら、他の取り込み元フォルダの中にあるフォルダは外す（同じファイルを2回数えないため）。"""
+    roots = [folders] if isinstance(folders, Path) else list(folders)
+    if not recursive:
+        return roots
+    keys = [(_link_target(r) or os.path.normcase(os.path.abspath(r))).rstrip("\\/") for r in roots]
+    result = []
+    for i, root in enumerate(roots):
+        if any(j != i and _is_same_or_inside(keys[i], keys[j]) and (keys[i] != keys[j] or j < i) for j in range(len(roots))):
+            logger.info("vector_db ingest: skipping a source folder inside another source folder: %s", root)
+            continue
+        result.append(root)
+    return result
+
+
+def source_root(folders: Sequence[Path], path: Path) -> Path:
+    """path を含む取り込み元フォルダ（入れ子なら一番内側。どれにも含まれなければ最初のフォルダ）。"""
+    best: Path | None = None
+    for folder in folders:
+        try:
+            path.relative_to(folder)
+        except ValueError:
+            continue
+        if best is None or len(folder.parts) > len(best.parts):
+            best = folder
+    return best if best is not None else folders[0]
+
+
 def scan_source_files(
-    folder: Path,
+    folders: Path | Sequence[Path],
     recursive: bool,
     extensions: tuple[str, ...],
     *,
@@ -254,6 +281,7 @@ def scan_source_files(
 ) -> ScanResult:
     """取り込み対象のファイルとその stat を探す（Office の一時ファイル ~$*.docx 等と、隠しファイル・隠しフォルダ配下は除く）。
 
+    folders は取り込み元フォルダ（1つでも複数でもよい。複数ならすべてを走査する）。
     取り込み元フォルダ自身が隠しフォルダでも対象にする（判定は取り込み元より下の名前だけ）。
     シンボリックリンク・ジャンクションのフォルダもたどるが、ループ・重複になるものはたどらない（_LinkGuard）。
     拡張子は effective_extensions() で絞る。stat は os.scandir() のもの（Windows ではフォルダを読むときに
@@ -267,7 +295,8 @@ def scan_source_files(
     2倍程度のファイルまで。
     """
     allowed = set(effective_extensions(extensions))
-    links = _LinkGuard(folder)
+    roots = _scan_roots(folders, recursive)
+    links = _LinkGuard(roots)
     known_files: list[tuple[str, Path, os.stat_result]] = []
     found_known: set[str] = set()
     # known に無いファイル。max_files があればパス順で先頭の max_files 件だけを残す（ヒープの先頭がパス順で最後のもの）。
@@ -291,14 +320,14 @@ def scan_source_files(
                 heapq.heapreplace(new_files, item)
 
     if workers <= 1:
-        directories = [folder]
+        directories = list(reversed(roots))
         while directories:
             found, subdirectories = _read_directory(directories.pop(), recursive, allowed)
             collect(found)
             directories.extend(d.path for d in subdirectories if links.allow(d))
     else:
         with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vector_db_scan") as pool:
-            running = {pool.submit(_read_directory, folder, recursive, allowed)}
+            running = {pool.submit(_read_directory, root, recursive, allowed) for root in roots}
             try:
                 while running:
                     done, running = wait(running, return_when=FIRST_COMPLETED)
@@ -322,9 +351,9 @@ def scan_source_files(
     return ScanResult(selected, total, found_known)
 
 
-def list_source_files(folder: Path, recursive: bool, extensions: tuple[str, ...]) -> list[Path]:
+def list_source_files(folders: Path | Sequence[Path], recursive: bool, extensions: tuple[str, ...]) -> list[Path]:
     """scan_source_files() のファイルのパスだけを返す。"""
-    return [path for path, _st in scan_source_files(folder, recursive, extensions).files]
+    return [path for path, _st in scan_source_files(folders, recursive, extensions).files]
 
 
 def file_mode(cfg: Config, path: Path) -> str:
@@ -397,9 +426,11 @@ def ingest_collection(
             collection = catalog.get(name)
         except CatalogError as e:
             raise IngestError(str(e)) from e
-        folder = Path(collection.source_folder)
-        if not folder.is_dir():
-            raise IngestError(f"Source folder does not exist: {folder}")
+        folders = [Path(f) for f in collection.source_folders]
+        for folder in folders:
+            # 1つでも見えなければ、そのフォルダのファイルを「消えた」と誤って削除しないよう取り込まない。
+            if not folder.is_dir():
+                raise IngestError(f"Source folder does not exist: {folder}")
         if collection.model and collection.model != model and not rebuild:
             raise IngestError(
                 f"Collection {name} was built with embedding model {collection.model} (current setting: {model}). "
@@ -429,7 +460,7 @@ def ingest_collection(
                 for storage in storage_collection_names(name):
                     store.apply_preset(storage)
             _ingest(
-                cfg, catalog, store, keywords, name, collection.dim, model, folder, collection.recursive,
+                cfg, catalog, store, keywords, name, collection.dim, model, folders, collection.recursive,
                 result, progress, should_stop, embedding_client,
             )
         finally:
@@ -879,8 +910,10 @@ class _Pipeline:
     ファイルを1つずつ準備し直し、1つだけでも落ちるファイルを失敗一覧に載せて続ける（_pool_broken）。
     """
 
-    def __init__(self, cfg: Config, folder: Path, known: dict[str, FileRecord], writer: _Writer, embedding_client, should_stop, progress):
-        self.cfg, self.folder, self.known, self.writer = cfg, folder, known, writer
+    def __init__(
+        self, cfg: Config, folders: list[Path], known: dict[str, FileRecord], writer: _Writer, embedding_client, should_stop, progress
+    ):
+        self.cfg, self.folders, self.known, self.writer = cfg, folders, known, writer
         self.embedding_client, self.should_stop, self.progress = embedding_client, should_stop, progress
         self.options = _LoadOptions.from_config(cfg)
         self.workers = cfg.vector_db_ingest_workers
@@ -1001,9 +1034,10 @@ class _Pipeline:
             if not needs_keywords and _is_unchanged(record, _file_mode(self.options, path), st):
                 # 変わっていないファイルは読まないため、スレッド・子プロセスに渡さずにここで済ませる。
                 mode = _file_mode(self.options, path)
-                self._loaded(_Prepared(path, record, mode, "unchanged", path_text=relative_path_text(self.folder, path)))
+                path_text = relative_path_text(source_root(self.folders, path), path)
+                self._loaded(_Prepared(path, record, mode, "unchanged", path_text=path_text))
                 continue
-            args = (self.options, self.folder, path, st, record, needs_keywords)
+            args = (self.options, source_root(self.folders, path), path, st, record, needs_keywords)
             future = pool.submit(_load, *args) if self.processes else pool.submit(_load_in_thread, *args)
             self.loads[future] = (args, False)
 
@@ -1068,7 +1102,7 @@ def _embed_page(cfg: Config, page: PageImage, client, should_stop) -> list[list[
 
 
 def _ingest(
-    cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folder, recursive, result, progress, should_stop, embedding_client
+    cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folders, recursive, result, progress, should_stop, embedding_client
 ) -> None:
     """取り込み元のファイルを _Pipeline で処理し、フォルダから消えたファイルを消す。
 
@@ -1077,7 +1111,7 @@ def _ingest(
     known = catalog.files(name)
     max_files = cfg.vector_db_max_files_per_collection
     scan = scan_source_files(
-        folder, recursive, cfg.vector_db_include_extensions,
+        folders, recursive, cfg.vector_db_include_extensions,
         workers=cfg.vector_db_scan_workers, max_files=max_files, known=known,
     )
     files = scan.files
@@ -1087,7 +1121,7 @@ def _ingest(
     writer = _Writer(cfg, catalog, store, keywords, name, dim, model, result)
     writer.begin()
     try:
-        pipeline = _Pipeline(cfg, folder, known, writer, embedding_client, should_stop, progress)
+        pipeline = _Pipeline(cfg, folders, known, writer, embedding_client, should_stop, progress)
         pipeline.run(files)
         if not pipeline.stopped:
             # 停止したときは、未処理のファイルを「消えた」と誤って削除しないよう消さない。

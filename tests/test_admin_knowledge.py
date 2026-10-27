@@ -102,6 +102,28 @@ def test_ingest_error_is_reported_on_job(env):
     assert job["state"] == "error" and "folder" in job["error"]
 
 
+def test_collection_with_multiple_source_folders(env):
+    client, docs, tmp = env["client"], env["docs"], env["tmp"]
+    extra = tmp / "extra"
+    (extra / "sub").mkdir(parents=True)
+    (extra / "trip.md").write_text("出張の申請は3日前までに行う。", encoding="utf-8")
+    base = "/api/instances/org_a/knowledge/collections"
+    res = client.post(base, json={"name": "docs", "source_folders": [str(docs), " ", str(extra)]})
+    assert res.status_code == 200, res.text
+    assert (res.json()["source_folders"], res.json()["source_folder"]) == ([str(docs), str(extra)], str(docs))
+    client.post(f"{base}/docs/ingest", json={})
+    job = _wait_job(client, "docs")
+    assert job["state"] == "done" and job["result"]["added"] == 2, job
+
+    # サブフォルダも含めるときは、別の取り込み元フォルダの中のフォルダは指定できない（直下のみなら指定できる）。
+    nested = client.put(f"{base}/docs", json={"source_folders": [str(extra), str(extra / "sub")]})
+    assert nested.status_code == 400 and "sub" in nested.json()["detail"]
+    ok = client.put(f"{base}/docs", json={"source_folders": [str(extra), str(extra / "sub")], "recursive": False})
+    assert ok.status_code == 200 and ok.json()["source_folders"] == [str(extra), str(extra / "sub")]
+    assert client.put(f"{base}/docs", json={"source_folders": [" "]}).status_code == 400
+    assert client.post(base, json={"name": "none"}).status_code == 400
+
+
 def test_run_ingest_job_marks_stop(tmp_path):
     docs = tmp_path / "docs"
     docs.mkdir()

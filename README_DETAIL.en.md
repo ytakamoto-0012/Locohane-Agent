@@ -1267,7 +1267,11 @@ Operate it from the "Knowledge" button on the instance card (or the "Knowledge" 
 (`admin/knowledge.py`, `admin/static/knowledge.js`).
 
 1. In "Add collection", enter the collection name, description and source folder (an absolute path visible from the admin tool's PC; UNC paths of
-   shared folders are also OK) and add it. Files and folders whose names start with `.` or that have Windows' hidden attribute (`.git`, etc.) are
+   shared folders are also OK) and add it. Write one source folder per line to specify several; the documents in all of them are ingested into the
+   one collection (saved newline-separated in the `source_folder` column of `catalog.sqlite`). When "Also ingest subfolders" is on, a folder inside
+   another source folder cannot be specified (so the same file is not ingested twice). If even one source folder cannot be seen (the shared folder
+   is unreachable, etc.), ingestion does not start and reports an error, so the documents of that folder are not deleted.
+   Files and folders whose names start with `.` or that have Windows' hidden attribute (`.git`, etc.) are
    not ingested (the source folder itself may be hidden).
 2. Pressing "Ingest (differential)" starts ingestion inside the admin tool's process, and the progress (number of files processed, file being processed) and
    results (counts of added, updated, unchanged, deleted and failed, with failure reasons) appear in the table. During ingestion it can be interrupted with "Stop"

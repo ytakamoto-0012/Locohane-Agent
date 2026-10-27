@@ -666,7 +666,7 @@ const I18N_EN = {
   "再構築": "Rebuild",
   "コレクション {0} と取り込み済みのベクターを削除します（取り込み元の文書は消えません）。よろしいですか？": "Delete collection {0} and its ingested vectors? (The source documents are not deleted.)",
   "例: 品質管理規程・手順書": "e.g. Quality control rules and procedures",
-  "例: D:\\shared\\manuals（管理ツールの PC から見える絶対パス）": "e.g. D:\\shared\\manuals (an absolute path visible from the admin tool's PC)",
+  "例: D:\\shared\\manuals（管理ツールの PC から見える絶対パス。複数は1行に1つ）": "e.g. D:\\shared\\manuals (an absolute path visible from the admin tool's PC; one per line for multiple folders)",
   "例: 02:00（複数はカンマ区切り。例: 07:30, 19:00）": "e.g. 02:00 (comma-separated for several; e.g. 07:30, 19:00)",
   " 時間指定で自動取り込み（差分）を行う": " Ingest (diff) automatically at set times",
   "時刻（24時間表記）": "Times (24-hour)",

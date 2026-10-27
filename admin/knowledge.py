@@ -18,6 +18,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 import logging
+import os
 from pathlib import Path
 import threading
 from typing import Callable
@@ -45,7 +46,9 @@ logger = logging.getLogger(__name__)
 
 class CreateCollectionBody(BaseModel):
     name: str
-    source_folder: str
+    # 取り込み元フォルダ。source_folders（複数）か、旧版の API の source_folder（1つ）のどちらかを指定する。
+    source_folders: list[str] | None = None
+    source_folder: str | None = None
     description: str = ""
     recursive: bool = True
     schedule_enabled: bool = False
@@ -54,6 +57,7 @@ class CreateCollectionBody(BaseModel):
 
 
 class UpdateCollectionBody(BaseModel):
+    source_folders: list[str] | None = None
     source_folder: str | None = None
     description: str | None = None
     recursive: bool | None = None
@@ -427,6 +431,8 @@ def build_router(
         next_run = next_scheduled_run(c, datetime.now())
         return {
             **asdict(c),
+            # 旧版の API（取り込み元フォルダが1つだけ）の利用者向けに、最初のフォルダも返す。
+            "source_folder": c.source_folder,
             "next_scheduled_at": next_run.isoformat(timespec="seconds") if next_run else None,
             "job": job.to_dict() if job else None,
             "referenced_by": referenced_by or [],
@@ -587,14 +593,17 @@ def build_router(
     @router.post("/api/instances/{name}/knowledge/collections")
     def create_collection(name: str, body: CreateCollectionBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
         cfg = _cfg(name)
-        folder = _check_folder(body.source_folder)
+        folders = _body_folders(body.source_folders, body.source_folder)
+        if folders is None:
+            raise HTTPException(status_code=400, detail=_t("取り込み元フォルダを指定してください。"))
+        folders = _check_folders(folders, body.recursive)
         try:
             times = vcat.normalize_schedule_times(body.schedule_times)
             weekdays = vcat.normalize_schedule_weekdays(body.schedule_weekdays)
             if body.schedule_enabled and not times:
                 raise vcat.CatalogError(_t("自動取り込みを有効にするときは時刻を1つ以上指定してください。"))
             with vcat.open_catalog(cfg.vector_db_dir) as catalog:
-                catalog.create(body.name, str(folder), body.description, body.recursive)
+                catalog.create(body.name, folders, body.description, body.recursive)
                 created = catalog.update(body.name, schedule_enabled=body.schedule_enabled, schedule_times=times, schedule_weekdays=weekdays)
         except vcat.CatalogError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -604,7 +613,7 @@ def build_router(
             name,
             "knowledge_collection_create",
             collection=body.name,
-            source_folder=str(folder),
+            source_folders=list(created.source_folders),
             schedule_enabled=created.schedule_enabled,
             schedule_times=list(created.schedule_times),
             schedule_weekdays=list(created.schedule_weekdays),
@@ -616,16 +625,18 @@ def build_router(
         name: str, collection: str, body: UpdateCollectionBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)
     ):
         cfg = _cfg(name)
-        folder = str(_check_folder(body.source_folder)) if body.source_folder is not None else None
+        folders = _body_folders(body.source_folders, body.source_folder)
         with vcat.open_catalog(cfg.vector_db_dir) as catalog:
             try:
-                catalog.get(collection)
+                current = catalog.get(collection)
             except vcat.CatalogError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
+            if folders is not None:
+                folders = _check_folders(folders, body.recursive if body.recursive is not None else current.recursive)
             try:
                 updated = catalog.update(
                     collection,
-                    source_folder=folder,
+                    source_folders=folders,
                     description=body.description,
                     recursive=body.recursive,
                     schedule_enabled=body.schedule_enabled,
@@ -810,3 +821,32 @@ def _check_folder(value: str) -> Path:
     if not folder.is_dir():
         raise HTTPException(status_code=400, detail=_t("取り込み元フォルダがありません（管理ツールのPCから見えるパスを指定してください）: {0}", folder))
     return folder
+
+
+def _body_folders(folders: list[str] | None, folder: str | None) -> list[str] | None:
+    """リクエストの source_folders（複数）か source_folder（1つ・旧版の API）。どちらも無ければ None。"""
+    if folders is not None:
+        return folders
+    return [folder] if folder is not None else None
+
+
+def _check_folders(values: list[str], recursive: bool) -> list[str]:
+    """取り込み元フォルダを検証し、重複を除いた絶対パスのリストにする。
+
+    サブフォルダも含めるときは、別の取り込み元フォルダの中にあるフォルダを指定できない（同じファイルを2回たどるため）。
+    """
+    try:
+        values = list(vcat.normalize_source_folders(values))
+    except vcat.CatalogError as exc:
+        raise HTTPException(status_code=400, detail=_t("取り込み元フォルダを指定してください。")) from exc
+    folders = [_check_folder(v) for v in values]
+    if recursive:
+        keys = [os.path.normcase(os.path.normpath(f)) for f in folders]
+        for i, inner in enumerate(keys):
+            for j, outer in enumerate(keys):
+                if i != j and inner.startswith(outer.rstrip("\\/") + os.sep):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=_t("取り込み元フォルダ {0} は {1} の中にあります（サブフォルダも含めるときは、外側のフォルダだけを指定してください）。", folders[i], folders[j]),
+                    )
+    return [str(f) for f in folders]

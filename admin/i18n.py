@@ -137,6 +137,8 @@ EN: dict[str, str] = {
     "データの削除に失敗しました（インスタンス自体は削除していません）: {0}: {1}": "Failed to delete data (the instance itself was not deleted): {0}: {1}",
     "取り込み元フォルダは絶対パスで指定してください。": "Specify the source folder as an absolute path.",
     "取り込み元フォルダがありません（管理ツールのPCから見えるパスを指定してください）: {0}": "The source folder does not exist (specify a path visible from the admin tool's PC): {0}",
+    "取り込み元フォルダを指定してください。": "Specify the source folder.",
+    "取り込み元フォルダ {0} は {1} の中にあります（サブフォルダも含めるときは、外側のフォルダだけを指定してください）。": "The source folder {0} is inside {1} (when including subfolders, specify only the outer folder).",
     "スキル研究室のインスタンスにはナレッジを置けません。": "Knowledge cannot be placed on a skill lab instance.",
     "取り込み中のコレクションは削除できません。先に停止してください。": "A collection being ingested cannot be deleted. Stop it first.",
     "このインスタンスの [vector_db] enabled が false です。config.ini タブで有効にしてください。": "[vector_db] enabled is false for this instance. Enable it in the config.ini tab.",

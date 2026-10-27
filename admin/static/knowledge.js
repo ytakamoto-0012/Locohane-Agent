@@ -60,7 +60,7 @@ async function renderKnowledgePanel(container, name) {
     list.innerHTML = "";
     const rows = collections.map((c) => [
       el("div", {}, [el("strong", { text: c.name }), c.description ? el("div", { class: "hint", text: c.description }) : null]),
-      el("div", {}, [c.source_folder, el("div", { class: "hint", text: c.recursive ? _t("サブフォルダも含む") : _t("直下のみ") })]),
+      el("div", {}, [...c.source_folders.map((p) => el("div", { text: p })), el("div",{ class: "hint", text: c.recursive ? _t("サブフォルダも含む") : _t("直下のみ") })]),
       _t(`{0} 件 / {1} チャンク`, c.file_count, c.chunk_count),
       c.model ? _t(`{0}（{1} 次元）`, c.model, c.dim) : "-",
       fmtTime(c.last_ingested_at),
@@ -255,9 +255,12 @@ function collectionFields(c) {
   });
   const scheduleEnabled = el("input", { type: "checkbox" });
   scheduleEnabled.checked = !!c && c.schedule_enabled;
+  // 取り込み元フォルダは1行に1つ（複数指定できる）。
+  const folder = el("textarea", { rows: 3, placeholder: _t("例: D:\\shared\\manuals（管理ツールの PC から見える絶対パス。複数は1行に1つ）") });
+  folder.value = c ? c.source_folders.join("\n") : "";
   return {
     description: el("input", { type: "text", value: c ? c.description : "", placeholder: _t("例: 品質管理規程・手順書") }),
-    folder: el("input", { type: "text", value: c ? c.source_folder : "", placeholder: _t("例: D:\\shared\\manuals（管理ツールの PC から見える絶対パス）") }),
+    folder,
     recursive: el("input", { type: "checkbox" }),
     scheduleEnabled,
     scheduleTimes: el("input", { type: "text", value: c ? c.schedule_times.join(", ") : "", placeholder: _t("例: 02:00（複数はカンマ区切り。例: 07:30, 19:00）") }),
@@ -286,6 +289,10 @@ function scheduleFieldElements(f) {
     ]),
     el("p", { class: "hint", text: _t("管理ツール（admin.bat）が起動している間だけ実行します。止まっていた間の時刻の分は後から実行しません。") }),
   ];
+}
+
+function folderList(f) {
+  return f.folder.value.split(/\r?\n/).map((s) => s.trim()).filter((s) => s);
 }
 
 function scheduleBody(f) {
@@ -320,7 +327,7 @@ function buildCreateCollectionForm(container, name) {
         body: {
           name: nameInput.value.trim(),
           description: f.description.value,
-          source_folder: f.folder.value,
+          source_folders: folderList(f),
           recursive: f.recursive.checked,
           ...scheduleBody(f),
         },
@@ -355,7 +362,7 @@ function openEditCollectionForm(container, name, c) {
     try {
       await api(knowledgePath(name, `/collections/${encodeURIComponent(c.name)}`), {
         method: "PUT",
-        body: { description: f.description.value, source_folder: f.folder.value, recursive: f.recursive.checked, ...scheduleBody(f) },
+        body: { description: f.description.value, source_folders: folderList(f), recursive: f.recursive.checked, ...scheduleBody(f) },
       });
       close();
       renderKnowledgePanel(container, name);

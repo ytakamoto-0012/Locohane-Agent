@@ -532,9 +532,10 @@ bash:
 ```bash
 # 設定の要約（埋め込みモデル・対象の拡張子・image_input 等）とコレクション一覧（各コレクションの最新ジョブ付き）
 $C $BASE/api/instances/default/knowledge
-# コレクションを作成（取り込み元フォルダは管理ツールの PC から見える絶対パス）
+# コレクションを作成（取り込み元フォルダは管理ツールの PC から見える絶対パス。source_folders で複数指定できる。
+# 1つだけなら従来どおり "source_folder":"D:/shared/manuals" でもよい。recursive=true のときは入れ子のフォルダは指定できない）
 $C -X POST $BASE/api/instances/default/knowledge/collections -H "$H" -H "$J" \
-  -d '{"name":"manuals","description":"品質管理規程","source_folder":"D:/shared/manuals","recursive":true}'
+  -d '{"name":"manuals","description":"品質管理規程","source_folders":["D:/shared/manuals","D:/shared/procedures"],"recursive":true}'
 # 説明・フォルダ・サブフォルダ有無の変更（変える項目だけ）
 $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"description":"品質規程"}'
 # 時間指定の自動取り込み（差分）。schedule_times は "HH:MM" の配列、schedule_weekdays は 0=月〜6=日（空なら毎日）。

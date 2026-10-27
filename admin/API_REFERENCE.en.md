@@ -532,9 +532,10 @@ bash:
 ```bash
 # Settings summary (embedding model, target extensions, image_input, etc.) and the collection list (with each collection's latest job)
 $C $BASE/api/instances/default/knowledge
-# Create a collection (the source folder is an absolute path visible from the admin tool's PC)
+# Create a collection (source folders are absolute paths visible from the admin tool's PC; source_folders accepts several.
+# For a single folder, "source_folder":"D:/shared/manuals" still works. With recursive=true, nested folders are not allowed)
 $C -X POST $BASE/api/instances/default/knowledge/collections -H "$H" -H "$J" \
-  -d '{"name":"manuals","description":"Quality control rules","source_folder":"D:/shared/manuals","recursive":true}'
+  -d '{"name":"manuals","description":"Quality control rules","source_folders":["D:/shared/manuals","D:/shared/procedures"],"recursive":true}'
 # Change the description, folder or subfolder setting (only the fields to change)
 $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "$J" -d '{"description":"Quality rules"}'
 # Scheduled automatic ingestion (incremental). schedule_times is an array of "HH:MM", schedule_weekdays is 0=Mon to 6=Sun (every day if empty).

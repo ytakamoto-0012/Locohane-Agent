@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -66,7 +67,8 @@ class CatalogError(Exception):
 class Collection:
     name: str
     description: str
-    source_folder: str
+    # 取り込み元フォルダ（1つ以上。catalog.sqlite の source_folder 列に改行区切りで持つ）。
+    source_folders: tuple[str, ...]
     recursive: bool
     model: str | None
     dim: int | None
@@ -80,6 +82,11 @@ class Collection:
     schedule_enabled: bool = False
     schedule_times: tuple[str, ...] = ()
     schedule_weekdays: tuple[int, ...] = ()
+
+    @property
+    def source_folder(self) -> str:
+        """最初の取り込み元フォルダ（1フォルダだけだった旧版の API との互換用）。"""
+        return self.source_folders[0]
 
 
 @dataclass(frozen=True)
@@ -113,6 +120,25 @@ def validate_name(name: str) -> str:
     if not _NAME_RE.match(name or ""):
         raise CatalogError(f"Collection names must be 1 to 48 characters of letters, digits, hyphens and underscores: {name!r}")
     return name
+
+
+def normalize_source_folders(folders: str | list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    """取り込み元フォルダ（文字列なら改行区切り）の前後の空白・空行を除き、同じフォルダの重複を除く（順序は保つ）。"""
+    if isinstance(folders, str):
+        folders = folders.splitlines()
+    result: list[str] = []
+    seen: set[str] = set()
+    for raw in folders:
+        value = raw.strip()
+        if not value:
+            continue
+        key = os.path.normcase(os.path.normpath(value))
+        if key not in seen:
+            seen.add(key)
+            result.append(value)
+    if not result:
+        raise CatalogError("Specify the source folder.")
+    return tuple(result)
 
 
 def normalize_schedule_times(times: list[str] | tuple[str, ...]) -> tuple[str, ...]:
@@ -204,17 +230,19 @@ class Catalog(SqliteBatchMixin):
                 return c
         raise CatalogError(f"Collection {name} does not exist.")
 
-    def create(self, name: str, source_folder: str, description: str = "", recursive: bool = True) -> Collection:
+    def create(
+        self, name: str, source_folders: str | list[str] | tuple[str, ...], description: str = "", recursive: bool = True
+    ) -> Collection:
+        """source_folders は取り込み元フォルダのリスト（文字列なら改行区切りで複数指定できる）。"""
         validate_name(name)
-        if not source_folder.strip():
-            raise CatalogError("Specify the source folder.")
+        folders = normalize_source_folders(source_folders)
         if self._reference_row(name) is not None:
             raise CatalogError(f"A reference named {name} already exists.")
         try:
             with self._conn:
                 self._conn.execute(
                     "INSERT INTO collections (name, description, source_folder, recursive, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (name, description.strip(), source_folder.strip(), int(recursive), _now()),
+                    (name, description.strip(), "\n".join(folders), int(recursive), _now()),
                 )
         except sqlite3.IntegrityError as e:
             raise CatalogError(f"Collection {name} already exists.") from e
@@ -224,7 +252,7 @@ class Catalog(SqliteBatchMixin):
         self,
         name: str,
         *,
-        source_folder: str | None = None,
+        source_folders: str | list[str] | tuple[str, ...] | None = None,
         description: str | None = None,
         recursive: bool | None = None,
         schedule_enabled: bool | None = None,
@@ -237,16 +265,15 @@ class Catalog(SqliteBatchMixin):
         enabled = schedule_enabled if schedule_enabled is not None else current.schedule_enabled
         if enabled and not times:
             raise CatalogError("Specify at least one time to enable scheduled ingestion.")
+        folders = normalize_source_folders(source_folders) if source_folders is not None else None
         with self._conn:
             if schedule_enabled is not None or schedule_times is not None or schedule_weekdays is not None:
                 self._conn.execute(
                     "UPDATE collections SET schedule_enabled = ?, schedule_times = ?, schedule_weekdays = ? WHERE name = ?",
                     (int(enabled), ",".join(times), ",".join(str(d) for d in weekdays), name),
                 )
-            if source_folder is not None:
-                if not source_folder.strip():
-                    raise CatalogError("Specify the source folder.")
-                self._conn.execute("UPDATE collections SET source_folder = ? WHERE name = ?", (source_folder.strip(), name))
+            if folders is not None:
+                self._conn.execute("UPDATE collections SET source_folder = ? WHERE name = ?", ("\n".join(folders), name))
             if description is not None:
                 self._conn.execute("UPDATE collections SET description = ? WHERE name = ?", (description.strip(), name))
             if recursive is not None:
@@ -348,7 +375,7 @@ def _to_collection(row: sqlite3.Row) -> Collection:
     return Collection(
         name=row["name"],
         description=row["description"],
-        source_folder=row["source_folder"],
+        source_folders=tuple(f for f in row["source_folder"].split("\n") if f),
         recursive=bool(row["recursive"]),
         model=row["model"],
         dim=row["dim"],
@@ -381,6 +408,7 @@ __all__ = [
     "catalog_exists",
     "normalize_schedule_times",
     "normalize_schedule_weekdays",
+    "normalize_source_folders",
     "open_catalog",
     "validate_name",
 ]

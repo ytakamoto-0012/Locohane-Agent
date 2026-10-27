@@ -1073,9 +1073,48 @@ def test_ingest_errors_for_missing_collection_or_folder(env):
     with pytest.raises(ingest.IngestError):
         ingest.ingest_collection(env["cfg"], "missing", **env["kwargs"])
     with vcat.open_catalog(env["cfg"].vector_db_dir) as catalog:
-        catalog.update("docs", source_folder=str(env["docs"] / "nothing"))
+        catalog.update("docs", source_folders=[str(env["docs"]), str(env["docs"] / "nothing")])
+    # 1つでも見えないフォルダがあれば、そのフォルダのファイルを消さないよう取り込まない。
     with pytest.raises(ingest.IngestError, match="folder"):
         ingest.ingest_collection(env["cfg"], "docs", **env["kwargs"])
+
+
+def test_ingest_multiple_source_folders(env, tmp_path):
+    cfg, kwargs = env["cfg"], env["kwargs"]
+    extra = tmp_path / "extra"
+    (extra / "sub").mkdir(parents=True)
+    (extra / "sub" / "guide.md").write_text("出張の申請は3日前までに行う。", encoding="utf-8")
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        # 文字列なら改行区切り。空行と同じフォルダの重複は除く。
+        catalog.update("docs", source_folders=f"{env['docs']}\n\n{extra}\n{env['docs']}")
+        assert catalog.get("docs").source_folders == (str(env["docs"]), str(extra))
+    assert ingest.ingest_collection(cfg, "docs", **kwargs).added == 3
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        files = catalog.files("docs")
+    assert str(extra / "sub" / "guide.md") in files
+    hits = search.search(cfg, "出張の申請", top_k=1, **kwargs).hits
+    assert hits[0].source_path == str(extra / "sub" / "guide.md")
+
+    # フォルダを1つ外すと、そのフォルダのファイルは次の取り込みで消える。
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        catalog.update("docs", source_folders=[str(env["docs"])])
+    assert ingest.ingest_collection(cfg, "docs", **kwargs).removed == 1
+
+
+def test_scan_skips_source_folder_inside_another_when_recursive(tmp_path):
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "a.md").write_text("a", encoding="utf-8")
+    (tmp_path / "sub" / "b.md").write_text("b", encoding="utf-8")
+    other = tmp_path.parent / f"{tmp_path.name}_other"
+    other.mkdir()
+    (other / "c.md").write_text("c", encoding="utf-8")
+    for workers in (1, 4):
+        files = [p for p, _ in ingest.scan_source_files([tmp_path / "sub", tmp_path, other], True, (".md",), workers=workers).files]
+        assert files == sorted([tmp_path / "a.md", tmp_path / "sub" / "b.md", other / "c.md"], key=lambda p: str(p).lower())
+    # 直下だけなら入れ子のフォルダもそれぞれの直下を取り込む。
+    files = ingest.list_source_files([tmp_path, tmp_path / "sub"], False, (".md",))
+    assert sorted(files) == sorted([tmp_path / "a.md", tmp_path / "sub" / "b.md"])
+    assert ingest.relative_path_text(ingest.source_root([tmp_path, tmp_path / "sub"], tmp_path / "sub" / "b.md"), tmp_path / "sub" / "b.md") == "b.md"
 
 
 def test_search_filters_by_collection_score_and_top_k(env, tmp_path):
