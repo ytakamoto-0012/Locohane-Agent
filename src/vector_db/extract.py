@@ -308,6 +308,10 @@ def _extract_xlsx(source) -> list[Segment]:
             notes = extras.get(name, {})
             rows = []
             if not isinstance(sheet, Chartsheet):  # グラフシートにはセルが無い
+                # 使用範囲（<dimension ref>）を使わない。読み取り専用モードは各行を使用範囲の最大列まで埋めて返すため、
+                # 書式を最終行・最終列まで付けたブック（A1:XFD1048576）では 105万行 × 16384列 を回って終わらなくなる。
+                # 使わなければ、各行は実際にあるセルの列までになる（途中の抜けた行は空になる）。
+                sheet.reset_dimensions()
                 for row_number, row in enumerate(sheet.iter_rows(min_row=1, values_only=True), start=1):
                     cells = ["" if v is None else str(v) for v in row]
                     if any(c.strip() for c in cells):

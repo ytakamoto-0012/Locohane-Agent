@@ -347,6 +347,31 @@ def test_extract_xlsx_reads_chart_titles_on_chartsheets(tmp_path):
     assert [(s.locator, s.text) for s in segments] == [("Sheet: Sheet", "a\t1\nb\t2"), ("Sheet: グラフ", "[Shape] 月別の出荷数")]
 
 
+def test_extract_xlsx_ignores_dimension_spanning_the_whole_sheet(tmp_path):
+    import time
+    import zipfile
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    for row in (["品番", None, "単価"], ["型式"]):
+        wb.active.append(row)
+    wb.save(tmp_path / "a.xlsx")
+    # 書式（行の高さ等）を最終行・最終列まで付けたブック。Excel は使用範囲を A1:XFD1048576 とし、書式だけの行を書く。
+    rebuilt = tmp_path / "b.xlsx"
+    with zipfile.ZipFile(tmp_path / "a.xlsx") as src, zipfile.ZipFile(rebuilt, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = data.replace(b'<dimension ref="A1:C2"', b'<dimension ref="A1:XFD1048576"')
+                data = data.replace(b"</sheetData>", b'<row r="1048576" ht="20" customHeight="1"/></sheetData>')
+            dst.writestr(item, data)
+    start = time.monotonic()
+    assert extract_segments(rebuilt)[0].text == "品番\t\t単価\n型式"
+    # 使用範囲のとおりに埋めると数分かかる。
+    assert time.monotonic() - start < 30
+
+
 def test_extract_docx_reads_content_controls_and_tracked_insertions_in_order(tmp_path):
     import docx
     from docx.oxml import parse_xml
