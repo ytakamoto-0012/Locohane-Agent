@@ -817,6 +817,7 @@ const CONFIG_PRESETS = [
   },
   {
     name: _t("トークン制御"),
+    tokenRatio: true,
     keys: [
       "graph.token_guard_soft_threshold",
       "subagent.token_guard_soft_threshold",
@@ -827,6 +828,12 @@ const CONFIG_PRESETS = [
       "context_compaction.token_threshold",
       "context_compaction.single_request_token_threshold",
       "context_compaction.pre_note_threshold",
+      "token_ratio.enabled",
+      "token_ratio.subagent.token_guard_soft_threshold",
+      "token_ratio.subagent.token_guard_hard_threshold",
+      "token_ratio.context_trim.trigger_total_tokens",
+      "token_ratio.context_compaction.single_request_token_threshold",
+      "token_ratio.context_compaction.pre_note_threshold",
     ],
   },
   {
@@ -973,6 +980,9 @@ function renderKeyList() {
   const listEl = $("#config-keys");
   listEl.innerHTML = "";
   let shown = 0;
+  if (activePreset && activePreset.tokenRatio && tokenRatioPairs().length > 0) {
+    listEl.appendChild(buildTokenRatioBanner());
+  }
   const keys = activePreset
     ? activePreset.keys.map((id) => configKeys.find((k) => keyId(k) === id)).filter(Boolean)
     : configKeys;
@@ -988,9 +998,99 @@ function renderKeyList() {
   }
 }
 
+/* --- トークン制御の相対比連動（config.ini の [token_ratio] 参照） --- */
+
+const TOKEN_RATIO_SECTION = "token_ratio";
+const TOKEN_RATIO_BASE_ID = "graph.token_guard_soft_threshold";
+
+function findConfigKey(id) {
+  return configKeys.find((k) => keyId(k) === id);
+}
+
+function positiveNumber(text) {
+  const s = (text || "").trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+// [token_ratio] の enabled 以外のキー（キー名が自動入力先の "section.key"）と、その自動入力先の組
+function tokenRatioPairs() {
+  return configKeys
+    .filter((k) => k.section === TOKEN_RATIO_SECTION && k.key !== "enabled")
+    .map((ratioKey) => ({ ratioKey, target: findConfigKey(ratioKey.key) }))
+    .filter((p) => p.target);
+}
+
+function tokenRatioEnabled() {
+  const k = findConfigKey(`${TOKEN_RATIO_SECTION}.enabled`);
+  return !!k && effectiveValue(k).trim().toLowerCase() === "true";
+}
+
+// 基準値×比率（整数に四捨五入）を自動入力先へ入れる。値が変わったキーの id を返す。
+// 基準値・比率が空欄や正の数でない組は飛ばす。
+function applyTokenRatios(pairs) {
+  const baseKey = findConfigKey(TOKEN_RATIO_BASE_ID);
+  const base = baseKey ? positiveNumber(effectiveValue(baseKey)) : null;
+  if (base === null) return [];
+  const changed = [];
+  for (const { ratioKey, target } of pairs) {
+    const ratio = positiveNumber(effectiveValue(ratioKey));
+    if (ratio === null) continue;
+    const value = String(Math.round(base * ratio));
+    if (effectiveValue(target).trim() === value) continue;
+    storeEdit(target, value);
+    changed.push(keyId(target));
+  }
+  return changed;
+}
+
+// k の変更に連動して自動入力し、値が変わったキーの id を返す（enabled=false なら何もしない）
+function applyLinkedEdits(k) {
+  if (!tokenRatioEnabled()) return [];
+  const id = keyId(k);
+  if (id === TOKEN_RATIO_BASE_ID || id === `${TOKEN_RATIO_SECTION}.enabled`) return applyTokenRatios(tokenRatioPairs());
+  if (k.section === TOKEN_RATIO_SECTION) return applyTokenRatios(tokenRatioPairs().filter((p) => p.ratioKey === k));
+  return [];
+}
+
+// 入力中の欄（フォーカス）を壊さないよう、一覧全体ではなく自動入力した行だけを作り直す
+function refreshKeyRows(ids) {
+  for (const id of ids) {
+    const old = $(`#config-keys [data-key-id="${CSS.escape(id)}"]`);
+    if (old) old.replaceWith(buildKeyRow(findConfigKey(id)));
+  }
+}
+
+function buildTokenRatioBanner() {
+  const box = document.createElement("div");
+  box.className = "token-ratio-banner";
+  const note = document.createElement("p");
+  note.className = "hint";
+  note.textContent = tokenRatioEnabled()
+    ? _t("[graph] token_guard_soft_threshold（基準値）を変更すると、[token_ratio] の比率×基準値が各閾値へ自動入力されます。")
+    : _t("[token_ratio] enabled が false のため、基準値を変更しても各閾値は連動しません。");
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = _t("比率で再計算");
+  btn.addEventListener("click", () => {
+    const baseKey = findConfigKey(TOKEN_RATIO_BASE_ID);
+    if (!baseKey || positiveNumber(effectiveValue(baseKey)) === null) {
+      alert(_t("[graph] token_guard_soft_threshold に正の数を入力してください。"));
+      return;
+    }
+    applyTokenRatios(tokenRatioPairs());
+    renderKeyList();
+    updateFooter();
+  });
+  box.append(note, btn);
+  return box;
+}
+
 function buildKeyRow(k) {
   const row = clone("tpl-key-row").firstElementChild;
   const id = keyId(k);
+  row.dataset.keyId = id;
   row.querySelector(".key-label").textContent = `[${k.section}] ${k.key}`;
   row.querySelector(".key-desc").textContent = k.description;
   row.querySelector(".env-badge").classList.toggle("hidden", !k.env_override_active);
@@ -1041,6 +1141,7 @@ function buildKeyRow(k) {
   resetBtn.addEventListener("click", () => {
     delete dirtyEdits[id];
     resetKeys.add(id);
+    applyLinkedEdits(k);
     renderKeyList();
     updateFooter();
   });
@@ -1861,6 +1962,16 @@ function buildScalarEditor(value, set) {
 }
 
 function setEdit(k, newValue) {
+  storeEdit(k, newValue);
+  refreshKeyRows(applyLinkedEdits(k));
+  if (keyId(k) === `${TOKEN_RATIO_SECTION}.enabled`) {
+    const banner = $("#config-keys .token-ratio-banner");
+    if (banner) banner.replaceWith(buildTokenRatioBanner());
+  }
+  updateFooter();
+}
+
+function storeEdit(k, newValue) {
   const id = keyId(k);
   resetKeys.delete(id);
   delete dirtyEdits[id];
@@ -1870,7 +1981,6 @@ function setEdit(k, newValue) {
   } else if (k.override === null || newValue !== k.override) {
     dirtyEdits[id] = newValue;
   }
-  updateFooter();
 }
 
 function updateFooter() {

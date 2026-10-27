@@ -12,6 +12,14 @@
 
 ## [Unreleased]
 
+### 追加
+
+- 設定ダッシュボードで、トークン制御系の閾値（`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・
+  `[context_trim] trigger_total_tokens`・`[context_compaction] single_request_token_threshold`・`pre_note_threshold`）を
+  `[graph] token_guard_soft_threshold` を基準とした相対比で自動入力できるようにしました。比率は `config.ini` の
+  新しいセクション `[token_ratio]` で設定し、基準値を変えると「基準値×比率」が各閾値へ入ります。
+  「トークン制御」プリセットには「比率で再計算」ボタンも出ます。
+
 ### 修正
 
 - ナレッジに取り込んだ文書にある内容（例: 携帯電話の料金の明細）を尋ねても、LLM がナレッジを検索せずに

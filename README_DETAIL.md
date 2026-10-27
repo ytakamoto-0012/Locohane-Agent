@@ -1651,6 +1651,8 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[context_compaction]` | `skill_reattach_total_max_chars` | 上記の再添付全体の最大文字数。収まらない古いスキルは名前だけを列挙する | `CONTEXT_COMPACTION_SKILL_REATTACH_TOTAL_MAX_CHARS` |
 | `[context_compaction]` | `pre_note_threshold` | 圧縮発火前に`write_thread_note`への書き出しを促す注意メッセージを注入する、直近1回のLLM呼び出しのtotal_tokens閾値（0以下で無効化） | `CONTEXT_COMPACTION_PRE_NOTE_THRESHOLD` |
 | `[context_compaction]` | `pre_note_warning_text` | 上記閾値到達時に注入する注意メッセージの文言 | `CONTEXT_COMPACTION_PRE_NOTE_WARNING_TEXT` |
+| `[token_ratio]` | `enabled` | 設定ダッシュボード専用（アプリ本体は読まない）。基準値`[graph] token_guard_soft_threshold`や比率を変更したときに、各閾値へ「基準値×比率」を自動入力するか | - |
+| `[token_ratio]` | `<セクション>.<キー>`（例: `subagent.token_guard_soft_threshold`） | 自動入力先の閾値の、基準値に対する比率（空欄なら連動させない） | - |
 | `[path_memory]` | `dir` | パスメモリー機能のレジストリファイル（`<thread_id>.json`）保存先 | `PATH_MEMORY_DIR` |
 | `[path_memory]` | `retention_days` | パスメモリーのレジストリファイル保持日数 | `PATH_MEMORY_RETENTION_DAYS` |
 | `[path_memory]` | `cleanup_interval_hours` | パスメモリーの自動削除チェック間隔（時間） | `PATH_MEMORY_CLEANUP_INTERVAL_HOURS` |
@@ -1932,11 +1934,19 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 `admin/static/admin.js` の `CONFIG_PRESETS` で定義している。
 
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
-- **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`
+- **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`・`[token_ratio]` の各キー
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
 - **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_input_extensions`・`embedded_images`・`embedded_image_min_px`・`image_dpi`・`office_timeout_seconds`・`ingest_workers`・`ingest_processes`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
+
+トークン制御系の閾値は、`[graph] token_guard_soft_threshold` を基準値とした相対比で連動させられる。
+比率は `config.ini` の `[token_ratio]`（キー名＝自動入力先の `セクション.キー`、値＝比率。空欄なら連動させない）に
+置き、他の設定と同じくインスタンスごとに変更できる。`[token_ratio] enabled = true` の間は、ダッシュボードで
+基準値（または比率）を変更すると「基準値×比率」（整数に四捨五入）が各閾値へ自動入力され、通常の変更と同じく
+「変更を確認」→「保存」で保存される。「トークン制御」プリセットの先頭にある「比率で再計算」ボタンは、
+`enabled = false` でも今の基準値と比率で一括入力する。`[token_ratio]` はダッシュボード専用で、アプリ本体は
+読まない（起動時に使われるのは各閾値に保存された値そのもの）。
 
 ### 起動方法
 

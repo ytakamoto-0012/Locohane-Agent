@@ -375,6 +375,28 @@ DESCRIPTIONS: dict[str, str] = {
         'With only the warning by pre_note_threshold, if the LLM keeps ignoring it, compaction could happen with nothing recorded at all, so instead of waiting it is forced).\n'
         'This value is a safety valve for when force_write_thread_note itself keeps failing (LLM call errors, empty tool_calls, state update failures, etc.); when the number of failures reaches this value, compaction is forced even without a record (prevents sticking to the context limit while being ignored). 0 waits indefinitely (no compaction until forcing write_thread_note succeeds; note that it is then left to the cutoff by the token_guard soft/hard thresholds).'
     ),
+    'token_ratio.enabled': (
+        'A setting used only by the settings dashboard (admin tool). The app itself (src/) does not read this section.\n'
+        'Holds each token-control threshold as a ratio to [graph].token_guard_soft_threshold (the base value), and when the base value is changed on the dashboard, "base value x ratio" (rounded to an integer) is filled into each threshold automatically. The filled values are saved to config_overrides.json through "Review changes" -> "Save" like any other change, so what is used at startup is the value saved for each threshold (it is not recalculated from the ratio every time).\n'
+        'Each key name below is the "section.key" to fill in. A key whose value is left blank is not linked (changing the base value does not change that threshold).\n'
+        'While enabled below is true, changing a ratio also fills that threshold with "current base value x new ratio".\n'
+        'Whether to fill in automatically when the base value or a ratio is changed. false keeps the ratios but stops only the linking (the "Recalculate from ratios" button of the "Token control" preset works even when false).'
+    ),
+    'token_ratio.subagent.token_guard_soft_threshold': (
+        'Ratio for [subagent].token_guard_soft_threshold. Keep it below 1, since sub-agents should wrap up before the main agent.'
+    ),
+    'token_ratio.subagent.token_guard_hard_threshold': (
+        'Ratio for [subagent].token_guard_hard_threshold. Make it larger than the ratio of subagent.token_guard_soft_threshold.'
+    ),
+    'token_ratio.context_trim.trigger_total_tokens': (
+        'Ratio for [context_trim].trigger_total_tokens.'
+    ),
+    'token_ratio.context_compaction.single_request_token_threshold': (
+        "Ratio for [context_compaction].single_request_token_threshold. Keep it below 1 so that compaction kicks in before the main agent's handoff (the base value)."
+    ),
+    'token_ratio.context_compaction.pre_note_threshold': (
+        'Ratio for [context_compaction].pre_note_threshold. Make it sufficiently smaller than the ratio of context_compaction.single_request_token_threshold (to leave room to call write_thread_note in "the next response" after the injection).'
+    ),
     'scripts.timeout': (
         'Execution settings shared by the run_script tool and the execute_python_code tool.\n'
         'Execution timeout in seconds (shared by run_script / execute_python_code).'
