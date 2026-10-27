@@ -1209,16 +1209,19 @@ being compared with `min_score`, `image_min_score` and `path_min_score` (the val
 
 ### Ingesting pages as images (image_input)
 
-With `[vector_db] image_input = true`, the formats in `[vector_db] image_input_extensions` (default `.pdf`, `.docx`, `.pptx`;
-`.xlsx`/`.xlsm` can also be chosen) also embed an image of each page in addition to the text chunks (`src/vector_db/render.py`).
+With `[vector_db] image_input = true`, the formats in `[vector_db] image_input_extensions` (default `.pdf`;
+`.docx`, `.pptx` and `.xlsx`/`.xlsm` can also be chosen) also embed an image of each page in addition to the text chunks (`src/vector_db/render.py`).
 Text is strong at fine terms such as model numbers and numbers, and images at content whose text cannot be extracted,
-such as figures, tables, photos and scanned PDFs, so having both lets them complement each other. `.md`/`.txt`/`.csv` and formats not in
-`image_input_extensions` embed only the text as before.
+such as figures, tables, photos and scanned PDFs, so having both lets them complement each other. Office files not in `image_input_extensions`
+(by default `.docx`, `.pptx`, `.xlsx`/`.xlsm`) embed, in addition to the text chunks, each image (photo, figure) inside the file
+(`embedded_images`; see "Images inside Office files" below). `.md`/`.txt`/`.csv` embed only the text as before.
 
-Excel is not included by default because it takes the longest in ingestion and helps the least. Each sheet is exported to PDF with Excel,
-so a workbook takes several seconds (measured at 0.2-1 seconds per sheet), and adding more Excel instances levels off at about three (Office's PDF export does
-not scale in parallel, and splitting into child processes (`ingest_processes`) does not change that). Large sheets shrunk to one page also become too small
-to read, so their image embeddings are of little use, while cell values, shape text, chart titles and comments are ingested as text.
+Office files are not rendered as pages by default because that takes the longest in ingestion. They are exported to PDF with Office, so a file takes
+several seconds (Excel measured at 0.2-1 seconds per sheet), and adding more Office instances levels off at about three (Office's PDF export does
+not scale in parallel, and splitting into child processes (`ingest_processes`) does not change that). It also needs Windows and Microsoft Office.
+The text, shape text, chart titles and comments of Office files can be extracted as text, and photos and figures that cannot be found by text
+can be embedded as the images inside, so they can be found without page images (large Excel sheets shrunk to one page become too small to read,
+so their page images were of little use anyway).
 Image files (`.png`, `.jpg`/`.jpeg`, `.gif`, `.bmp`, `.webp`, `.tif`/`.tiff`, `.heic`/`.heif`) are also embedded as images
 (with `image_input = false`, their content is not read and only their file paths are registered).
 
@@ -1236,6 +1239,18 @@ Image files (`.png`, `.jpg`/`.jpeg`, `.gif`, `.bmp`, `.webp`, `.tif`/`.tiff`, `.
 - **Image files**: opened with Pillow (pillow-heif for HEIC/HEIF), with EXIF rotation applied, and normalized to PNG (transparent parts are filled with white).
   The long side is shrunk to the long side of an A4 document rendered at `image_dpi` (1169px at 100 DPI); smaller images are not enlarged.
   One image is one chunk, and the source location is `image`. Multi-page TIFFs are split per page as `p.N`, and animated GIFs use only the first frame.
+- **Images inside Office files** (`embedded_images = true`, the default): without starting Office, the image parts inside the file (ZIP)
+  (`word/media/image1.png`, etc.) are read directly, normalized to PNG like image files, and embedded one image per chunk (`src/vector_db/embedded_images.py`).
+  Only images in the Word body (including tables and text boxes), PowerPoint slides (including shape fills and backgrounds) and Excel sheets are read;
+  images in slide masters, layouts and headers (logos, etc.) are not. Images whose width or height is smaller than `embedded_image_min_px`
+  (default 64px; icons, bullet symbols, etc.) and second and later copies of the same image are not embedded. Images linked to external files and formats
+  Pillow cannot open (SVG, etc.; SVG comes with a PNG fallback, which is read instead) are skipped.
+  The source location is `Slide N image (ppt/media/image2.png)` for PowerPoint, `Sheet: name C5 image (xl/media/image1.png)` for Excel
+  (the cell under the top-left of the image) and `image (word/media/image1.png)` for Word. The text excerpt of the results has the alt text of the image (`[Image] ...`)
+  and the surrounding text (the text of the slide for PowerPoint; the paragraph with the image and the nearest paragraphs with text before and after it for Word).
+  To check the content, take that part out of the Office file (it is a ZIP) and look at it with `analyze_image`, or render that slide/sheet with a render skill.
+- **Alt text of images**: regardless of `image_input`, the alt text goes into the text as `[Image: alt text]` at the position of the image for Word,
+  `[Image] alt text` for PowerPoint and `[Image C5] alt text` on the row of the cell for Excel (nothing is added for images without alt text).
 - **Chunks**: the text is chunked the same as with `image_input = false`. A page image is one chunk per page (one sheet for Excel),
   and the source location is `p.N` for PDF/Word, `Slide N` for PowerPoint and `Sheet: name` for Excel. For the text excerpt of page image results,
   the text of that page taken from the PDF's text layer (up to `chunk_size` characters) is used.
@@ -1256,7 +1271,7 @@ Image files (`.png`, `.jpg`/`.jpeg`, `.gif`, `.bmp`, `.webp`, `.tif`/`.tiff`, `.
 llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models\mmproj-Qwen3-VL-Embedding-2B-f16.gguf --alias qwen3-vl-embedding --embedding --pooling last --port 12440 -c 8192 -b 8192 -ub 8192
 ```
 
-- **Switching**: the records of ingested files also keep how they were embedded (`text` / `text+image`), so switching `image_input` / `image_input_extensions` and
+- **Switching**: the records of ingested files also keep how they were embedded (`text` / `text+image` / `text+embedded`), so switching `image_input` / `image_input_extensions` / `embedded_images` and
   pressing "Ingest (differential)" re-ingests only the files of the affected formats with the new method, even if their content has not changed
   (going back to false removes the page image vectors, and image files become path-only registrations).
   If you also changed the embedding model, a "rebuild" is needed as before.
@@ -1640,8 +1655,10 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[vector_db]` | `chunk_size` / `chunk_overlap` | Maximum characters per chunk (default 800) and characters overlapped between adjacent chunks (default 100, less than `chunk_size`) | `VECTOR_DB_CHUNK_SIZE` / `VECTOR_DB_CHUNK_OVERLAP` |
 | `[vector_db]` | `include_extensions` | Extensions to ingest (comma-separated. Supported formats are `.pdf .docx .xlsx .xlsm .pptx .md .txt .csv` and image files `.png .jpg .jpeg .gif .bmp .webp .tif .tiff .heic .heif`. Image files register only their paths if `image_input = false`) | `VECTOR_DB_INCLUDE_EXTENSIONS` |
 | `[vector_db]` | `max_file_mb` | Size limit of one ingested file (MB, default 50; larger files are listed in the failure list) | `VECTOR_DB_MAX_FILE_MB` |
-| `[vector_db]` | `image_input` | Whether to input images to the embeddings (default false). If true, the formats in `image_input_extensions` (default `.pdf .docx .pptx`) also embed per-page images in addition to the text, and image files (`.png .jpg .heic`, etc.) are embedded as images too. Needs an embedding model that supports image input, and Windows and Microsoft Office for Office files (see "Ingesting pages as images (image_input)") | `VECTOR_DB_IMAGE_INPUT` |
-| `[vector_db]` | `image_input_extensions` | Document formats whose page images are also embedded with `image_input = true` (default `.pdf, .docx, .pptx`; choose from `.pdf .docx .pptx .xlsx .xlsm`; if empty, none are rendered). Formats not included are embedded as text only. Image files are embedded as images regardless of this setting | `VECTOR_DB_IMAGE_INPUT_EXTENSIONS` |
+| `[vector_db]` | `image_input` | Whether to input images to the embeddings (default false). If true, the formats in `image_input_extensions` (default `.pdf`) also embed per-page images in addition to the text, other Office files embed the images inside them (`embedded_images`), and image files (`.png .jpg .heic`, etc.) are embedded as images too. Needs an embedding model that supports image input, and Windows and Microsoft Office for Office files (see "Ingesting pages as images (image_input)") | `VECTOR_DB_IMAGE_INPUT` |
+| `[vector_db]` | `image_input_extensions` | Document formats whose page images are also embedded with `image_input = true` (default `.pdf`; choose from `.pdf .docx .pptx .xlsx .xlsm`; if empty, none are rendered). Office files not included are embedded as their text and the images inside (`embedded_images`). Image files are embedded as images regardless of this setting | `VECTOR_DB_IMAGE_INPUT_EXTENSIONS` |
+| `[vector_db]` | `embedded_images` | With `image_input = true`, whether to take out the images (photos, figures) inside Office files (`.docx .pptx .xlsx .xlsm`) not rendered as pages and embed each as an image (default true; Office is not started; see "Ingesting pages as images (image_input)") | `VECTOR_DB_EMBEDDED_IMAGES` |
+| `[vector_db]` | `embedded_image_min_px` | Lower limit (px, default 64) of the width and height of images taken out by `embedded_images`. Images smaller in either (icons, etc.) are not embedded. 0 means no size filter | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | Resolution at which pages are rendered as images with `image_input = true` (DPI, default 100) | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | Limit in seconds for one export of an Office file to PDF with `image_input = true` (default 180). When exceeded (stuck on an invisible dialog, etc.), that Office process is terminated and the file is listed in the failure list | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
 | `[vector_db]` | `ingest_workers` | Ingestion parallelism (default 1): the number of files prepared in parallel and the number of embedding requests sent at the same time. Parallel embedding also needs concurrent processing on the inference server (llama-server's `--parallel`) (see "Ingesting documents") | `VECTOR_DB_INGEST_WORKERS` |
@@ -1890,7 +1907,7 @@ The left sidebar of the `config.ini` tab has preset buttons that narrow the disp
 - **Parallelism**: `[llm] max_concurrent_requests`, `[graph] max_parallel`, `[subagent] max_parallel`
 - **Token control**: `[graph] token_guard_soft_threshold`, `[subagent] token_guard_soft_threshold`, `token_guard_hard_threshold`, `[context_trim] enabled`, `trigger_total_tokens`, `[context_compaction] enabled`, `token_threshold`, `single_request_token_threshold`, `pre_note_threshold`
 - **Skills**: `[paths] project_locohane_dir`, `[subagent] agent_type_run_script_allowlist`, `[main_agent_tool_guard] allow_entries`, `[plan] plan_approval_exempt_scripts`, each key of `[skill_creator]`, `[skill_lab] instance_locohane_dir`
-- **Vector DB**: `enabled`, `backend`, `distance`, `qdrant_url`, `qdrant_preset`, `embedding_url`, `embedding_routing_strategy`, `embedding_max_retries`, `search_embedding_max_retries`, `embedding_retry_interval_seconds`, `embedding_encoding_format`, `query_prefix`, `document_prefix`, `image_input`, `image_input_extensions`, `image_dpi`, `office_timeout_seconds`, `ingest_workers`, `ingest_processes`, `scan_workers`, `max_files_per_collection`, `chunk_size`, `chunk_overlap`, `max_file_mb`, `top_k`, `max_result_chars`, `min_score`, `image_min_score`, `path_min_score`, `rrf_weight_text`, `rrf_weight_keyword`, `rrf_weight_image`, `rrf_weight_path_keyword` of `[vector_db]`
+- **Vector DB**: `enabled`, `backend`, `distance`, `qdrant_url`, `qdrant_preset`, `embedding_url`, `embedding_routing_strategy`, `embedding_max_retries`, `search_embedding_max_retries`, `embedding_retry_interval_seconds`, `embedding_encoding_format`, `query_prefix`, `document_prefix`, `image_input`, `image_input_extensions`, `embedded_images`, `embedded_image_min_px`, `image_dpi`, `office_timeout_seconds`, `ingest_workers`, `ingest_processes`, `scan_workers`, `max_files_per_collection`, `chunk_size`, `chunk_overlap`, `max_file_mb`, `top_k`, `max_result_chars`, `min_score`, `image_min_score`, `path_min_score`, `rrf_weight_text`, `rrf_weight_keyword`, `rrf_weight_image`, `rrf_weight_path_keyword` of `[vector_db]`
 
 Presets consisting only of keys not shown for that kind of instance are not shown (skill tuning workers show few keys, so they have no presets).
 When the dashboard is displayed in English, the description of each key comes from the English catalog `admin/ini_catalog_en.py` (the Japanese comments in config.ini are authoritative).

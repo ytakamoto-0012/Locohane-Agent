@@ -226,10 +226,38 @@ def _docx_block_lines(container) -> list[str]:
 _DOCX_RUN_TEXT = {_w("tab"): "\t", _w("ptab"): "\t", _w("cr"): "\n", _w("noBreakHyphen"): "-"}
 # 段落の文字として読まない要素（テキストボックスは [Text box] として別に読む。削除した文字は w:delText のため読まれない）。
 _DOCX_SKIP = (_w("txbxContent"), _w("del"), _w("moveFrom"), _MC_FALLBACK)
+# 画像の参照（DrawingML の a:blip と、古い形式（VML）の v:imagedata）。
+_NS_VML = "urn:schemas-microsoft-com:vml"
+_IMAGE_REFS = (f"{{{_NS_A}}}blip", f"{{{_NS_VML}}}imagedata")
+
+
+def image_alt_text(element) -> str:
+    """図形・画像（element）の代替テキスト（cNvPr・wp:docPr の descr、無ければ title。VML は alt）。無ければ空文字。"""
+    for child in element.iter():
+        if not isinstance(child.tag, str):
+            continue  # lxml のコメント等
+        local = child.tag.rsplit("}", 1)[-1]
+        if local in ("docPr", "cNvPr"):
+            text = (child.get("descr") or child.get("title") or "").strip()
+            if text:
+                return text
+        elif local == "shape" and child.tag.startswith(f"{{{_NS_VML}}}"):
+            text = (child.get("alt") or "").strip()
+            if text:
+                return text
+    return ""
+
+
+def has_image(element) -> bool:
+    """element の中に画像の参照があるか。"""
+    return any(child.tag in _IMAGE_REFS for child in element.iter())
 
 
 def _docx_paragraph_text(paragraph) -> str:
-    """段落（w:p）の文字。変更履歴で挿入した文字（w:ins）・段落内のコンテンツコントロール・フィールドの表示文字も読む。"""
+    """段落（w:p）の文字。変更履歴で挿入した文字（w:ins）・段落内のコンテンツコントロール・フィールドの表示文字も読む。
+
+    画像（w:drawing・w:pict）に代替テキストがあれば、その位置に "[Image: 代替テキスト]" を入れる。
+    """
     parts: list[str] = []
 
     def walk(element) -> None:
@@ -243,6 +271,8 @@ def _docx_paragraph_text(paragraph) -> str:
             elif tag in _DOCX_RUN_TEXT:
                 parts.append(_DOCX_RUN_TEXT[tag])
             elif tag not in _DOCX_SKIP:
+                if tag in (_w("drawing"), _w("pict")) and has_image(child) and (alt := image_alt_text(child)):
+                    parts.append(f"[Image: {alt}]")
                 walk(child)
 
     walk(paragraph)
@@ -440,6 +470,10 @@ def _xlsx_drawing_notes(read, rels, drawing_part: str, notes: dict[int, list[tup
         for text in texts:
             if text.strip():
                 notes.setdefault(row_number, []).append((col, f"{label} {text}"))
+        # 画像（xdr:pic）の代替テキスト（例: "[Image C5] 製品の外観写真"）。
+        for picture in anchor.iter(f"{{{_NS_XDR}}}pic"):
+            if alt := image_alt_text(picture):
+                notes.setdefault(row_number, []).append((col, f"{label.replace('Shape', 'Image', 1)} {alt}"))
 
 
 def _drawing_anchors(root):
@@ -518,11 +552,12 @@ def _extract_pptx(source) -> list[Segment]:
 
 
 def _pptx_shape_lines(shapes) -> list[str]:
-    """図形の文字・表のセル・グラフのタイトルを並べる。グループ化した図形は中の図形も（入れ子でも）読む。"""
+    """図形の文字・表のセル・グラフのタイトル・画像の代替テキストを並べる。グループ化した図形は中の図形も（入れ子でも）読む。"""
     from xml.etree import ElementTree
 
     from pptx.shapes.graphfrm import GraphicFrame
     from pptx.shapes.group import GroupShape
+    from pptx.shapes.picture import Picture
 
     lines = []
     for shape in shapes:
@@ -530,6 +565,8 @@ def _pptx_shape_lines(shapes) -> list[str]:
         if isinstance(shape, GroupShape):
             lines.extend(_pptx_shape_lines(shape.shapes))
             continue
+        if isinstance(shape, Picture) and (alt := image_alt_text(shape._element)):
+            lines.append(f"[Image] {alt}")
         if shape.has_text_frame:
             lines.append(shape.text_frame.text)
         if isinstance(shape, GraphicFrame) and shape.has_table:

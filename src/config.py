@@ -500,11 +500,15 @@ class Config:
         vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。画像ファイルは
             vector_db_image_input が False ならファイルパスだけを登録する。
         vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。
-        vector_db_image_input: True なら .pdf/.docx/.pptx/.xlsx/.xlsm をページごとの
-            画像にし、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
+        vector_db_image_input: True なら image_input_extensions の文書をページごとの画像にし、それ以外の Office ファイルは
+            中の画像を取り出して（embedded_images）、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
             （マルチモーダルの埋め込みモデルが必要）。
         vector_db_image_input_extensions: image_input = True のときにページ画像も埋め込む文書の形式
             （PAGE_IMAGE_EXTENSIONS のうちの一部。含めない形式は本文だけで埋め込む）。画像ファイルは常に画像で埋め込む。
+        vector_db_embedded_images: image_input = True で、ページ画像にしない Office ファイル（.docx/.pptx/.xlsx/.xlsm）の
+            中に入っている画像（写真・図）を取り出し、1枚ずつ画像として埋め込むか。
+        vector_db_embedded_image_min_px: 取り出す画像の幅・高さの下限（px）。どちらかが下回る画像（アイコン・罫線等）は埋め込まない。
+            0 なら大きさで除かない。
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
         vector_db_office_timeout_seconds: image_input で Office ファイルを PDF に書き出す1回の上限秒数。
             超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。
@@ -1077,6 +1081,8 @@ class Config:
     vector_db_max_file_mb: float
     vector_db_image_input: bool
     vector_db_image_input_extensions: tuple[str, ...]
+    vector_db_embedded_images: bool
+    vector_db_embedded_image_min_px: int
     vector_db_image_dpi: int
     vector_db_office_timeout_seconds: float
     vector_db_ingest_workers: int
@@ -3192,7 +3198,11 @@ def load_config(
         vector_db_max_file_mb=_positive_float(os.getenv("VECTOR_DB_MAX_FILE_MB", vector_db.get("max_file_mb", 50)), "[vector_db].max_file_mb"),
         vector_db_image_input=_as_bool(os.getenv("VECTOR_DB_IMAGE_INPUT", vector_db.get("image_input", False))),
         vector_db_image_input_extensions=_as_page_image_extensions(
-            os.getenv("VECTOR_DB_IMAGE_INPUT_EXTENSIONS", vector_db.get("image_input_extensions", ".pdf, .docx, .pptx"))
+            os.getenv("VECTOR_DB_IMAGE_INPUT_EXTENSIONS", vector_db.get("image_input_extensions", ".pdf"))
+        ),
+        vector_db_embedded_images=_as_bool(os.getenv("VECTOR_DB_EMBEDDED_IMAGES", vector_db.get("embedded_images", True))),
+        vector_db_embedded_image_min_px=_non_negative_int(
+            os.getenv("VECTOR_DB_EMBEDDED_IMAGE_MIN_PX", vector_db.get("embedded_image_min_px", 64)), "[vector_db].embedded_image_min_px"
         ),
         vector_db_image_dpi=_positive_int(os.getenv("VECTOR_DB_IMAGE_DPI", vector_db.get("image_dpi", 100)), "[vector_db].image_dpi"),
         vector_db_office_timeout_seconds=_positive_float(

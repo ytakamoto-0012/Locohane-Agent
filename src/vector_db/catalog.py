@@ -99,7 +99,7 @@ class Collection:
 
 @dataclass(frozen=True)
 class FileRecord:
-    """取り込み済みファイルの記録。mode は埋め込み方（"text" または "text+image"、ingest.file_mode()）。
+    """取り込み済みファイルの記録。mode は埋め込み方（"text"・"text+image"・"text+embedded"・"path"、ingest.file_mode()）。
 
     path_indexed はファイルパスのベクター（store.path_collection_name）を入れ済みか
     （False は導入前に取り込んだファイルで、次の取り込みでパスだけを埋め込む）。

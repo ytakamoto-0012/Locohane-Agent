@@ -23,6 +23,7 @@ from pathlib import Path
 import tempfile
 import threading
 import time
+import zipfile
 from typing import Callable, Collection, Sequence
 
 import httpx
@@ -30,6 +31,7 @@ import httpx
 from ..config import Config
 from .catalog import Catalog, CatalogError, FileRecord, open_catalog
 from .chunking import split_text
+from .embedded_images import EMBEDDED_IMAGE_EXTENSIONS, extract_embedded_images
 from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_model, open_client
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
 from .keyword_index import KeywordIndex, open_keyword_index
@@ -442,16 +444,20 @@ def file_mode(cfg: Config, path: Path) -> str:
     """path の埋め込み方。
 
     [vector_db].image_input = true で、画像ファイルか image_input_extensions の形式なら "text+image"（本文のチャンクに加えて
-    ページ画像も埋め込む。画像ファイルは本文が無いため画像だけ）。image_input = false の画像ファイルは
-    "path"（中身は埋め込まず、ファイルパスだけを登録する）。それ以外は "text"。
+    ページ画像も埋め込む。画像ファイルは本文が無いため画像だけ）。それ以外の Office ファイルは embedded_images = true なら
+    "text+embedded"（本文のチャンクに加えて、ファイルの中の画像を1枚ずつ埋め込む。embedded_images.py）。
+    image_input = false の画像ファイルは "path"（中身は埋め込まず、ファイルパスだけを登録する）。それ以外は "text"。
     """
     return _file_mode(_LoadOptions.from_config(cfg), path)
 
 
-def _page_chunk_text(cfg: Config, path: Path, page: PageImage) -> str:
-    """ページ画像のチャンクの本文（検索結果の抜粋）。ページの文字を chunk_size 文字までにする。"""
+def _page_chunk_text(cfg: Config, path: Path, page: PageImage, mode: str = "text+image") -> str:
+    """ページ画像（mode が "text+embedded" ならファイルの中の画像）のチャンクの本文（検索結果の抜粋）。
+    ページの文字（中の画像は代替テキストと周りの文字）を chunk_size 文字までにする。"""
     text = page.text.strip()
     if not text:
+        if mode == "text+embedded":
+            return "(This is an image embedded in the file, with no description. Check its content in the source image)"
         if path.suffix.lower() in IMAGE_FILE_EXTENSIONS:
             return "(This is an image file. Check its content in the source image)"
         return "(This page has no text. Check its content by rendering the source page as an image)"
@@ -619,6 +625,8 @@ class _LoadOptions:
     image_input_extensions: tuple[str, ...]
     image_dpi: int
     max_file_mb: float
+    embedded_images: bool = False
+    embedded_image_min_px: int = 0
     office_timeout: float = 0.0
     # ページ画像の PNG を書き出す一時フォルダ（取り込み1回ごとに作る。_ingest）。空ならシステムの一時フォルダ。
     pages_dir: str = ""
@@ -632,6 +640,8 @@ class _LoadOptions:
             cfg.vector_db_image_input_extensions,
             cfg.vector_db_image_dpi,
             cfg.vector_db_max_file_mb,
+            cfg.vector_db_embedded_images,
+            cfg.vector_db_embedded_image_min_px,
             cfg.vector_db_office_timeout_seconds,
             pages_dir,
         )
@@ -645,6 +655,8 @@ def _file_mode(options: _LoadOptions, path: Path) -> str:
     suffix = path.suffix.lower()
     if options.image_input and (suffix in IMAGE_FILE_EXTENSIONS or suffix in options.image_input_extensions):
         return "text+image"
+    if options.image_input and options.embedded_images and suffix in EMBEDDED_IMAGE_EXTENSIONS:
+        return "text+embedded"
     return "path" if suffix in IMAGE_FILE_EXTENSIONS else "text"
 
 
@@ -681,7 +693,7 @@ def _load(
     ページ画像は options.pages_dir の下のファイルごとの一時フォルダへ PNG で書き出し（_Prepared.page_dir）、
     メモリーには全ページの画像を持たない（400ページの PDF 等でもメモリーを使い切らないため）。
     """
-    # image_input・image_input_extensions を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
+    # image_input・image_input_extensions・embedded_images を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
     mode = _file_mode(options, path)
     path_text = relative_path_text(folder, path)
     if _is_unchanged(record, mode, st):
@@ -703,12 +715,15 @@ def _load(
                 path_text=path_text,
             )
         chunks = _chunk_segments(options, path, data)
-        del data
         pages: list[PageImage] = []
+        if mode == "text+embedded":
+            page_dir = Path(tempfile.mkdtemp(prefix="file_", dir=options.pages_dir or None))
+            pages = extract_embedded_images(path, data, dpi=options.image_dpi, min_px=options.embedded_image_min_px, out_dir=page_dir)
+        del data
         if mode == "text+image":
             page_dir = Path(tempfile.mkdtemp(prefix="file_", dir=options.pages_dir or None))
             pages = render_pages(path, options.image_dpi, out_dir=page_dir, office_timeout=options.office_timeout or None)
-    except (OSError, ExtractError) as e:
+    except (OSError, ExtractError, zipfile.BadZipFile) as e:
         _remove_dir(page_dir)
         return _Prepared(path, record, mode, "failed", reason=str(e))
     if not pages:
@@ -718,6 +733,8 @@ def _load(
         # 画像だけの PDF 等でも、ファイル名・フォルダ名で探せるようパスだけを登録する。
         if mode == "text+image":
             reason = "There was neither text nor a page that could be rendered as an image"
+        elif mode == "text+embedded":
+            reason = "There was neither text nor an image in the file"
         else:
             reason = "Could not extract text (e.g. a PDF of images only; with [vector_db] image_input = true it can be ingested as images)"
         return _Prepared(path, record, mode, "path_only", stat=st, sha=sha, path_text=path_text, reason=reason)
@@ -910,7 +927,7 @@ class _Writer:
             if not self.image_collection_ready:
                 store.ensure_collection(image_collection_name(name), self.dim)
                 self.image_collection_ready = True
-            image_chunks = [ChunkRecord(p.locator, _page_chunk_text(self.cfg, path, p)) for p in pages]
+            image_chunks = [ChunkRecord(p.locator, _page_chunk_text(self.cfg, path, p, mode)) for p in pages]
             store.replace_source(image_collection_name(name), source, image_chunks, image_vectors)
         else:
             store.delete_source(image_collection_name(name), source)

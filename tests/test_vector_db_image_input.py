@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import dataclasses
+import io
 import json
 from pathlib import Path
 import sqlite3
@@ -195,9 +196,9 @@ def test_image_input_extensions_selects_documents_to_render(env):
     wb = openpyxl.Workbook()
     wb.active.append(["品番", "A-100"])
     wb.save(docs / "parts.xlsx")
-    # 既定（.pdf .docx .pptx）では Excel は画像にせず、本文だけで埋め込む。
-    default = dataclasses.replace(cfg, vector_db_image_input_extensions=(".pdf", ".docx", ".pptx"))
-    assert (ingest.file_mode(default, docs / "parts.xlsx"), ingest.file_mode(default, docs / "manual.pdf")) == ("text", "text+image")
+    # .pdf だけなら Excel はページ画像にしない（中の画像を取り出す。画像の無いブックは本文だけ）。
+    default = dataclasses.replace(cfg, vector_db_image_input_extensions=(".pdf",))
+    assert (ingest.file_mode(default, docs / "parts.xlsx"), ingest.file_mode(default, docs / "manual.pdf")) == ("text+embedded", "text+image")
     result = ingest.ingest_collection(default, "docs", **kwargs)
     assert (result.added, result.failed) == (3, [])
     assert env["rendered"] == [("manual.pdf", 72)]
@@ -272,7 +273,10 @@ def test_config_reads_image_input(tmp_path, monkeypatch):
     from src.config import load_config
 
     monkeypatch.setenv("COMMON_DATA_DIR", str(tmp_path / "data" / "${instance}"))
-    for key in ("VECTOR_DB_IMAGE_INPUT", "VECTOR_DB_IMAGE_INPUT_EXTENSIONS", "VECTOR_DB_IMAGE_DPI", "VECTOR_DB_IMAGE_MIN_SCORE"):
+    for key in (
+        "VECTOR_DB_IMAGE_INPUT", "VECTOR_DB_IMAGE_INPUT_EXTENSIONS", "VECTOR_DB_IMAGE_DPI", "VECTOR_DB_IMAGE_MIN_SCORE",
+        "VECTOR_DB_EMBEDDED_IMAGES", "VECTOR_DB_EMBEDDED_IMAGE_MIN_PX",
+    ):
         monkeypatch.delenv(key, raising=False)
     default = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
     assert (default.vector_db_image_input, default.vector_db_image_dpi, default.vector_db_image_min_score) == (False, 100, 0.1)
@@ -280,13 +284,20 @@ def test_config_reads_image_input(tmp_path, monkeypatch):
     path.write_text(json.dumps({"vector_db": {"image_input": "true", "image_dpi": "150"}}), encoding="utf-8")
     cfg = load_config(overrides_path=path, instance_name="inst1")
     assert (cfg.vector_db_image_input, cfg.vector_db_image_dpi) == (True, 150)
-    assert default.vector_db_image_input_extensions == (".pdf", ".docx", ".pptx")
+    assert default.vector_db_image_input_extensions == (".pdf",)
+    assert (default.vector_db_embedded_images, default.vector_db_embedded_image_min_px) == (True, 64)
     path.write_text(json.dumps({"vector_db": {"image_input_extensions": "PDF, .xlsx"}}), encoding="utf-8")
     assert load_config(overrides_path=path, instance_name="inst1").vector_db_image_input_extensions == (".pdf", ".xlsx")
     path.write_text(json.dumps({"vector_db": {"image_input_extensions": ""}}), encoding="utf-8")
     assert load_config(overrides_path=path, instance_name="inst1").vector_db_image_input_extensions == ()
     path.write_text(json.dumps({"vector_db": {"image_input_extensions": ".pdf, .md"}}), encoding="utf-8")
     with pytest.raises(ValueError, match=r"image_input_extensions.*\.md"):
+        load_config(overrides_path=path, instance_name="inst1")
+    path.write_text(json.dumps({"vector_db": {"embedded_images": "false", "embedded_image_min_px": "0"}}), encoding="utf-8")
+    cfg = load_config(overrides_path=path, instance_name="inst1")
+    assert (cfg.vector_db_embedded_images, cfg.vector_db_embedded_image_min_px) == (False, 0)
+    path.write_text(json.dumps({"vector_db": {"embedded_image_min_px": "-1"}}), encoding="utf-8")
+    with pytest.raises(ValueError, match="embedded_image_min_px"):
         load_config(overrides_path=path, instance_name="inst1")
     path.write_text(json.dumps({"vector_db": {"image_dpi": "0"}}), encoding="utf-8")
     with pytest.raises(ValueError, match="image_dpi"):
@@ -387,3 +398,135 @@ def test_old_catalog_gets_schedule_columns(tmp_path):
         assert (c.schedule_enabled, c.schedule_times, c.schedule_weekdays) == (True, ("09:05",), (5, 6))
         with pytest.raises(vcat.CatalogError):
             catalog.update("docs", schedule_times=[])
+
+
+# --- Office ファイルの中の画像（embedded_images） ----------------------------------
+
+
+def _save_png(path: Path, size: tuple[int, int], color: str) -> Path:
+    from PIL import Image
+
+    Image.new("RGB", size, color).save(path)
+    return path
+
+
+def _office_files_with_images(folder: Path) -> None:
+    """中に画像のある manual.docx・slides.pptx・parts.xlsx を folder に作る。"""
+    import docx
+    import openpyxl
+    from openpyxl.drawing.image import Image as XLImage
+    import pptx
+    from pptx.util import Inches
+
+    tmp = folder.parent / "images"
+    tmp.mkdir(exist_ok=True)
+    photo = _save_png(tmp / "photo.png", (300, 200), "red")
+    chart = _save_png(tmp / "chart.png", (200, 300), "green")
+    icon = _save_png(tmp / "icon.png", (16, 16), "blue")
+
+    document = docx.Document()
+    document.add_paragraph("溶接の手順")
+    document.add_picture(str(photo))
+    document.inline_shapes[0]._inline.docPr.set("descr", "溶接部の写真")
+    document.add_paragraph("図1 溶接ビード")
+    document.add_picture(str(icon))  # 小さい画像は埋め込まない
+    document.add_picture(str(chart))
+    document.save(folder / "manual.docx")
+
+    presentation = pptx.Presentation()
+    presentation.slides.add_slide(presentation.slide_layouts[6])
+    slide = presentation.slides.add_slide(presentation.slide_layouts[5])
+    slide.shapes.title.text = "検査手順"
+    picture = slide.shapes.add_picture(str(photo), Inches(1), Inches(2))
+    picture._element.nvPicPr.cNvPr.set("descr", "外観検査の様子")
+    slide.shapes.add_picture(str(photo), Inches(4), Inches(2))  # 同じ画像は1回だけ
+    presentation.save(folder / "slides.pptx")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "集計"
+    sheet["A1"] = "品番"
+    sheet.add_image(XLImage(str(chart)), "C5")
+    workbook.save(folder / "parts.xlsx")
+
+
+def test_extract_embedded_images_from_office_files(tmp_path):
+    from PIL import Image
+
+    from src.vector_db.embedded_images import extract_embedded_images
+
+    _office_files_with_images(tmp_path)
+    docx_images = extract_embedded_images(tmp_path / "manual.docx", dpi=100, min_px=64)
+    assert [p.locator for p in docx_images] == ["image (word/media/image1.png)", "image (word/media/image3.png)"]
+    first = docx_images[0].text.splitlines()
+    # 代替テキストと、前後の段落（見出し・図の説明）。
+    assert first[0] == "[Image] 溶接部の写真" and "溶接の手順" in first and "図1 溶接ビード" in first
+    with Image.open(io.BytesIO(docx_images[0].png)) as img:
+        assert (img.format, img.size) == ("PNG", (300, 200))
+    # min_px = 0 なら小さい画像も含める。
+    assert len(extract_embedded_images(tmp_path / "manual.docx", dpi=100, min_px=0)) == 3
+
+    [slide_image] = extract_embedded_images(tmp_path / "slides.pptx", dpi=100, min_px=64)
+    assert slide_image.locator == "Slide 2 image (ppt/media/image1.png)"
+    assert slide_image.text.splitlines()[:2] == ["[Image] 外観検査の様子", "検査手順"]
+
+    [sheet_image] = extract_embedded_images(tmp_path / "parts.xlsx", dpi=100, min_px=64, out_dir=tmp_path)
+    assert sheet_image.locator == "Sheet: 集計 C5 image (xl/media/image1.png)"
+    assert sheet_image.png == b"" and sheet_image.read_png().startswith(_PNG_SIGNATURE)
+
+
+def test_extract_embedded_images_skips_images_that_cannot_be_opened(tmp_path):
+    import zipfile
+
+    from src.vector_db.embedded_images import extract_embedded_images
+
+    _office_files_with_images(tmp_path)
+    broken = tmp_path / "broken.docx"
+    with zipfile.ZipFile(tmp_path / "manual.docx") as source, zipfile.ZipFile(broken, "w") as copy:
+        for item in source.infolist():
+            data = source.read(item.filename)
+            copy.writestr(item, b"<svg/>" if item.filename == "word/media/image1.png" else data)
+    assert [p.locator for p in extract_embedded_images(broken, dpi=100, min_px=64)] == ["image (word/media/image3.png)"]
+
+
+def test_extract_segments_include_alt_text_of_images(tmp_path):
+    from src.vector_db.extract import extract_segments
+
+    _office_files_with_images(tmp_path)
+    [document] = extract_segments(tmp_path / "manual.docx")
+    assert document.text.splitlines()[:3] == ["溶接の手順", "[Image: 溶接部の写真]", "図1 溶接ビード"]
+    slides = extract_segments(tmp_path / "slides.pptx")
+    assert "[Image] 外観検査の様子" in slides[0].text.splitlines()
+    [sheet] = extract_segments(tmp_path / "parts.xlsx")
+    assert sheet.text.splitlines()[1].startswith("[Image C5] ")
+
+
+def test_office_files_embed_their_images_instead_of_page_images(env):
+    cfg, kwargs, docs = env["cfg"], env["kwargs"], env["docs"]
+    _office_files_with_images(docs)
+    cfg = dataclasses.replace(
+        cfg, vector_db_image_input_extensions=(".pdf",), vector_db_embedded_images=True, vector_db_embedded_image_min_px=64
+    )
+    assert {ingest.file_mode(cfg, docs / n) for n in ("manual.docx", "slides.pptx", "parts.xlsx")} == {"text+embedded"}
+    result = ingest.ingest_collection(cfg, "docs", **kwargs)
+    assert (result.added, result.failed) == (5, [])
+    # Office は画像化しない（ページ画像は PDF だけ）。
+    assert env["rendered"] == [("manual.pdf", 72)]
+    assert _image_store_sources(cfg, kwargs) == ["manual.docx", "manual.pdf", "parts.xlsx", "slides.pptx"]
+    hits = search.search(cfg, "外観検査の様子", collection="docs", top_k=20, **kwargs).hits
+    slide = next(h for h in hits if h.locator == "Slide 2 image (ppt/media/image1.png)")
+    assert slide.matched == ("image",) and slide.text.startswith("[Image] 外観検査の様子")
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        records = {Path(p).name: r for p, r in catalog.files("docs").items()}
+    # manual.docx は本文1チャンク＋画像2枚。
+    assert (records["manual.docx"].mode, records["manual.docx"].chunk_count) == ("text+embedded", 3)
+
+    # embedded_images = false にすると、Office ファイルだけ本文だけで取り込み直す（中の画像のベクターは消える）。
+    off = dataclasses.replace(cfg, vector_db_embedded_images=False)
+    result = ingest.ingest_collection(off, "docs", **kwargs)
+    assert (result.updated, result.unchanged) == (3, 2)
+    assert _image_store_sources(off, kwargs) == ["manual.pdf"]
+
+    # image_input_extensions に加えた形式は、従来どおりページ画像にする。
+    pages = dataclasses.replace(cfg, vector_db_image_input_extensions=(".pdf", ".pptx"))
+    assert ingest.file_mode(pages, docs / "slides.pptx") == "text+image"

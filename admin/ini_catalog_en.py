@@ -921,9 +921,10 @@ DESCRIPTIONS: dict[str, str] = {
     'vector_db.image_input': (
         'Whether to input images to the embeddings (true/false).\n'
         'false (default): extract text from all formats, split it into chunks and embed it as text.\n'
-        'true         : for the formats in image_input_extensions (default .pdf .docx .pptx), in addition to the text chunks, also keep embeddings of each page\n'
+        'true         : for the formats in image_input_extensions (default .pdf), in addition to the text chunks, also keep embeddings of each page\n'
         '(each sheet for Excel) rendered as an image, the same as the render skills (docx-render, etc.) (figures, tables and scanned PDFs become searchable too).\n'
-        'Other formats (.md .txt .csv and formats not in image_input_extensions) are embedded as text only, as before.\n'
+        'Office files not in image_input_extensions (by default .docx .pptx .xlsx .xlsm) embed, in addition to the text chunks, each image (photo, figure)\n'
+        'inside the file as an image (see embedded_images). .md .txt .csv are embedded as text only, as before.\n'
         'Image vectors go into a collection separate from the text (<name>.image), and search merges the text and image results by rank (see image_min_score).\n'
         'Image files (.png .jpg .heic, etc.) are also ingested, each embedded as one chunk (multi-page TIFFs per page).\n'
         'Image files have their EXIF rotation applied and are shrunk so that the long side is at most the long side of A4 rendered at image_dpi (1169px at 100 DPI).\n'
@@ -937,9 +938,22 @@ DESCRIPTIONS: dict[str, str] = {
     'vector_db.image_input_extensions': (
         'Document formats whose page images are also embedded when image_input = true (comma-separated; choose from .pdf .docx .pptx .xlsx .xlsm; if empty, none are rendered).\n'
         'Formats not included are embedded as text only. Image files (.png .jpg .heic, etc.) are embedded as images whenever image_input = true, regardless of this setting.\n'
-        'Excel (.xlsx .xlsm) is not included by default: exporting each sheet to PDF with Excel takes the longest time in ingestion, large sheets shrunk to one page\n'
-        'become too small to read so their image embeddings are of little use, and cell values, shapes, comments and chart titles are ingested as text.\n'
+        'Office (.docx .pptx .xlsx .xlsm) is not included by default: exporting to PDF with Office takes the longest time in ingestion (and needs Windows and\n'
+        'Microsoft Office), while the text, shapes, comments and chart titles are ingested as text and the images inside are ingested as images by embedded_images.\n'
         'In the ingestion (differential) after changing it, files of the formats whose embedding method changes are re-ingested (image vectors are deleted or added).'
+    ),
+    'vector_db.embedded_images': (
+        'With image_input = true, whether to take out the images (photos, figures) inside Office files (.docx .pptx .xlsx .xlsm) not in image_input_extensions\n'
+        'and embed each of them as an image (true/false). Office is not started; the images in the file are read as they are (fast).\n'
+        'Only images placed in the body, slides and sheets are read (not logos in slide masters or headers), and the same image is embedded only once.\n'
+        'The source location is the slide or sheet cell plus the name of the image in the file, such as "Slide 3 image (ppt/media/image2.png)" or\n'
+        '"Sheet: Summary C5 image (xl/media/image1.png)". The excerpt of search results has the alt text and the surrounding text (slide text, paragraphs before and after).\n'
+        'If false, Office files are embedded as text only. The alt text of images goes into the text as "[Image] ..." regardless of this setting.\n'
+        'In the ingestion (differential) after switching, Office files are re-ingested.'
+    ),
+    'vector_db.embedded_image_min_px': (
+        'Lower limit (px, 0 or more) of the width and height of images taken out by embedded_images. Images smaller in either (icons, bullet symbols,\n'
+        'rules, etc.) are not embedded. 0 means images are not excluded by size. After changing it, rebuild to apply it to already ingested files.'
     ),
     'vector_db.image_dpi': (
         'Resolution (DPI) at which pages are rendered as images when image_input = true. Raising it captures finer text, but images get larger and embedding takes longer.'

@@ -334,7 +334,7 @@ def test_office_export_is_killed_after_timeout(fake_office, tmp_path, monkeypatc
 
 def test_office_timeout_becomes_a_failed_file(env, monkeypatch):
     (env["docs"] / "stuck.docx").write_bytes(b"x")
-    cfg = _config(env, vector_db_image_input=True, vector_db_office_timeout_seconds=7)
+    cfg = _config(env, vector_db_image_input=True, vector_db_image_input_extensions=(".pdf", ".docx"), vector_db_office_timeout_seconds=7)
     seen = {}
 
     def fake_render(path, dpi, *, out_dir=None, office_timeout=None):

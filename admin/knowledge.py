@@ -561,6 +561,7 @@ def build_router(
             "include_extensions": list(effective_extensions(cfg.vector_db_include_extensions)),
             "image_input": cfg.vector_db_image_input,
             "image_input_extensions": list(cfg.vector_db_image_input_extensions),
+            "embedded_images": cfg.vector_db_embedded_images,
             "max_file_mb": cfg.vector_db_max_file_mb,
             "collections": [_collection_dict(c, running.get(c.name), referenced_by.get(c.name)) for c in collections],
             # コピーを始めた直後で、まだ catalog にできていないコピー先のジョブ・定義の作成で失敗したコピーのジョブ。

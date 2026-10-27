@@ -93,7 +93,10 @@ def search_documents(query: str, collection: str = "", top_k: int = 0) -> str:
     Results that include "matched: image" match the look of the page (figures, tables, photos,
     etc.). To check the content, pass the `@N` to analyze_image if the source is an image file; for
     PDF/Office, render that page as an image with a render skill (pdf-tools / docx-render /
-    pptx-render / excel-render) and then look at it with analyze_image.
+    pptx-render / excel-render) and then look at it with analyze_image. A location ending in
+    "image (<part name>)" (e.g. "Slide 3 image (ppt/media/image2.png)") is a picture embedded in
+    the Office file: the file is a ZIP, so take out that part and look at it with analyze_image,
+    or render that slide/sheet with a render skill.
     Files that cannot be found from their text, such as photos and drawings, can be found by file
     and folder name with search_document_paths.
     Include the sources (file name, page, etc.) in your answer.

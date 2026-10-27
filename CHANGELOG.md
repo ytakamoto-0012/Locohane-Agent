@@ -24,6 +24,19 @@
 - 同じく「取り込み対象キーワード」を設定できるようにしました。書いた場合は、取り込み元フォルダより下のパスに
   どれかのキーワードを含むファイルだけを取り込みます（書き方は除外キーワードと同じで、`*.pdf` なら PDF だけ。
   除外キーワードにも当てはまるファイルは取り込みません）。API では `include_keywords`（文字列の配列）で指定します。
+- ナレッジの取り込みで `image_input = true` のとき、Word・PowerPoint・Excel のファイルの中の画像（写真・図）を取り出し、1枚ずつ
+  画像として埋め込むようにしました（`[vector_db] embedded_images`、既定 true）。Office は起動せず、ファイルの中の画像をそのまま読みます。
+  検索結果の出典は `Slide 3 image (ppt/media/image2.png)`・`Sheet: 集計 C5 image (xl/media/image1.png)` のような位置で、抜粋には
+  代替テキストと周りの文字が入ります。幅か高さが `[vector_db] embedded_image_min_px`（既定 64px）より小さい画像（アイコン等）は除きます。
+- ナレッジの取り込みで、Office ファイルの画像の代替テキストを本文に入れるようにしました（Word は `[Image: …]`、PowerPoint は `[Image] …`、
+  Excel は置かれたセルの行に `[Image C5] …`）。`image_input` に関係なく入ります。
+
+### 変更
+
+- `[vector_db] image_input_extensions` の既定値を `.pdf, .docx, .pptx` から `.pdf` に変更し、`image_input = true` でも Word・PowerPoint を
+  既定でページ画像にしないようにしました（Excel と同じく、本文と中の画像で埋め込みます）。Office で PDF に書き出すため取り込みで
+  一番時間がかかるうえ、Windows と Microsoft Office も要るためです。従来どおりページ画像にするには `image_input_extensions` に
+  `.docx`・`.pptx` を加えます（加えた形式は中の画像を取り出さず、ページ画像で埋め込みます）。
 
 ### 修正
 
@@ -35,6 +48,11 @@
 ### 移行時の注意
 
 - 既存の環境では `pip install -r requirements.txt` を実行し直して、Pillow を 13.0.0 以上に更新してください。
+- `image_input = true` のインスタンスでは、次の「取り込み（差分）」で Word・PowerPoint・Excel のファイルが本文と中の画像で取り込み直され、
+  Word・PowerPoint のページ画像のベクターは消えます（`image_input_extensions` を `config.ini` の既定のまま使っている場合）。
+  ページ画像のまま使うには、設定ダッシュボードで `image_input_extensions` に `.docx, .pptx` を加えてください。
+- 画像の代替テキストを、取り込み済みで内容の変わっていないファイルにも反映するには、ナレッジ画面で「再構築」してください
+  （`image_input = false` のインスタンスでは、差分の取り込みでは変わっていないファイルを読み直しません）。
 
 ## [0.4.2] - 2026-10-27
 
