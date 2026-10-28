@@ -305,6 +305,7 @@ def build_router(
     embedding_provider: Callable[[str, str], EmbeddingProvider | None] = lambda _target, _llm: None,
     model_factory: Callable[[Config], Any] | None = None,
     guide_path: Path = GUIDE_PATH,
+    llm_instance_setting: Callable[[], str] | None = None,
 ) -> APIRouter:
     """管理アシスタント API の router を作る。
 
@@ -320,13 +321,17 @@ def build_router(
         embedding_provider: (相談対象, 回答に使う LLM のインスタンス) → 検索に使う埋め込み（無ければ None）。
         model_factory: 設定 → チャットモデル（awaitable 可。テスト用の差し替え口。既定は src.llm.build_model）。
         guide_path: 画面ガイドの md（毎回読み直す）。
+        llm_instance_setting: 回答に使う LLM のインスタンス（[admin] assistant_llm_instance）を返す関数。相談のたびに
+            呼ぶ（設定ダッシュボードの「管理者設定」で変えたら再起動なしで効かせるため）。省略時は admin_config の値。
     """
     router = APIRouter()
     enabled = admin_config.admin_assistant_enabled
     max_keys = admin_config.admin_assistant_max_keys
     max_docs = admin_config.admin_assistant_max_docs
     max_history = admin_config.admin_assistant_max_history_messages
-    fixed_llm_instance = admin_config.admin_assistant_llm_instance
+
+    def _fixed_llm_instance() -> str:
+        return llm_instance_setting() if llm_instance_setting is not None else admin_config.admin_assistant_llm_instance
 
     def _require_enabled() -> None:
         if not enabled:
@@ -345,7 +350,7 @@ def build_router(
 
     @router.get("/api/assistant/status")
     def assistant_status(user: str = Depends(require_login)):
-        return {"enabled": enabled, "llm_instance": fixed_llm_instance or None}
+        return {"enabled": enabled, "llm_instance": _fixed_llm_instance() or None}
 
     @router.post("/api/assistant/chat")
     async def assistant_chat(body: ChatBody, user: str = Depends(require_login), _csrf: None = Depends(require_csrf)):
@@ -354,7 +359,7 @@ def build_router(
         messages = [m for m in body.messages if m.content.strip()][-max_history:]
         if not messages or messages[-1].role != "user":
             raise HTTPException(status_code=400, detail=_t("最後のメッセージは相談内容（role=user）にしてください。"))
-        llm_instance = fixed_llm_instance or body.instance
+        llm_instance = _fixed_llm_instance() or body.instance
         if llm_instance != body.instance:
             instance_kind(llm_instance)
 
@@ -427,7 +432,8 @@ def build_router(
                 yield _ndjson(
                     {
                         "type": "error",
-                        "message": _t("LLM（インスタンス {0!r} の [llm] 接続先）から応答を得られませんでした: {1}", llm_instance, exc),
+                        "message": _t("LLM（インスタンス {0!r} の [llm] 接続先）から応答を得られませんでした: {1}", llm_instance, exc)
+                        + _t("（「管理者設定」の「回答に使う LLM」で、LLM に接続できるインスタンスを選べます）"),
                     }
                 )
                 return

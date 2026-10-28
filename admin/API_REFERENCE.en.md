@@ -585,6 +585,23 @@ cmd:
 %C% %BASE%/api/instances/default/knowledge/collections/manuals/job
 ```
 
+## Admin settings
+
+Settings shared by all instances (`[vector_db] ingest_workers`, `ingest_processes`, `[admin] assistant_llm_instance`, `assistant_embedding_instance`).
+Saved to `<instances_dir>/admin_settings.json`; they take precedence over config.ini (and apply without a restart).
+
+```bash
+# Current value (value), config.ini value (default) and source (source: dashboard / config.ini / env) of each item, and the instances (llm: main_url endpoints)
+$C $BASE/api/admin-settings
+# Save (keys are "<section>.<key>"; values equal to config.ini are not kept as overrides; invalid values or unknown instances are 400)
+$C -X PUT $BASE/api/admin-settings -H "$H" -H "$J" \
+  -d '{"values":{"vector_db.ingest_workers":2,"vector_db.ingest_processes":0,"admin.assistant_llm_instance":"s_lab"}}'
+# Delete the values saved on the screen and go back to the config.ini values
+$C -X DELETE $BASE/api/admin-settings -H "$H"
+# Whether the instance's [llm] main_url can be reached (GET /models to each endpoint; ok, endpoints[].ok/detail)
+$C -X POST $BASE/api/admin-settings/check-llm -H "$H" -H "$J" -d '{"instance":"s_lab"}'
+```
+
 ## Data backup
 
 Saves `[admin] instances_dir` and the `[paths] common_data_dir` of all instances to the destination as a dated zip (shared by all instances).

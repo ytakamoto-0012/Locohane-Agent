@@ -33,6 +33,7 @@ from src.version import __version__
 from . import api_docs, assistant, assistant_index, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
 from . import ini_catalog_en
 from . import instances as inst
+from . import admin_settings as admin_settings_api
 from . import data_backup as data_backup_api
 from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
@@ -1175,6 +1176,24 @@ app.include_router(_data_backup_router)
 
 
 # ---------------------------------------------------------------------------
+# 管理者設定（全インスタンス共通の設定。admin/admin_settings.py）
+# ---------------------------------------------------------------------------
+
+app.include_router(
+    admin_settings_api.build_router(
+        require_login=require_login,
+        require_csrf=require_csrf,
+        instances_root=INSTANCES_ROOT,
+        config_ini_path=CONFIG_INI_PATH,
+        audit_log_path=AUDIT_LOG_PATH,
+        client_ip=_client_ip,
+        config_loader=lambda name: monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name),
+        list_instances=lambda: _assistant_instances(),
+    )
+)
+
+
+# ---------------------------------------------------------------------------
 # 管理アシスタント（右上の「AIに相談」。admin/assistant.py。設定は読むだけで変更しない）
 # ---------------------------------------------------------------------------
 
@@ -1219,7 +1238,8 @@ def _assistant_embedding(target: str, llm_instance: str):
     """検索に使う埋め込み（[admin] assistant_use_embedding・assistant_embedding_instance）。無ければ None。"""
     if not _cfg.admin_assistant_use_embedding:
         return None
-    fixed = _cfg.admin_assistant_embedding_instance
+    # 「管理者設定」で変えた値を再起動なしで効かせるため、相談のたびに読み直す。
+    fixed = admin_settings_api.current_admin_config(CONFIG_INI_PATH).admin_assistant_embedding_instance
     others = sorted(inst.list_instance_names(INSTANCES_ROOT))
     for name in dict.fromkeys([fixed] if fixed else [llm_instance, target, *others]):
         try:
@@ -1244,6 +1264,7 @@ app.include_router(
         instance_kind=lambda name: _require_instance(name).kind,
         config_loader=lambda name: monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name),
         index=_assistant_index,
+        llm_instance_setting=lambda: admin_settings_api.current_admin_config(CONFIG_INI_PATH).admin_assistant_llm_instance,
         embedding_provider=_assistant_embedding,
     )
 )

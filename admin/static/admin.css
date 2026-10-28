@@ -473,6 +473,16 @@ input.narrow { width: 80px; }
   .theme-section-patch > details > summary { margin: 0 -10px; padding: 10px; }
 }
 
+/* 管理者設定（admin_settings.js） */
+.admin-settings .admin-setting { max-width: 760px; margin: 10px 0 16px; }
+.admin-setting-label { font-weight: 600; margin-right: 8px; }
+.admin-setting-source { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 8px; border: 1px solid var(--border); color: var(--text-dim); margin-right: 6px; }
+.admin-setting-source.source-dashboard { border-color: var(--accent); color: var(--accent); }
+.admin-setting-source.source-env { border-color: var(--warn); color: var(--warn); }
+.admin-settings select, .admin-settings input[type="number"] { display: block; margin-top: 4px; max-width: 100%; }
+.admin-settings .ok-text { color: var(--ok); }
+.admin-settings-actions { margin-top: 12px; }
+
 /* データバックアップ（data_backup.js） */
 .data-backup-status { margin: 10px 0 16px; padding: 10px 12px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); max-width: 760px; }
 .data-backup-status .inline-actions { margin-top: 8px; }

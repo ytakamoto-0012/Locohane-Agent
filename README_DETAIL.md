@@ -1378,7 +1378,7 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
 - **停止**: 「停止」を押すと新しいファイル・バッチを始めず（全ファイルの準備を始めた後でも、残りの埋め込みを送らない）、
   送信中の埋め込みが返るのを待って、埋め込みまで終わったファイルだけを記録して止まる（ボタンは押した時点で「停止中…」になる）。
 - **並列数の共有**: `ingest_workers`・`ingest_processes` は全インスタンス共通の設定で（インスタンス別の上書きはできず、
-  `config.ini` を直接編集する）、設定ダッシュボードの取り込みは全インスタンス・全コレクションの**合計で**この並列数までしか
+  設定ダッシュボードの「管理者設定」か `config.ini` で変える）、設定ダッシュボードの取り込みは全インスタンス・全コレクションの**合計で**この並列数までしか
   準備・埋め込みを動かさない（複数のコレクションを同時に取り込んでも、埋め込みサーバー・PC への負荷は1つのときと同じ）。
   超える分は空きを待ち、空いた枠は先に始めた取り込みから順に使う（`src/vector_db/ingest.py` の `IngestSlots`）。
   並列数の変更は次に始める取り込みから反映する（管理ツールの再起動は不要）。
@@ -1704,7 +1704,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedded_image_min_px` | `embedded_images` で取り出す画像の幅・高さの下限（px、既定 64）。どちらかが下回る画像（アイコン等）は埋め込まない。0 なら大きさで除かない | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | `image_input = true` で Office ファイルを PDF に書き出す1回の上限秒数（既定180）。超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、そのファイルを失敗一覧に載せる | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
-| `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの取り込みは全インスタンス・全コレクションの合計でこの並列数まで） | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる。設定ダッシュボードの取り込みは全インスタンス・全コレクションの合計でこの並列数まで） | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | 取り込み元フォルダの走査で同時に読むフォルダの数（スレッド数、既定8）。ファイルサーバー上のフォルダで効く | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | 1コレクションで取り込む最大ファイル数（既定1000000）。超えた分は取り込まず、ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ。「文書の取り込み」参照） | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
 | `[vector_db]` | `ingest_processes` | 取り込みで本文の抽出・ページの画像化を行う子プロセスの数（既定0＝子プロセスを使わず `ingest_workers` のスレッドで行う）。CPU のコアに余裕があり PDF・Excel 等が多いときに 2 以上にする。**全インスタンス共通**（インスタンス別に上書きできない） | `VECTOR_DB_INGEST_PROCESSES` |
@@ -1742,7 +1742,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[admin]` | `backup_keep` | インスタンスごとの設定バックアップの保持世代数 | `ADMIN_BACKUP_KEEP` |
 | `[admin]` | `stop_apps_on_exit` | 管理ツール終了時に、子プロセスとして起動した本体インスタンスも道連れで停止するか | `ADMIN_STOP_APPS_ON_EXIT` |
 | `[admin]` | `assistant_enabled` | ダッシュボード右上の「AIに相談」（管理アシスタント）を有効にするか。false でボタンを出さず API も 404 | `ADMIN_ASSISTANT_ENABLED` |
-| `[admin]` | `assistant_llm_instance` | 管理アシスタントの回答に使う LLM 接続先を取るインスタンス名。空欄なら相談対象インスタンス自身の `[llm]` | `ADMIN_ASSISTANT_LLM_INSTANCE` |
+| `[admin]` | `assistant_llm_instance` | 管理アシスタントの回答に使う LLM 接続先を取るインスタンス名。空欄なら相談対象インスタンス自身の `[llm]`。設定ダッシュボードの「管理者設定」で変えられる（インスタンス別には変更できない） | `ADMIN_ASSISTANT_LLM_INSTANCE` |
 | `[admin]` | `assistant_max_keys` | 相談内容に近い config.ini のキーを AI に渡す最大件数 | `ADMIN_ASSISTANT_MAX_KEYS` |
 | `[admin]` | `assistant_max_docs` | 相談内容に近い README_DETAIL.md・API リファレンスの段落を AI に渡す最大件数（0 で渡さない） | `ADMIN_ASSISTANT_MAX_DOCS` |
 | `[admin]` | `assistant_use_embedding` | 相談内容に近いキー・段落を選ぶのに埋め込み（`[vector_db] embedding_url`）を使うか。false なら文字2-gram だけ | `ADMIN_ASSISTANT_USE_EMBEDDING` |
@@ -2044,6 +2044,7 @@ instances/
 │   └── app_stdout.log           # 本体プロセスの標準出力
 ├── <他のインスタンス名>/
 │   └── ...（同上）
+├── admin_settings.json          # 設定ダッシュボードの「管理者設定」で保存した全インスタンス共通の設定（「管理者設定」節）
 ├── data_backup.json             # 設定ダッシュボードで保存したデータのバックアップの設定（「データのバックアップ」節）
 ├── _admin_logs/                 # 管理ツールの動作ログ（admin_*.log。ナレッジの取り込み・削除の経過等。[log] max_lines 行で切り替え）
 └── admin_changes.log            # 全インスタンス共通の変更履歴（JSON Lines）
@@ -2175,6 +2176,24 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 起動した（管理ツールが起動に関与しない）インスタンスでも同じように見える
 ようにするためと、管理ツールと本体の間に認証用の秘密を共有する仕組みが
 無いため（本体は `0.0.0.0` で公開されうる）。
+
+### 管理者設定
+
+上部の「管理者設定」タブで、インスタンス別には変えられない全インスタンス共通の設定を変える（`admin/admin_settings.py`）。
+保存した値は `<instances_dir>/admin_settings.json` に持ち、`config.ini` より優先する（`load_config()` が config.ini の後・
+インスタンス別の `config_overrides.json` の前に重ねる。各項目に「この画面で設定」「config.ini の値」「環境変数で上書き中」の
+どれかを出し、環境変数で上書きされている項目は編集できない）。「config.ini の値に戻す」で画面の値を消す。
+管理ツールを再起動しなくても、次の取り込み・次の相談から効く。変更は変更履歴（`admin_settings_save`）に残る。
+
+| 項目 | キー | 内容 |
+|---|---|---|
+| 取り込みの並列数 | `[vector_db] ingest_workers` | 全インスタンス・全コレクションの取り込みの合計で、同時に準備するファイル数・同時に送る埋め込みのリクエスト数（「文書の取り込み」参照） |
+| 本文の抽出・画像化の子プロセス数 | `[vector_db] ingest_processes` | 0 ならスレッドで行う。画面にこの PC のコア数を出す |
+| 回答に使う LLM | `[admin] assistant_llm_instance` | 「AIに相談」の回答を作る LLM を、どのインスタンスの `[llm] main_url` から取るか。空なら相談対象のインスタンス自身。インスタンスを選んで「接続を確認」を押すと、その `main_url` の各接続先へ `GET /models` を送ってつながるかを確かめる（モデルは動かさない） |
+| 関係する設定を探す埋め込み | `[admin] assistant_embedding_instance` | 相談内容に近い設定・説明を選ぶ埋め込みサーバーを、どのインスタンスの `[vector_db] embedding_url` から取るか。空なら自動 |
+
+「AIに相談」で「LLM から応答を得られませんでした」となるとき（最初のセットアップで、相談対象のインスタンスの LLM が
+止まっている・未設定のとき等）は、ここで「回答に使う LLM」に動いている LLM を持つインスタンスを選ぶ。
 
 ### データのバックアップ
 

@@ -585,6 +585,23 @@ cmd:
 %C% %BASE%/api/instances/default/knowledge/collections/manuals/job
 ```
 
+## 管理者設定
+
+全インスタンス共通の設定（`[vector_db] ingest_workers`・`ingest_processes`、`[admin] assistant_llm_instance`・`assistant_embedding_instance`）。
+`<instances_dir>/admin_settings.json` に保存し、config.ini より優先する（再起動なしで効く）。
+
+```bash
+# 各項目の現在値（value）・config.ini の値（default）・出どころ（source: dashboard / config.ini / env）と、インスタンス一覧（llm に main_url の接続先）
+$C $BASE/api/admin-settings
+# 保存（キーは "<section>.<key>"。config.ini と同じ値は上書きとして持たない。不正な値・無いインスタンスは 400）
+$C -X PUT $BASE/api/admin-settings -H "$H" -H "$J" \
+  -d '{"values":{"vector_db.ingest_workers":2,"vector_db.ingest_processes":0,"admin.assistant_llm_instance":"s_lab"}}'
+# 画面で保存した値を消して config.ini の値に戻す
+$C -X DELETE $BASE/api/admin-settings -H "$H"
+# インスタンスの [llm] main_url へ接続できるか（各接続先へ GET /models。ok・endpoints[].ok/detail）
+$C -X POST $BASE/api/admin-settings/check-llm -H "$H" -H "$J" -d '{"instance":"s_lab"}'
+```
+
 ## データのバックアップ
 
 `[admin] instances_dir` と全インスタンスの `[paths] common_data_dir` を、日時つきの zip にまとめて保存先へ退避する（全インスタンス共通）。

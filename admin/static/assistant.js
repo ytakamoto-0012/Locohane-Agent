@@ -66,9 +66,15 @@ async function openAssistant(status) {
   if (!shell) return;
   shell.appendChild(clone("tpl-assistant"));
   shell.classList.add("assistant-open");
-  if (status.llm_instance) {
-    $("#assistant-llm-note").textContent = _t(`回答にはインスタンス {0} の LLM 接続先を使います。`, status.llm_instance);
+  // 「管理者設定」で回答に使う LLM を変えられるため、開くたびに読み直す。
+  try {
+    status = await api("/api/assistant/status");
+  } catch (e) {
+    // 読めなければ起動時の状態のまま表示する
   }
+  $("#assistant-llm-note").textContent = status.llm_instance
+    ? _t(`回答にはインスタンス {0} の LLM 接続先を使います（「管理者設定」で変えられます）。`, status.llm_instance)
+    : _t("回答には相談対象のインスタンスの LLM 接続先を使います。つながらないときは「管理者設定」の「回答に使う LLM」で、動いている LLM を持つインスタンスを選んでください。");
   $("#assistant-close-btn").addEventListener("click", closeAssistant);
   $("#assistant-clear-btn").addEventListener("click", () => {
     if (assistantAbort) assistantAbort.abort();

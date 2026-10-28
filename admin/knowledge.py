@@ -12,7 +12,7 @@
 インスタンス間のコピー（src/vector_db/collection_copy.py。取り込みと同じくジョブとしてスレッドで動かす）と、
 別のインスタンスのコレクションの参照（catalog.sqlite の collection_refs。検索は src/vector_db/search.py）も扱う。
 
-取り込みの並列数（config.ini の [vector_db] ingest_workers・ingest_processes）は、全インスタンス・全コレクションの
+取り込みの並列数（[vector_db] ingest_workers・ingest_processes。「管理者設定」画面か config.ini）は、全インスタンス・全コレクションの
 取り込みで1つの枠（src/vector_db/ingest.py の IngestSlots）を共有し、超える分は空き待ちにする
 （インスタンス別の上書きは使わない）。コレクションの削除もジョブにし、同じインスタンスの取り込み・コピーが
 終わってから行う（キーワード索引等をほかのコレクションの取り込みが書き込み中だと「database is locked」になるため。
@@ -412,8 +412,8 @@ def job_workers(snapshot: dict, instance: str, collection: str) -> dict:
 def shared_ingest_limits(config_ini_path: Path) -> tuple[int, int]:
     """全インスタンス共通の取り込みの並列数 (ingest_workers, ingest_processes)。
 
-    config.ini（と環境変数）の値で、インスタンス別の config_overrides.json は重ねない
-    （存在しない overrides_path を渡し、default インスタンスの上書きも読まないようにする）。
+    config.ini に設定ダッシュボードの「管理者設定」（admin_settings.json）と環境変数を重ねた値で、インスタンス別の
+    config_overrides.json は重ねない（存在しない overrides_path を渡し、default インスタンスの上書きも読まないようにする）。
     """
     cfg = load_config(config_path=config_ini_path, overrides_path=Path(os.devnull))
     return cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes

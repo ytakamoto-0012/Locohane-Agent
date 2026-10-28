@@ -42,11 +42,20 @@ DEFAULT_INSTANCES_DIR = "./instances"
 # 起動設定を、管理ツールで変更できてしまう循環を避けるため）。[data_backup] も全インスタンス共通の
 # 管理ツールの設定（データのバックアップ。admin/data_backup.py）のため対象外。
 _OVERRIDE_EXEMPT_SECTIONS = frozenset({"admin", "data_backup"})
-# インスタンス別に上書きできない（全インスタンス共通の）キー。ナレッジの取り込みの並列数は、管理ツールが
-# 全インスタンス・全コレクションの取り込みで1つの枠として共有する（admin/knowledge.py。admin/overrides.py の
-# _GLOBAL_ONLY_KEYS と同じ）。
-_GLOBAL_ONLY_KEYS = frozenset({("vector_db", "ingest_workers"), ("vector_db", "ingest_processes")})
-# _GLOBAL_ONLY_KEYS を上書きしようとした (ファイル, セクション, キー) のうち、警告を出したもの。
+# 設定ダッシュボードの「管理者設定」で変えられる全インスタンス共通のキー（<instances_dir>/admin_settings.json に持ち、
+# config.ini より優先する。admin_settings_path・_apply_admin_settings・admin/admin_settings.py 参照）。
+# インスタンス別の config_overrides.json では上書きできない（_apply_config_overrides が無視する）。ナレッジの取り込みの
+# 並列数は、管理ツールが全インスタンス・全コレクションの取り込みで1つの枠として共有する（admin/knowledge.py）。
+ADMIN_SETTINGS_FILE = "admin_settings.json"
+ADMIN_SETTING_KEYS = frozenset(
+    {
+        ("vector_db", "ingest_workers"),
+        ("vector_db", "ingest_processes"),
+        ("admin", "assistant_llm_instance"),
+        ("admin", "assistant_embedding_instance"),
+    }
+)
+# ADMIN_SETTING_KEYS をインスタンス別に上書きしようとした (ファイル, セクション, キー) のうち、警告を出したもの。
 _warned_global_only: set[tuple[str, str, str]] = set()
 
 # main_routing_strategy / sub_routing_strategy が取りうる値。
@@ -1476,6 +1485,38 @@ def resolve_ssl_files(config_path: Path | None = None) -> tuple[Path, Path] | No
     return cert_path, key_path
 
 
+def admin_settings_path(config_path: Path | None = None) -> Path:
+    """全インスタンス共通の設定（設定ダッシュボードの「管理者設定」）の JSON のパス。
+
+    環境変数 ADMIN_SETTINGS_PATH > <[admin].instances_dir>/admin_settings.json。
+    """
+    raw = os.getenv("ADMIN_SETTINGS_PATH")
+    if raw:
+        return _resolve(PROJECT_ROOT, raw)
+    return resolve_instances_root(config_path) / ADMIN_SETTINGS_FILE
+
+
+def _apply_admin_settings(parser: configparser.ConfigParser, path: Path) -> None:
+    """管理者設定（{"<section>": {"<key>": "<値>"}}）の ADMIN_SETTING_KEYS だけを parser へ重ねる。
+
+    config.ini より優先し、インスタンス別の config_overrides.json・環境変数より弱い
+    （ADMIN_SETTING_KEYS はどれもインスタンス別には上書きできないキー）。
+    """
+    if not path.is_file():
+        return
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"{path}: the top level must be an object (a dict keyed by section name).")
+    for section, values in data.items():
+        if not isinstance(values, dict):
+            raise ValueError(f"{path}: the value of section {section!r} must be an object (a dict keyed by key name).")
+        for key, value in values.items():
+            if (section, key) not in ADMIN_SETTING_KEYS or not parser.has_section(section):
+                logger.warning("%s: ignoring [%s].%s because it is not a setting of the admin settings screen.", path, section, key)
+                continue
+            parser.set(section, key, str(value))
+
+
 def default_overrides_path(config_path: Path | None = None) -> Path:
     """default インスタンスの config_overrides.json のパスを返す。"""
     return resolve_instances_root(config_path) / DEFAULT_INSTANCE_NAME / "config_overrides.json"
@@ -2841,6 +2882,8 @@ def load_config(
     parser = configparser.ConfigParser(interpolation=None)
     parser.read(path, encoding="utf-8")
 
+    # 全インスタンス共通の設定（設定ダッシュボードの「管理者設定」。admin_settings.json）→ インスタンス別の上書きの順に重ねる。
+    _apply_admin_settings(parser, admin_settings_path(path))
     resolved_overrides_path = overrides_path or _resolve(
         PROJECT_ROOT, os.getenv("CONFIG_OVERRIDES_PATH") or str(default_overrides_path(path))
     )
@@ -3892,7 +3935,7 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
     必要がない（新しいconfig.iniキーを追加した場合も自動的に上書き対象になる）。
 
     [admin] セクションは上書き対象から除外する（管理ツール自身の起動設定を
-    管理ツールから変更できてしまう循環を避けるため）。_GLOBAL_ONLY_KEYS（全インスタンス共通の
+    管理ツールから変更できてしまう循環を避けるため）。ADMIN_SETTING_KEYS（全インスタンス共通の
     キー）も除外する。
 
     Args:
@@ -3938,12 +3981,12 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
                     key,
                 )
                 continue
-            if (section, key) in _GLOBAL_ONLY_KEYS:
+            if (section, key) in ADMIN_SETTING_KEYS:
                 # 管理ツールは設定を何度も読み直すため、同じファイル・キーの警告は1回だけ出す。
                 if (str(path), section, key) not in _warned_global_only:
                     _warned_global_only.add((str(path), section, key))
                     logger.warning(
-                        "%s: ignoring key [%s].%s because it is shared by all instances (edit config.ini directly).",
+                        "%s: ignoring key [%s].%s because it is shared by all instances (change it on the admin settings screen of the settings dashboard).",
                         path,
                         section,
                         key,

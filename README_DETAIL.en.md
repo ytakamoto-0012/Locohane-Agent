@@ -1364,8 +1364,8 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
   ingestion of another collection running at the same time, or editing collections on the settings dashboard, does not fail with "database is locked").
 - **Stop**: pressing "Stop" starts no new files or batches (even after preparation of all files has started, the remaining embeddings are not sent),
   waits for the embeddings in flight to return, records only the files whose embedding finished, and stops (the button becomes "Stopping…" when pressed).
-- **Shared parallelism**: `ingest_workers` and `ingest_processes` are shared by all instances (they cannot be overridden per instance; edit
-  `config.ini` directly), and ingestion from the settings dashboard runs preparation and embedding at most this many **in total** across all
+- **Shared parallelism**: `ingest_workers` and `ingest_processes` are shared by all instances (they cannot be overridden per instance; change
+  them in "Admin settings" of the settings dashboard or in `config.ini`), and ingestion from the settings dashboard runs preparation and embedding at most this many **in total** across all
   instances and collections (ingesting several collections at once puts the same load on the embedding server and the PC as one).
   The rest waits for a free worker, and freed workers go to the earliest started ingestion first (`IngestSlots` in `src/vector_db/ingest.py`).
   A change of the parallelism takes effect from the next ingestion started (no need to restart the admin tool).
@@ -1692,7 +1692,7 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[vector_db]` | `embedded_image_min_px` | Lower limit (px, default 64) of the width and height of images taken out by `embedded_images`. Images smaller in either (icons, etc.) are not embedded. 0 means no size filter | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | Resolution at which pages are rendered as images with `image_input = true` (DPI, default 100) | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | Limit in seconds for one export of an Office file to PDF with `image_input = true` (default 180). When exceeded (stuck on an invisible dialog, etc.), that Office process is terminated and the file is listed in the failure list | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
-| `[vector_db]` | `ingest_workers` | Ingestion parallelism (default 1): the number of files prepared in parallel and the number of embedding requests sent at the same time. Parallel embedding also needs concurrent processing on the inference server (llama-server's `--parallel`) (see "Ingesting documents"). **Shared by all instances** (cannot be overridden per instance; ingestion from the settings dashboard runs at most this many in total across all instances and collections) | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `ingest_workers` | Ingestion parallelism (default 1): the number of files prepared in parallel and the number of embedding requests sent at the same time. Parallel embedding also needs concurrent processing on the inference server (llama-server's `--parallel`) (see "Ingesting documents"). **Shared by all instances** (cannot be overridden per instance; can be changed in "Admin settings" of the settings dashboard; ingestion from the settings dashboard runs at most this many in total across all instances and collections) | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | Number of folders read at the same time when scanning the source folder (threads, default 8). Effective for folders on file servers | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | Maximum number of files ingested per collection (default 1000000). The excess is not ingested and a warning is shown on the Knowledge screen (already ingested files take priority, and the rest are chosen from the start in path order; see "Ingesting documents") | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
 | `[vector_db]` | `ingest_processes` | Number of child processes that extract text and render pages during ingestion (default 0 = no child processes; done in the `ingest_workers` threads). Set to 2 or more when there are CPU cores to spare and many PDFs, Excel files, etc. **Shared by all instances** (cannot be overridden per instance) | `VECTOR_DB_INGEST_PROCESSES` |
@@ -1730,7 +1730,7 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[admin]` | `backup_keep` | Number of generations of settings backups kept per instance | `ADMIN_BACKUP_KEEP` |
 | `[admin]` | `stop_apps_on_exit` | Whether to also stop the main instances started as child processes when the admin tool exits | `ADMIN_STOP_APPS_ON_EXIT` |
 | `[admin]` | `assistant_enabled` | Whether to enable "Ask AI" (the admin assistant) at the top right of the dashboard. false hides the button and the API returns 404 | `ADMIN_ASSISTANT_ENABLED` |
-| `[admin]` | `assistant_llm_instance` | Name of the instance to take the LLM endpoints for the admin assistant's answers from. If empty, the `[llm]` of the instance being asked about | `ADMIN_ASSISTANT_LLM_INSTANCE` |
+| `[admin]` | `assistant_llm_instance` | Name of the instance to take the LLM endpoints for the admin assistant's answers from. If empty, the `[llm]` of the instance being asked about. Can be changed in "Admin settings" of the settings dashboard (not per instance) | `ADMIN_ASSISTANT_LLM_INSTANCE` |
 | `[admin]` | `assistant_max_keys` | Maximum number of config.ini keys close to the question passed to the AI | `ADMIN_ASSISTANT_MAX_KEYS` |
 | `[admin]` | `assistant_max_docs` | Maximum number of paragraphs of README_DETAIL.md and the API reference close to the question passed to the AI (0 passes none) | `ADMIN_ASSISTANT_MAX_DOCS` |
 | `[admin]` | `assistant_use_embedding` | Whether to use embeddings (`[vector_db] embedding_url`) to choose the keys and paragraphs close to the question. If false, character 2-grams only | `ADMIN_ASSISTANT_USE_EMBEDDING` |
@@ -2015,6 +2015,7 @@ instances/
 │   └── app_stdout.log           # stdout of the main process
 ├── <other instance name>/
 │   └── ... (same as above)
+├── admin_settings.json          # settings shared by all instances saved in "Admin settings" of the settings dashboard (see "Admin settings")
 ├── data_backup.json             # data backup settings saved on the settings dashboard (see "Data backup")
 ├── _admin_logs/                 # admin tool log (admin_*.log: progress of knowledge ingestion/deletion, etc.; rotated every [log] max_lines lines)
 └── admin_changes.log            # change history shared by all instances (JSON Lines)
@@ -2133,6 +2134,25 @@ Data sources:
 It reads files instead of communicating with the main app over HTTP so that instances started directly with `app.bat`
 (where the admin tool was not involved in starting them) look the same, and because there is no mechanism
 for sharing an authentication secret between the admin tool and the main app (the main app may be published on `0.0.0.0`).
+
+### Admin settings
+
+The "Admin settings" tab at the top changes settings shared by all instances that cannot be changed per instance (`admin/admin_settings.py`).
+Saved values are kept in `<instances_dir>/admin_settings.json` and take precedence over `config.ini` (`load_config()` layers them after
+config.ini and before the per-instance `config_overrides.json`; each item shows "Set on this screen", "config.ini value" or "Overridden by
+an environment variable", and items overridden by an environment variable cannot be edited). "Reset to the config.ini values" deletes the
+screen's values. They take effect from the next ingestion or question without restarting the admin tool, and changes are recorded in the
+change history (`admin_settings_save`).
+
+| Item | Key | Meaning |
+|---|---|---|
+| Ingestion parallelism | `[vector_db] ingest_workers` | Number of files prepared and embedding requests sent at the same time, in total across the ingestions of all instances and collections (see "Ingesting documents") |
+| Child processes for text extraction and rendering | `[vector_db] ingest_processes` | 0 uses threads. The screen shows the number of cores of this PC |
+| LLM used for answers | `[admin] assistant_llm_instance` | Which instance's `[llm] main_url` provides the LLM that writes the answers of "Ask AI". If empty, the instance being asked about. Select an instance and press "Check connection" to send `GET /models` to each endpoint of its `main_url` and see whether it can be reached (the model is not run) |
+| Embedding used to find related settings | `[admin] assistant_embedding_instance` | Which instance's `[vector_db] embedding_url` provides the embedding server used to choose the settings and descriptions close to the question. Automatic if empty |
+
+When "Ask AI" says it could not get a response from the LLM (e.g. during the first setup, when the LLM of the instance being asked about is
+down or not set), select an instance with a running LLM in "LLM used for answers" here.
 
 ### Data backup
 

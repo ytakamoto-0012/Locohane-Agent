@@ -1009,7 +1009,8 @@ DESCRIPTIONS: dict[str, str] = {
         'With 2 or more, larger files are started first (to avoid one large file being left at the end while everything else waits).\n'
         'For Office files with image_input = true, each worker starts one Word / PowerPoint / Excel and reuses it during ingestion,\n'
         'so increase it only within the memory you have to spare.\n'
-        'Shared by all instances (cannot be changed per instance; the same goes for ingest_processes). Ingestion from the settings dashboard runs\n'
+        'Shared by all instances (cannot be changed per instance; the same goes for ingest_processes). Can be changed in "Admin settings" of the settings dashboard (the value is saved in <instances_dir>/admin_settings.json and takes precedence over this; it cannot be changed per instance). \n'
+        'Ingestion from the settings dashboard runs\n'
         'at most this many in total across all instances and collections, and the rest waits for a free worker (earlier ingestions take priority).\n'
         'Changes take effect from the next ingestion started (no need to restart the admin tool).'
     ),
@@ -1266,7 +1267,7 @@ DESCRIPTIONS: dict[str, str] = {
         'Whether to enable "Ask AI" at the top right of the dashboard. For an administrator\'s problem, the AI advises which screen and which config keys to change (the AI only reads settings and never changes, saves, starts or stops anything; people do the operations). false hides the button, and the API also returns 404. Can be overridden with the environment variable ADMIN_ASSISTANT_ENABLED.'
     ),
     'admin.assistant_llm_instance': (
-        "Which instance's [llm] settings to take the LLM endpoints used for answers from (instance name). If empty, the [llm] settings of the instance selected as the subject of the question are used. If you want to be able to ask even when the subject's LLM is down, or do not want to make production users wait, specify another instance name, such as a skill tuning worker. Can be overridden with the environment variable ADMIN_ASSISTANT_LLM_INSTANCE."
+        "Which instance's [llm] settings to take the LLM endpoints used for answers from (instance name). If empty, the [llm] settings of the instance selected as the subject of the question are used. If you want to be able to ask even when the subject's LLM is down, or do not want to make production users wait, specify another instance name, such as a skill tuning worker. Can be changed in \"Admin settings\" of the settings dashboard (the value is saved in <instances_dir>/admin_settings.json and takes precedence over this; it cannot be changed per instance). Can be overridden with the environment variable ADMIN_ASSISTANT_LLM_INSTANCE."
     ),
     'admin.assistant_max_keys': (
         'Maximum number of config.ini keys close to the question passed to the AI with their descriptions, defaults and current values (1 or more). More means fewer misses, but the input gets longer and answers slower (about 8-15 is recommended for fairly small local models). Can be overridden with the environment variable ADMIN_ASSISTANT_MAX_KEYS.'
@@ -1278,7 +1279,7 @@ DESCRIPTIONS: dict[str, str] = {
         'Whether to use the same embedding server as Knowledge ([vector_db] embedding_url) to choose the keys and paragraphs close to the question. If true (default), the embedding_url of the instance in assistant_embedding_instance below is used (it is used if embedding_url is set even if [vector_db] enabled is false), and when none is found or it cannot connect, choices are made only by character overlap (in pairs of characters). If false, choices are always made only by character overlap. Embeddings are better at questions worded differently (e.g. "file size" vs max_file_mb). Can be overridden with the environment variable ADMIN_ASSISTANT_USE_EMBEDDING.'
     ),
     'admin.assistant_embedding_instance': (
-        "Which instance's [vector_db] embedding_url to take the embedding endpoints from (instance name). If empty, the first instance with embedding_url set is used, in the order: the instance of the LLM used for answers -> the instance being asked about -> other instances (in name order). Can be overridden with the environment variable ADMIN_ASSISTANT_EMBEDDING_INSTANCE."
+        "Which instance's [vector_db] embedding_url to take the embedding endpoints from (instance name). If empty, the first instance with embedding_url set is used, in the order: the instance of the LLM used for answers -> the instance being asked about -> other instances (in name order). Can be changed in \"Admin settings\" of the settings dashboard (the value is saved in <instances_dir>/admin_settings.json and takes precedence over this; it cannot be changed per instance). Can be overridden with the environment variable ADMIN_ASSISTANT_EMBEDDING_INSTANCE."
     ),
     'admin.assistant_max_history_messages': (
         "Maximum number of recent conversation messages passed to the AI (the asker's messages and the AI's answers each count as one; 1 or more). The oldest are dropped first. The conversation history exists only in the browser and is not saved on the server. Can be overridden with the environment variable ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES."

@@ -149,6 +149,7 @@ function navigate(view) {
   if (view === "settings") return renderSettings();
   if (view === "audit") return renderAudit();
   if (view === "data-backup") return renderDataBackup();
+  if (view === "admin-settings") return renderAdminSettings();
   if (view === "skill-lab") return renderSkillLab();
   if (view === "api-docs") return renderApiDocs();
 }
