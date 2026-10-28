@@ -457,6 +457,19 @@ def test_queued_delete_can_be_cancelled(env):
     assert [c["name"] for c in client.get("/api/instances/org_a/knowledge").json()["collections"]] == ["docs", "other"]
 
 
+def test_queued_job_stopped_when_the_blocker_finishes_at_the_same_time_is_not_run():
+    # 停止を求めたのと同時に先のジョブが終わっても（順番が来ていても）、停止を優先して始めない。
+    jobs = knowledge._JobRegistry()
+    busy = knowledge.IngestJob(collection="other", rebuild=False, actor="admin")
+    assert jobs.start("org_a", busy)
+    delete = knowledge.IngestJob(collection="docs", rebuild=False, actor="admin", kind="delete")
+    assert jobs.start("org_a", delete) and delete.state == "queued"
+    busy.state = "done"
+    delete.stop_requested = True
+    assert not jobs.wait_turn("org_a", delete)
+    assert delete.state == "stopped"
+
+
 def test_ingestions_share_the_parallelism_of_config_ini(env):
     """取り込みの並列数は config.ini の値を全インスタンス共通の枠にし、画面にも枠の状態を返す。"""
     client, docs = env["client"], env["docs"]

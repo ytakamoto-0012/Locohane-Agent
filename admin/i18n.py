@@ -160,6 +160,7 @@ EN: dict[str, str] = {
     "インスタンス {0} の設定を読めないため、そのデータはバックアップしていません: {1}": "The data of instance {0} was not backed up because its settings cannot be read: {1}",
     "バックアップは実行中です。": "A backup is already running.",
     "保存先を読めません: {0}": "Cannot read the destination: {0}",
+    "{0} を読めません（画面で保存し直すか、ファイルを削除してください）: {1}": "Cannot read {0} (save the settings again on the screen, or delete the file): {1}",
     "バックアップは実行中ではありません。": "No backup is running.",
     "[{0}] セクションは全インスタンス共通の設定です。「データバックアップ」画面で変更してください。": "The [{0}] section is shared by all instances. Change it on the \"Data backup\" screen.",
     "削除の処理中です。": "The deletion is in progress.",

@@ -143,7 +143,10 @@ def read_saved(instances_root: Path) -> dict:
     path = settings_path(instances_root)
     if not path.is_file():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise BackupError(_t("{0} を読めません（画面で保存し直すか、ファイルを削除してください）: {1}", path, exc)) from exc
     if not isinstance(data, dict):
         raise BackupError(_t("{0}: トップレベルはオブジェクトである必要があります。", path))
     return {k: v for k, v in data.items() if k in FIELDS}
@@ -286,8 +289,16 @@ def _is_sqlite(path: Path) -> bool:
 
 
 def _add_sqlite(zf: zipfile.ZipFile, path: Path, arcname: str) -> None:
-    """使用中の SQLite も整合した状態で入れる（SQLite のバックアップ機能で一時ファイルへ写す）。"""
-    fd, tmp = tempfile.mkstemp(prefix="locohane_backup_", suffix=".sqlite")
+    """使用中の SQLite も整合した状態で入れる（SQLite のバックアップ機能で一時ファイルへ写す）。
+
+    一時ファイルは元の SQLite と同じフォルダに作る（大きいベクター DB をシステムの一時フォルダ（C ドライブ）へ
+    写して圧迫しないため。データはローカルディスクにある。src/config.py の _validate_local_data_paths）。
+    バックアップの対象のファイル一覧は先に作っているため、この一時ファイルは zip に入らない。
+    """
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".locohane_backup_", suffix=".sqlite.tmp", dir=str(path.parent))
+    except OSError:
+        fd, tmp = tempfile.mkstemp(prefix="locohane_backup_", suffix=".sqlite")
     os.close(fd)
     try:
         src = sqlite3.connect(str(path), timeout=30)
@@ -324,6 +335,19 @@ def prune(dest: Path, keep: int) -> list[str]:
     return removed
 
 
+def _remove_stale_partials(dest: Path) -> None:
+    """管理ツールの強制終了等で残った作りかけの zip（.partial）を消す（世代の整理の対象外で、残り続けるため）。
+
+    バックアップは BackupManager が1度に1つだけ動かすため、始める時点の .partial はどれも作りかけの残り。
+    """
+    for path in dest.glob(f"{ZIP_PREFIX}*.zip{PARTIAL_SUFFIX}"):
+        try:
+            path.unlink()
+            logger.info("Data backup: removed an unfinished backup left over: %s", path)
+        except OSError as exc:
+            logger.warning("Data backup: cannot delete an unfinished backup %s: %s", path, exc)
+
+
 def run_backup(
     settings: BackupSettings,
     sources: list[Source],
@@ -343,8 +367,9 @@ def run_backup(
         dest.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise BackupError(_t("保存先に書き込めません: {0}: {1}", dest, exc)) from exc
+    _remove_stale_partials(dest)
     files = iter_files(sources, settings.exclude)
-    stamp = (now or datetime.now()).strftime("%Y%m%d_%H%M%S")
+    stamp =(now or datetime.now()).strftime("%Y%m%d_%H%M%S")
     final = dest / f"{ZIP_PREFIX}{stamp}.zip"
     partial = final.with_name(final.name + PARTIAL_SUFFIX)
     failed: list[dict] = []
@@ -622,10 +647,14 @@ def build_router(
     @router.put("/api/data-backup/settings")
     def put_settings(body: SettingsBody, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
         try:
-            settings = save_settings(config_ini_path, instances_root, body.model_dump())
-            if settings.dest_dir:
-                sources, _warnings = collect_sources(instances_root, config_loader, settings)
-                check_dest(settings, sources)
+            values = body.model_dump()
+            # 保存先がバックアップ元の中にある等の誤りは、保存する前に確かめる（保存してから断ると、
+            # 画面はエラーなのに誤った設定が残り、自動バックアップが毎回失敗するため）。
+            checked = parse_settings({**read_ini_defaults(config_ini_path), **values})
+            if checked.dest_dir:
+                sources, _warnings = collect_sources(instances_root, config_loader, checked)
+                check_dest(checked, sources)
+            settings = save_settings(config_ini_path, instances_root, values)
         except BackupError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         _audit(request, user, "data_backup_settings_save", **_settings_dict(settings))

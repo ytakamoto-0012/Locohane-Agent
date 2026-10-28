@@ -74,6 +74,18 @@ def test_load_config_layers_admin_settings_between_ini_and_instance_overrides(tm
     assert load_config(overrides_path=overrides).vector_db_ingest_workers == 5
 
 
+@pytest.mark.parametrize("content", ["{broken", "[1, 2]", '{"vector_db": "3"}'])
+def test_broken_admin_settings_file_is_ignored(env, content):
+    # 手で編集して壊しても、全インスタンス・管理ツールが起動できなくならないよう config.ini の値で動く。
+    env["file"].write_text(content, encoding="utf-8")
+    assert load_config(overrides_path=env["tmp"] / "missing.json").vector_db_ingest_workers == 1
+    client = env["client"]
+    assert _setting(client.get("/api/admin-settings").json(), "vector_db.ingest_workers")["value"] == "1"
+    # 画面で保存し直せば正しい内容で上書きされる。
+    client.put("/api/admin-settings", json={"values": {"vector_db.ingest_workers": 2}}).raise_for_status()
+    assert json.loads(env["file"].read_text(encoding="utf-8")) == {"vector_db": {"ingest_workers": "2"}}
+
+
 def test_get_save_and_reset(env):
     client = env["client"]
     data = client.get("/api/admin-settings").json()

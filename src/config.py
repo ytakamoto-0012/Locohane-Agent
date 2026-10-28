@@ -1507,12 +1507,20 @@ def _apply_admin_settings(parser: configparser.ConfigParser, path: Path) -> None
     """
     if not path.is_file():
         return
-    data = json.loads(path.read_text(encoding="utf-8"))
+    # 読めない・形の違うファイルは警告して無視する（config.ini の値で動かす）。全インスタンスと管理ツールが読むため、
+    # 例外にすると手で編集して壊しただけで全部が起動できなくなる。画面で保存し直せば正しい内容で上書きされる。
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("%s: ignoring the admin settings because the file cannot be read: %s", path, exc)
+        return
     if not isinstance(data, dict):
-        raise ValueError(f"{path}: the top level must be an object (a dict keyed by section name).")
+        logger.warning("%s: ignoring the admin settings because the top level is not an object.", path)
+        return
     for section, values in data.items():
         if not isinstance(values, dict):
-            raise ValueError(f"{path}: the value of section {section!r} must be an object (a dict keyed by key name).")
+            logger.warning("%s: ignoring section %r of the admin settings because its value is not an object.", path, section)
+            continue
         for key, value in values.items():
             if (section, key) not in ADMIN_SETTING_KEYS or not parser.has_section(section):
                 logger.warning("%s: ignoring [%s].%s because it is not a setting of the admin settings screen.", path, section, key)

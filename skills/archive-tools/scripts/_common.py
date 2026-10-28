@@ -189,14 +189,27 @@ class Archive:
                 self._tar = tarfile.open(path, "r:*")
             except (tarfile.TarError, OSError, EOFError) as e:
                 raise ArchiveError(f"Could not open it as a tar (it may be broken): {e}") from e
-            self.format = {"gz": "tar.gz", "bz2": "tar.bz2", "xz": "tar.xz"}.get(
-                _detect_single_file_format(path) or "", "tar"
-            )
+            single = _detect_single_file_format(path)
+            if single is not None and create_format_from_name(path) is None and self._is_empty_tar():
+                # ゼロだけのデータを圧縮した .gz 等は「空の tar」としても読めてしまうため、
+                # 拡張子が tar 系でなければ単一ファイルの圧縮として扱う。
+                self._tar.close()
+                self._tar = None
+                self._single = single
+                self.format = single
+            else:
+                self.format = {"gz": "tar.gz", "bz2": "tar.bz2", "xz": "tar.xz"}.get(single or "", "tar")
         else:
             self._single = _detect_single_file_format(path)
             if self._single is None:
                 raise ArchiveError(_unsupported_format_message(path))
             self.format = self._single
+
+    def _is_empty_tar(self) -> bool:
+        try:
+            return not self._tar.getmembers()
+        except (tarfile.TarError, OSError, EOFError):
+            return False  # 壊れた tar は entries() でエラーにする
 
     def close(self) -> None:
         if self._zip is not None:

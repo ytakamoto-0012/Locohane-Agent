@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import sys
 import traceback
 import zipfile
@@ -25,6 +24,26 @@ from pathlib import Path
 from _common import Archive, ArchiveError, archive_stem, register_output_path, safe_relative_path, setup_utf8_stdio
 
 _MAX_SKIPPED_IN_OUTPUT = 50
+_COPY_CHUNK = 1024 * 1024
+
+
+class _LimitExceeded(Exception):
+    """書き込み中に展開後の合計サイズが上限を超えた。"""
+
+
+def _copy_limited(src, dst, remaining: int) -> int:
+    """src を dst へ写し、写したバイト数を返す。remaining を超えたら _LimitExceeded。
+
+    単一ファイルの gz/bz2/xz は展開後のサイズが事前に分からないため、書き込みながら数える
+    （書き終わってから調べると、高圧縮のファイルでディスクを使い切るまで止まらない）。
+    """
+    written = 0
+    while chunk := src.read(_COPY_CHUNK):
+        written += len(chunk)
+        if written > remaining:
+            raise _LimitExceeded()
+        dst.write(chunk)
+    return written
 
 
 def _set_mtime(target: Path, entry) -> None:
@@ -117,8 +136,16 @@ def main() -> int:
             target.parent.mkdir(parents=True, exist_ok=True)
             try:
                 with entry.open() as src, open(target, "wb") as dst:
-                    shutil.copyfileobj(src, dst, 1024 * 1024)
-                    written_bytes += dst.tell()
+                    written_bytes += _copy_limited(src, dst, limit - written_bytes)
+            except _LimitExceeded:
+                target.unlink(missing_ok=True)
+                print(
+                    f"Stopped because the extracted size exceeded the limit ({args.max_total_mb:g} MB). "
+                    f"{extracted} files were extracted to {dest} (the file being written was removed). "
+                    "If this is intended, raise --max-total-mb.",
+                    file=sys.stderr,
+                )
+                return 1
             except RuntimeError as e:
                 # zipfile は暗号化 zip のパスワード違いを RuntimeError("Bad password ...") で知らせる
                 target.unlink(missing_ok=True)
@@ -146,13 +173,6 @@ def main() -> int:
                 continue
             _set_mtime(target, entry)
             extracted += 1
-            if written_bytes > limit:
-                print(
-                    f"Stopped because the extracted size exceeded the limit ({args.max_total_mb:g} MB). "
-                    f"{extracted} files were extracted to {dest}.",
-                    file=sys.stderr,
-                )
-                return 1
 
     result: dict = {
         "archive_path": str(path.resolve()),

@@ -412,7 +412,15 @@ def test_extract_xlsx_reads_far_apart_cells_without_calamine(tmp_path, monkeypat
             if item.filename == "xl/worksheets/sheet1.xml":
                 data = data.replace(b'<dimension ref="A1:XFD2000"/>', b"")
             dst.writestr(item, data)
-    for path in (tmp_path / "a.xlsx", no_dimension):
+    # 使用範囲を実際より小さく（"A1" だけ）書くツールで作ったブックも、使用範囲を信じずに数える。
+    understated = tmp_path / "c.xlsx"
+    with zipfile.ZipFile(tmp_path / "a.xlsx") as src, zipfile.ZipFile(understated, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = data.replace(b'<dimension ref="A1:XFD2000"/>', b'<dimension ref="A1"/>')
+            dst.writestr(item, data)
+    for path in (tmp_path / "a.xlsx", no_dimension, understated):
         assert extract_segments(path)[0].text == "左上\n" + "\t" * 16383 + "右下"
     assert called == []
 

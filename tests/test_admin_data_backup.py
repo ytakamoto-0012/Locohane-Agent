@@ -181,6 +181,8 @@ def test_settings_api_save_reset_and_sources(env):
     assert data["next_run_at"]
     bad = client.put("/api/data-backup/settings", json={**body, "dest_dir": str(env["cfg"].common_data_dir / "x")})
     assert bad.status_code == 400
+    # 断った設定は保存しない（前に保存した値のまま）。
+    assert client.get("/api/data-backup").json()["settings"]["dest_dir"] == str(env["dest"])
     assert client.delete("/api/data-backup/settings").json() == {"ok": True}
     assert client.get("/api/data-backup").json()["sources"]["keep"] == "config.ini"
 
@@ -197,6 +199,32 @@ def test_run_api_creates_backup_and_lists_it(env):
     assert client.post("/api/data-backup/stop").status_code == 409
     actions = [json.loads(line)["action"] for line in (env["tmp"] / "audit.log").read_text(encoding="utf-8").splitlines()]
     assert actions[-2:] == ["data_backup_start", "data_backup_end"]
+
+
+def test_broken_settings_file_is_reported_and_can_be_saved_over(env):
+    db.settings_path(env["root"]).write_text("{broken", encoding="utf-8")
+    client = env["client"]
+    assert client.get("/api/data-backup").json()["settings_error"]
+    assert client.post("/api/data-backup/run").status_code == 400
+    # 自動バックアップの確認でも例外にせず、飛ばす。
+    scheduler = env["router"].backup_scheduler
+    scheduler._last_minute = datetime(2026, 10, 28, 1, 59)
+    assert not scheduler.tick(datetime(2026, 10, 28, 2, 0))
+    body = {"dest_dir": str(env["dest"]), "times": ["03:00"], "keep": 3}
+    assert client.put("/api/data-backup/settings", json=body).status_code == 200
+    assert client.get("/api/data-backup").json()["settings_error"] is None
+
+
+def test_leftover_partial_is_removed_and_sqlite_copies_are_cleaned_up(env):
+    settings = _settings(env)
+    env["dest"].mkdir()
+    leftover = env["dest"] / "locohane_backup_20261027_020000.zip.partial"
+    leftover.write_bytes(b"unfinished")
+    sources, _ = db.collect_sources(env["root"], lambda name: env["cfg"], settings)
+    db.run_backup(settings, sources, now=datetime(2026, 10, 28, 2, 0))
+    assert not leftover.exists()
+    # SQLite の一時コピーは元と同じフォルダに作り、終わったら消す。
+    assert not list(env["cfg"].common_data_dir.glob("*.tmp"))
 
 
 def test_scheduler_runs_at_the_set_time(env):

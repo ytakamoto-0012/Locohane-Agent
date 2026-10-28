@@ -205,12 +205,15 @@ class _JobRegistry:
         with self._lock:
             if job.state == "queued":
                 logger.info("Knowledge: %s %s/%s is waiting for other jobs of the instance to finish.", job.kind, instance, job.collection)
-            while job.state == "queued" and not self._can_run(instance, job):
+            while job.state == "queued":
+                # 始められるかより先に停止を見る（停止を求めたのと同時に先のジョブが終わっても、取りやめる）。
                 if job.stop_requested:
                     job.state = "stopped"
                     job.finished_at = datetime.now().isoformat(timespec="seconds")
                     self._lock.notify_all()
                     return False
+                if self._can_run(instance, job):
+                    break
                 self._lock.wait(self.WAIT_POLL_SECONDS)
             job.state = "running"
             return True

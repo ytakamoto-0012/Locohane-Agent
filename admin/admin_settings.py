@@ -59,10 +59,18 @@ def current_admin_config(config_ini_path: Path) -> Config:
 
 
 def read_saved(path: Path) -> dict[str, dict[str, str]]:
+    """画面で保存した値（読めない・形の違うファイルは空とみなす。src/config.py の _apply_admin_settings と同じく
+    config.ini の値で動き、画面で保存すれば正しい内容で上書きされる）。"""
     if not path.is_file():
         return {}
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data if isinstance(data, dict) else {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        logger.warning("Admin settings: ignoring %s because it cannot be read: %s", path, exc)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {section: values for section, values in data.items() if isinstance(values, dict)}
 
 
 def _write(path: Path, data: dict) -> None:

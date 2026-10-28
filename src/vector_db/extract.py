@@ -398,9 +398,6 @@ def _openpyxl_sheets(source):
 # 値の入った範囲の長方形で持つため（1セル 32 バイト程度）、離れたセル（例: A1 と XFD100000）に値があると
 # 巨大なメモリーを確保しようとし、確保できないとプロセスごと終了する。上限を超えるブックは openpyxl で読む。
 _CALAMINE_MAX_CELLS = 10_000_000
-# 使用範囲（<dimension ref="A1:C20">）。シートの XML の先頭にあるため、先頭だけを読んで探す。
-_DIMENSION = re.compile(rb'<(?:\w+:)?dimension\s+ref="(?:[A-Z]+\d+:)?([A-Z]+)(\d+)"')
-_DIMENSION_HEAD_BYTES = 64 * 1024
 # 値（v）・数式（f）・インライン文字列（is）を持つセル（<c r="C5" t="s"><v>…）の列の文字・行番号。
 # 書式だけのセル（<c r="C5" s="1"/>）は含めない。セルごとに Python の処理を挟まないよう、findall で片方だけを取り出す。
 _VALUE_CELL = rb'<(?:\w+:)?c\s[^>]*?\br="{}"[^>]*>\s*<(?:\w+:)?(?:v|f|is)[\s>/]'
@@ -411,8 +408,9 @@ _VALUE_CELL_ROW = re.compile(_VALUE_CELL.replace(b"{}", rb"[A-Z]{1,3}(\d+)"))
 def _fits_calamine(source) -> bool:
     """どのシートも、値の入った範囲が _CALAMINE_MAX_CELLS 以下か（調べられなければ False）。
 
-    使用範囲（<dimension>）が上限以下ならそれを使う。書式を最終行・最終列まで付けたブックは使用範囲が
-    A1:XFD1048576 になるため、上限を超えたとき（と使用範囲が無いとき）は値のあるセルを数えて確かめる。
+    使用範囲（<dimension>）は使わず、値のあるセルから数える。書式を最終行・最終列まで付けたブックは使用範囲が
+    A1:XFD1048576 と大きすぎ、逆に使用範囲を "A1" とだけ書くツールで作ったブックは小さすぎて、離れたセルを
+    calamine に渡してしまうため。
     """
     import posixpath
     from xml.etree import ElementTree
@@ -438,13 +436,7 @@ def _fits_calamine(source) -> bool:
 
 
 def _value_area(package, part: str) -> int:
-    """シート（part）の A1 から値の入った最後の行・列までのセル数（使用範囲が上限以下ならそのセル数）。"""
-    with package.open(part) as f:
-        head = f.read(_DIMENSION_HEAD_BYTES)
-    if (m := _DIMENSION.search(head)) is not None:
-        row, col = _cell_position(m[1].decode() + m[2].decode())
-        if row * (col + 1) <= _CALAMINE_MAX_CELLS:
-            return row * (col + 1)
+    """シート（part）の A1 から値の入った最後の行・列までのセル数。"""
     xml = package.read(part)
     columns = set(_VALUE_CELL_COLUMN.findall(xml))
     if not columns:
