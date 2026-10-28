@@ -620,6 +620,7 @@ def ingest_collection(
     store_transport: httpx.BaseTransport | None = None,
     slots: IngestSlots | None = None,
     instance: str = "",
+    progress_bytes: Callable[[int], None] | None = None,
 ) -> IngestResult:
     """コレクション name の取り込み元フォルダを差分で取り込む。
 
@@ -641,6 +642,8 @@ def ingest_collection(
             （準備・埋め込みのスレッド・子プロセスの数もその並列数にする）。省略時は cfg の
             [vector_db] ingest_workers・ingest_processes・ingest_embed_requests で、この取り込みだけの枠を作る。
         instance: インスタンス名（slots の各枠の状態・ログに出すだけ）。
+        progress_bytes: ファイルを記録するごとに、記録まで終わったファイルのサイズの累計（バイト）を渡して呼ぶ
+            （設定ダッシュボードの1秒当たりの取り込み容量用。変わっていない・取り込めなかったファイルは数えない）。
 
     Raises:
         IngestError: コレクションが無い、取り込み元フォルダが無い、または
@@ -698,6 +701,7 @@ def ingest_collection(
                 cfg, catalog, store, keywords, name, collection.dim, model, folders, collection.recursive,
                 result, progress, should_stop, embedding_client, slots, instance,
                 exclude_keywords=collection.exclude_keywords, include_keywords=collection.include_keywords,
+                progress_bytes=progress_bytes,
             )
         finally:
             embedding_client.close()
@@ -1173,10 +1177,11 @@ class _Pipeline:
 
     def __init__(
         self, cfg: Config, folders: list[Path], known: dict[str, FileRecord], writer: _Writer, embedding_client, should_stop, progress,
-        slots: IngestSlots, instance: str = "",
+        slots: IngestSlots, instance: str = "", progress_bytes: Callable[[int], None] | None = None,
     ):
         self.cfg, self.folders, self.known, self.writer = cfg, folders, known, writer
         self.embedding_client, self.should_stop, self.progress = embedding_client, should_stop, progress
+        self.progress_bytes = progress_bytes
         self.options = _LoadOptions.from_config(cfg)
         self.slots = slots
         self.slot_user: _SlotUser | None = None
@@ -1195,6 +1200,7 @@ class _Pipeline:
         self.isolate: deque[tuple] = deque()
         self.waiting = 0
         self.completed = 0
+        self.completed_bytes = 0
         self.stopped = False
         self.load_pool = None
         self.instance = instance
@@ -1455,6 +1461,11 @@ class _Pipeline:
         self.writer.write(prepared)
         _remove_dir(prepared.page_dir)
         self.completed += 1
+        # stat が無いのは、変わっていない・取り込めなかったファイル（_load）。
+        if prepared.stat is not None:
+            self.completed_bytes += prepared.stat.st_size
+            if self.progress_bytes is not None:
+                self.progress_bytes(self.completed_bytes)
 
 
 def _jobs_of(items: list[tuple[_Job, int]]) -> list[_Job]:
@@ -1470,6 +1481,7 @@ def _embed_page(cfg: Config, page: PageImage, client, should_stop) -> list[list[
 def _ingest(
     cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folders, recursive, result, progress, should_stop, embedding_client,
     slots: IngestSlots, instance: str, *, exclude_keywords: Sequence[str] = (), include_keywords: Sequence[str] = (),
+    progress_bytes: Callable[[int], None] | None = None,
 ) -> None:
     """取り込み元のファイルを _Pipeline で処理し、フォルダから消えたファイル（除外・対象キーワードで外れたものも）を消す。
 
@@ -1492,7 +1504,7 @@ def _ingest(
     writer = _Writer(cfg, catalog, store, keywords, name, dim, model, result)
     writer.begin()
     try:
-        pipeline = _Pipeline(cfg, folders, known, writer, embedding_client, should_stop, progress, slots, instance)
+        pipeline = _Pipeline(cfg, folders, known, writer, embedding_client, should_stop, progress, slots, instance, progress_bytes)
         pipeline.run(files)
         if not pipeline.stopped:
             # 停止したときは、未処理のファイルを「消えた」と誤って削除しないよう消さない。

@@ -297,7 +297,14 @@ function knowledgeJobCell(job, maxFileMb, workers) {
     );
   }
   if (job.state === "running" && job.kind !== "delete") {
-    parts.push(knowledgeProgressBar(job.done, job.total));
+    const bar = knowledgeProgressBar(job.done, job.total);
+    if (job.kind === "ingest") {
+      // 1秒当たりの取り込み容量（admin/knowledge.py の IngestJob.bytes_per_second。直近 30 秒ほどの平均）。
+      const rate = el("span", { class: "kn-rate", text: `${fmtBytes(Math.round(job.bytes_per_second || 0))}/s` });
+      parts.push(el("div", { class: "kn-progress-row" }, [bar, rate]));
+    } else {
+      parts.push(bar);
+    }
     parts.push(el("div", { class: "hint", text: _t(`{0} / {1} ファイル`, job.done, job.total || "?") }));
     parts.push(knowledgeJobWorkerIcons(workers));
     if (job.current) parts.push(el("div", { class: "hint", text: job.current }));

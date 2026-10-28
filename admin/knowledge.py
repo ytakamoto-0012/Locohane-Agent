@@ -21,12 +21,14 @@ _JobRegistry.wait_turn）。
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta
 import logging
 import os
 from pathlib import Path
 import threading
+import time
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -113,12 +115,45 @@ class IngestJob:
     done: int = 0
     total: int = 0
     current: str = ""
+    # 記録まで終わったファイルのサイズの累計（kind=ingest のみ。ingest_collection の progress_bytes）。
+    bytes_done: int = 0
     result: dict | None = None
     error: str | None = None
     stop_requested: bool = False
+    # 1秒当たりの取り込み容量の計算用の (time.monotonic(), bytes_done)。to_dict には出さない。
+    _byte_samples: deque = field(default_factory=deque, repr=False, compare=False)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        data = asdict(self)
+        data.pop("_byte_samples")
+        data["bytes_per_second"] = self.bytes_per_second()
+        return data
+
+    def start_byte_rate(self) -> None:
+        self._byte_samples.clear()
+        self._byte_samples.append((time.monotonic(), self.bytes_done))
+
+    def add_bytes(self, bytes_done: int) -> None:
+        now = time.monotonic()
+        self.bytes_done = bytes_done
+        self._byte_samples.append((now, bytes_done))
+        # 直近 BYTE_RATE_WINDOW_SECONDS 秒より前の点は、窓の始まりに当たる1点だけ残す。
+        while len(self._byte_samples) >= 2 and self._byte_samples[1][0] <= now - BYTE_RATE_WINDOW_SECONDS:
+            self._byte_samples.popleft()
+
+    def bytes_per_second(self) -> float:
+        """直近（BYTE_RATE_WINDOW_SECONDS 秒ほど）の1秒当たりの取り込み容量（取り込み中でなければ 0）。
+
+        大きいファイルは記録まで終わったときにまとめて数えるため、短い窓だと値が跳ねる。そのため窓は長めにする。
+        """
+        if self.state != "running" or not self._byte_samples:
+            return 0.0
+        since, base = self._byte_samples[0]
+        elapsed = time.monotonic() - since
+        return round((self.bytes_done - base) / elapsed, 1) if elapsed > 0 else 0.0
+
+
+BYTE_RATE_WINDOW_SECONDS = 30.0
 
 
 ACTIVE_STATES = ("queued", "running")
@@ -270,6 +305,7 @@ def run_ingest_job(cfg: Config, job: IngestJob, *, jobs: _JobRegistry | None = N
         logger.info("Knowledge: ingest %s/%s was cancelled while waiting.", instance, job.collection)
         return
     job.state = "running"
+    job.start_byte_rate()
     started = datetime.now()
     logger.info(
         "Knowledge: ingest %s/%s started (rebuild=%s, trigger=%s, actor=%s).", instance, job.collection, job.rebuild, job.trigger, job.actor
@@ -277,7 +313,7 @@ def run_ingest_job(cfg: Config, job: IngestJob, *, jobs: _JobRegistry | None = N
     try:
         result = ingest_collection(
             cfg, job.collection, rebuild=job.rebuild, progress=_progress, should_stop=lambda: job.stop_requested,
-            instance=instance, **kwargs,
+            instance=instance, progress_bytes=job.add_bytes, **kwargs,
         )
         job.result = result.to_dict()
         job.state = "stopped" if job.stop_requested else "done"

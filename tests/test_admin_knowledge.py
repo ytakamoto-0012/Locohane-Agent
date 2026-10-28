@@ -153,6 +153,44 @@ def test_run_ingest_job_marks_stop(tmp_path):
     assert job.state == "stopped" and job.finished_at
 
 
+def test_run_ingest_job_counts_bytes(tmp_path):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "a.md").write_text("本文" * 10, encoding="utf-8")
+    (docs / "b.md").write_text("別の本文", encoding="utf-8")
+    cfg = make_config(tmp_path)
+    from src.vector_db import catalog as vcat
+
+    with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        catalog.create("docs", str(docs))
+    kwargs = {"embedding_transport": FakeEmbeddingServer().transport, "store_transport": FakeQdrant().transport}
+    job = knowledge.IngestJob(collection="docs", rebuild=False, actor="admin")
+    knowledge.run_ingest_job(cfg, job, **kwargs)
+    assert job.state == "done" and job.bytes_done == sum(p.stat().st_size for p in docs.iterdir())
+    data = job.to_dict()
+    # 取り込み中でなければ 0。計算用の内部の値は画面へ出さない。
+    assert data["bytes_per_second"] == 0.0 and "_byte_samples" not in data
+    # 変わっていないファイルは読まないため数えない。
+    again = knowledge.IngestJob(collection="docs", rebuild=False, actor="admin")
+    knowledge.run_ingest_job(cfg, again, **kwargs)
+    assert again.bytes_done == 0
+
+
+def test_ingest_job_bytes_per_second(monkeypatch):
+    now = {"t": 100.0}
+    monkeypatch.setattr(knowledge.time, "monotonic", lambda: now["t"])
+    job = knowledge.IngestJob(collection="docs", rebuild=False, actor="admin", state="running")
+    job.start_byte_rate()
+    now["t"] = 110.0
+    job.add_bytes(10_000)
+    assert job.bytes_per_second() == 1000.0
+    # 窓（30 秒）より前の点は捨て、直近の速さにする。
+    now["t"] = 150.0
+    job.add_bytes(10_000 + 40 * 500)
+    now["t"] = 160.0
+    assert job.bytes_per_second() == 400.0
+
+
 def test_data_paths_include_vector_db_dir():
     assert "vector_db_dir" in {key for key, _ in inst.DATA_PATH_FIELDS}
 
