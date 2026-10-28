@@ -520,8 +520,6 @@ input.narrow { width: 80px; }
 .kn-meter { display: inline-flex; gap: 2px; align-items: stretch; height: 12px; }
 .kn-meter > span { width: 4px; border-radius: 1px; background: var(--border); transition: background 0.2s; }
 .kn-meter > span.on { background: var(--ok); box-shadow: 0 0 3px var(--ok); }
-.kn-meter-bar { width: 120px; background: var(--border); border-radius: 2px; overflow: hidden; }
-.kn-meter-bar > .kn-meter-fill { width: 0; border-radius: 0; background: var(--ok); box-shadow: none; transition: width 0.3s; }
 .kn-meter-text { font-variant-numeric: tabular-nums; }
 .kn-stalled { margin: 0 0 8px; font-size: 12px; color: var(--warn); }
 .kn-worker.waiting { border: 2px dotted var(--warn); animation: kn-blink 1.6s ease-in-out infinite; }

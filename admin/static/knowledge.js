@@ -91,21 +91,18 @@ function knowledgeStalledList(files, withCollection) {
   ]);
 }
 
-// 送信中の埋め込みのリクエスト数のメーター（上限の数だけ縦のセグメントを並べ、使っている分を光らせる。
-// 上限が KNOWLEDGE_METER_MAX_SEGMENTS を超えるときは1本のバーの長さで出す）。admin.css の .kn-meter。
-const KNOWLEDGE_METER_MAX_SEGMENTS = 40;
+// 送信中の埋め込みのリクエスト数のメーター（縦のセグメントを並べ、使っている分を光らせる）。admin.css の .kn-meter。
+// セグメントは上限の数だけ並べるが、KNOWLEDGE_METER_MAX_SEGMENTS 本までにする（並列数 50 等でも幅が増えないように）。
+// それを超える上限では、使っている割合の本数を光らせる。実際の数は右の「使用数/上限」の文字で出す。
+const KNOWLEDGE_METER_MAX_SEGMENTS = 10;
 
 function knowledgeRequestMeter(used, capacity) {
   const title = _t("同時に送っている埋め込みのリクエストの数 / 並列数（管理者設定の「埋め込みのリクエストの並列数」）");
   const cap = Math.max(capacity || 0, used);
-  let bar;
-  if (cap <= KNOWLEDGE_METER_MAX_SEGMENTS) {
-    bar = el("span", { class: "kn-meter" }, Array.from({ length: cap }, (_, i) => el("span", { class: i < used ? "on" : "" })));
-  } else {
-    const fill = el("span", { class: "kn-meter-fill" });
-    fill.style.width = `${Math.round((100 * used) / cap)}%`;
-    bar = el("span", { class: "kn-meter kn-meter-bar" }, [fill]);
-  }
+  const segments = Math.min(cap, KNOWLEDGE_METER_MAX_SEGMENTS);
+  // 1件でも送っていれば1本は光らせる（割合が小さくて 0 本に丸まり、動いていないように見えないため）。
+  const lit = cap ? Math.min(segments, used > 0 ? Math.max(1, Math.round((segments * used) / cap)) : 0) : 0;
+  const bar = el("span", { class: "kn-meter" }, Array.from({ length: segments }, (_, i) => el("span", { class: i < lit ? "on" : "" })));
   return el("span", { class: "kn-workers-count kn-request-meter", title }, [
     el("span", { class: "kn-workers-label", text: _t("リクエスト") }),
     bar,
