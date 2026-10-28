@@ -1188,6 +1188,32 @@
   cursor: not-allowed;
 }
 
+.composer-continue-row {
+  display: flex;
+  max-width: 720px;
+  margin: 0 auto 8px;
+}
+
+.composer-continue-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 14px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-md);
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.composer-continue-button:hover {
+  background: var(--accent);
+  color: white;
+}
+
 .composer-remote-generating-banner {
   display: flex;
   align-items: center;

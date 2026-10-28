@@ -1371,6 +1371,23 @@ MAX_DISPLAY_SIDE_STEPS_PREFIX = "🧰 サイドパネル表示件数上限\n"
 # MAX_DISPLAY_MESSAGES_PREFIX と同じ方式。値は JSON オブジェクト）。
 INPUT_LIMITS_PREFIX = "📝 入力上限\n"
 
+# frontend/src/utils/messageTree.ts の INTERRUPTED_PREFIX と一致させる
+# （ターンが途中で中断されたことをフロントエンドへ伝えるマーカー。これより後に
+# ユーザー発言が無い間、入力欄の上に「続ける」ボタンを出す。値は中断理由）。
+INTERRUPTED_PREFIX = "⏸ 中断\n"
+
+
+async def _send_interrupted_marker(reason: str) -> None:
+    """ターンの中断を INTERRUPTED_PREFIX 付きメッセージでフロントエンドへ伝える。
+
+    停止ボタン（CancelledError）の後始末の途中からも呼ぶため、送信の失敗
+    （切断済み等）は握りつぶして呼び出し元の中断処理を妨げない。
+    """
+    try:
+        await cl.Message(content=INTERRUPTED_PREFIX + reason).send()
+    except Exception:  # noqa: BLE001 - 表示用マーカーの送信失敗で中断処理を止めない
+        logging.getLogger(__name__).debug("Failed to send the interrupted marker", exc_info=True)
+
 # frontend/src/components/Composer.tsx が長文の貼り付けを添付化する際のファイル名
 # （pasted-text-<時刻>[-<連番>].txt）と一致させる。これに一致する添付は保存先パスでは
 # なく本文としてLLMへ渡す（_build_human_message 参照）。
@@ -4538,6 +4555,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 content=i18n.t("notice.recursion_limit", limit=_config.graph_recursion_limit),
                 type="system_message",
             ).send()
+            await _send_interrupted_marker("recursion_limit")
             await _remove_message_ids_if_present(graph, config, loop_nudge_ids)
             return
         except _PlanDeniedInterrupt as e:
@@ -4639,6 +4657,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                     "Checkpointer operation timed out while handling CancelledError",
                     exc_info=True,
                 )
+            await _send_interrupted_marker("stopped")
             raise
         except Exception as exc:  # noqa: BLE001
             # 上のどの except 節にも一致しない未分類の例外に対する保険。
@@ -4810,6 +4829,7 @@ async def _on_message_impl(message: cl.Message) -> None:
                 content=i18n.t("notice.connection_error"),
                 type="system_message",
             ).send()
+            await _send_interrupted_marker("connection_error")
             return
 
         await _close_all_outputs(thinkings, answers)

@@ -115,6 +115,9 @@ export const ja = {
   'messages.empty': 'まだメッセージはありません。下の入力欄から話しかけてください。',
   'messages.scrollToLatest': '最新のメッセージへスクロール',
   'messages.latest': '最新のメッセージへ',
+  'messages.continue': '続ける',
+  'messages.continueTitle': '中断したところから続きを実行します（「続けて」と送信します）',
+  'messages.continuePrompt': '続けて',
 
   'composer.pasteTooLong':
     '貼り付けたテキスト（{length}文字）を追加すると上限（{limit}文字）を超えるため、追加しませんでした。',
@@ -251,6 +254,9 @@ const en: Record<MessageKey, string> = {
   'messages.empty': 'No messages yet. Type in the box below to get started.',
   'messages.scrollToLatest': 'Scroll to the latest message',
   'messages.latest': 'Latest message',
+  'messages.continue': 'Continue',
+  'messages.continueTitle': 'Resume from where it was interrupted (sends "Continue")',
+  'messages.continuePrompt': 'Continue',
 
   'composer.pasteTooLong':
     'The pasted text ({length} characters) was not added because it would exceed the limit ({limit} characters).',

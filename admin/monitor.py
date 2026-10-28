@@ -41,6 +41,7 @@ _CONTROL_PREFIXES = (
     "🧰 サイドパネル表示件数上限\n",
     "📝 入力上限\n",
     "📋 実行計画\n",
+    "⏸ 中断\n",
 )
 _MESSAGE_TYPES = ("user_message", "assistant_message", "system_message")
 # 詳細表示で追加するStep種別（ツール実行・思考・サブエージェント）。

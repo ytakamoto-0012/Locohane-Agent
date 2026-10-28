@@ -9,6 +9,7 @@ type IconName =
   | 'plus'
   | 'x'
   | 'arrow-down'
+  | 'play'
   | 'trash'
   | 'pencil'
   | 'panel-left'
@@ -59,6 +60,8 @@ function IconPath({ name }: { name: IconName }) {
       return <path d="M18 6L6 18M6 6l12 12" />;
     case 'arrow-down':
       return <path d="M12 4v16M6 14l6 6 6-6" />;
+    case 'play':
+      return <path d="M7 4.5v15l12-7.5z" />;
     case 'trash':
       return (
         <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0-1 14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2L4 6h16zM10 11v6M14 11v6" />

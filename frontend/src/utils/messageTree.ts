@@ -20,6 +20,8 @@ export const MAX_DISPLAY_MESSAGES_PREFIX = '📏 表示件数上限\n';
 export const MAX_DISPLAY_SIDE_STEPS_PREFIX = '🧰 サイドパネル表示件数上限\n';
 /** app.py の INPUT_LIMITS_PREFIX と一致させる（入力欄の貼り付けテキスト化の閾値・最大入力文字数）。 */
 export const INPUT_LIMITS_PREFIX = '📝 入力上限\n';
+/** app.py の INTERRUPTED_PREFIX と一致させる（ターンの中断。「続ける」ボタンの表示判定に使う）。 */
+export const INTERRUPTED_PREFIX = '⏸ 中断\n';
 /** app.py の SUBAGENT_MESSAGE_AUTHOR、src/tools.py の _SUBAGENT_MESSAGE_AUTHOR と一致させる
  *  （dispatch_agent＝サブエージェント由来のメッセージを識別する cl.Message author 名）。 */
 export const SUBAGENT_MESSAGE_AUTHOR = 'サブエージェント';
@@ -71,6 +73,10 @@ export function isInputLimitsMessage(step: IStep): boolean {
   return isPrefixedStatusMessage(step, INPUT_LIMITS_PREFIX);
 }
 
+export function isInterruptedMessage(step: IStep): boolean {
+  return isPrefixedStatusMessage(step, INTERRUPTED_PREFIX);
+}
+
 /** メインカラムに表示する、ユーザー発言・アシスタントの最終回答・システムメッセージ。 */
 export function selectMainThread(messages: IStep[]): IStep[] {
   return flattenAll(messages).filter(
@@ -82,8 +88,17 @@ export function selectMainThread(messages: IStep[]): IStep[] {
       !isStarterMessage(s) &&
       !isMaxDisplayMessagesMessage(s) &&
       !isMaxDisplaySideStepsMessage(s) &&
-      !isInputLimitsMessage(s)
+      !isInputLimitsMessage(s) &&
+      !isInterruptedMessage(s)
   );
+}
+
+/** 直近のターンが中断したまま（中断マーカーより後にユーザー発言が無い）かどうか。 */
+export function selectIsInterrupted(messages: IStep[]): boolean {
+  const last = flattenAll(messages)
+    .filter((s) => s.type === 'user_message' || isInterruptedMessage(s))
+    .pop();
+  return last !== undefined && isInterruptedMessage(last);
 }
 
 function isSideStepType(step: IStep): boolean {

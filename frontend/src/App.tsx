@@ -38,7 +38,8 @@ import {
   selectLatestStarters,
   selectLatestMaxDisplayMessages,
   selectLatestMaxDisplaySideSteps,
-  selectLatestInputLimits
+  selectLatestInputLimits,
+  selectIsInterrupted
 } from './utils/messageTree';
 import { useIsMobile } from './utils/useIsMobile';
 import './styles.css';
@@ -339,6 +340,7 @@ function App() {
   const plan = selectLatestPlan(messages);
   const starterPrompts = selectLatestStarters(messages);
   const inputLimits = selectLatestInputLimits(messages);
+  const interrupted = selectIsInterrupted(messages);
 
   // 表示専用の間引き。会話コンテキスト(LangGraph側のstate)やログには一切影響しない。
   // 上限0または未取得（値未着信/パース失敗）の場合は無制限（従来どおり全件描画）。
@@ -397,6 +399,7 @@ function App() {
           onRemoveAttachment={handleRemoveAttachment}
           onAttachmentsSent={handleAttachmentsSent}
           inputLimits={inputLimits}
+          interrupted={interrupted}
         />
       </div>
       <SidePanel

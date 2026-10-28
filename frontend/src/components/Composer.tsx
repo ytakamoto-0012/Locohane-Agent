@@ -54,6 +54,8 @@ interface ComposerProps {
   onAttachmentsSent: () => void;
   // 貼り付けテキスト化の閾値・最大入力文字数（config.ini [ui]、app.py の INPUT_LIMITS_PREFIX）。
   inputLimits: InputLimits;
+  // 直近のターンが中断したまま（app.py の INTERRUPTED_PREFIX）。「続ける」ボタンを出す。
+  interrupted?: boolean;
 }
 
 export function Composer({
@@ -67,7 +69,8 @@ export function Composer({
   onAttachPastedText,
   onRemoveAttachment,
   onAttachmentsSent,
-  inputLimits
+  inputLimits,
+  interrupted
 }: ComposerProps) {
   const { askUser, disabled, loading } = useChatData();
   const { sendMessage, replyMessage, stopTask } = useChatInteract();
@@ -128,18 +131,27 @@ export function Composer({
     onAttachPastedText(text);
   };
 
+  const buildUserMessage = (output: string): IStep => ({
+    threadId: '',
+    id: uuidv4(),
+    name: 'あなた',
+    type: 'user_message',
+    output,
+    createdAt: new Date().toISOString(),
+    metadata: { reasoning_effort: getStoredReasoningEffort() }
+  });
+
+  // 入力欄の本文・添付には触れず、「続けて」だけを送る。
+  const showContinue = Boolean(interrupted) && !loading && !askUser && !inputBlocked;
+  const sendContinue = () => {
+    if (!showContinue) return;
+    sendMessage(buildUserMessage(t('messages.continuePrompt')), []);
+  };
+
   const submit = () => {
     if (inputBlocked || overLimit || uploading || (!value.trim() && attachments.length === 0)) return;
 
-    const message: IStep = {
-      threadId: '',
-      id: uuidv4(),
-      name: 'あなた',
-      type: 'user_message',
-      output: value,
-      createdAt: new Date().toISOString(),
-      metadata: { reasoning_effort: getStoredReasoningEffort() }
-    };
+    const message = buildUserMessage(value);
 
     if (isReplying && askUser) {
       // askUser への返信はファイル参照を送れないため、貼り付けテキストは本文へ展開する。
@@ -175,6 +187,19 @@ export function Composer({
         <div className="composer-remote-generating-banner">
           <span className="composer-remote-generating-dot" />
           {t('composer.busyOtherThread')}
+        </div>
+      ) : null}
+      {showContinue ? (
+        <div className="composer-continue-row">
+          <button
+            type="button"
+            className="composer-continue-button"
+            onClick={sendContinue}
+            title={t('messages.continueTitle')}
+          >
+            <Icon name="play" size={12} />
+            {t('messages.continue')}
+          </button>
         </div>
       ) : null}
       {attachments.some((a) => a.pastedText !== undefined) ? (
