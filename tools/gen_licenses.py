@@ -35,6 +35,7 @@ TOP = [
     "pypdfium2",
     "reportlab",
     "openpyxl",
+    "python-calamine",
     "xlrd",
     "python-docx",
     "python-pptx",

@@ -372,6 +372,67 @@ def test_extract_xlsx_ignores_dimension_spanning_the_whole_sheet(tmp_path):
     assert time.monotonic() - start < 30
 
 
+def test_extract_xlsx_formats_values_and_drops_blank_cells(tmp_path):
+    import datetime
+
+    import openpyxl
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append([1, 1.5, 123456789012, 1e20, True, None, "  ", None])
+    ws.append([datetime.date(2024, 1, 2), datetime.datetime(2024, 1, 2, 3, 4, 5), datetime.time(9, 30)])
+    ws.append(["   ", None, " "])  # 空白だけの行は入れない
+    ws["C5"] = "飛び"  # A1 以外から始まる値も列の位置を残す
+    wb.save(tmp_path / "a.xlsx")
+    assert extract_segments(tmp_path / "a.xlsx")[0].text.split("\n") == [
+        "1\t1.5\t123456789012\t1e+20\tTrue",
+        "2024-01-02\t2024-01-02 03:04:05\t09:30:00",
+        "\t\t飛び",
+    ]
+
+
+def test_extract_xlsx_reads_far_apart_cells_without_calamine(tmp_path, monkeypatch):
+    import zipfile
+
+    import openpyxl
+
+    from src.vector_db import extract
+
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "左上"
+    wb.active["XFD2000"] = "右下"
+    wb.save(tmp_path / "a.xlsx")
+    # 値の入った範囲が上限を超えるブックは calamine に渡さない（使用範囲の無いブックは値のあるセルから数える）。
+    called = []
+    monkeypatch.setattr(extract, "_calamine_sheets", lambda source: called.append(source) or iter(()))
+    no_dimension = tmp_path / "b.xlsx"
+    with zipfile.ZipFile(tmp_path / "a.xlsx") as src, zipfile.ZipFile(no_dimension, "w") as dst:
+        for item in src.infolist():
+            data = src.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = data.replace(b'<dimension ref="A1:XFD2000"/>', b"")
+            dst.writestr(item, data)
+    for path in (tmp_path / "a.xlsx", no_dimension):
+        assert extract_segments(path)[0].text == "左上\n" + "\t" * 16383 + "右下"
+    assert called == []
+
+
+def test_extract_xlsx_falls_back_to_openpyxl_when_calamine_fails(tmp_path, monkeypatch):
+    import openpyxl
+
+    from src.vector_db import extract
+
+    def broken(source):
+        raise RuntimeError("calamine failed")
+        yield
+
+    wb = openpyxl.Workbook()
+    wb.active.append(["品番", 10])
+    wb.save(tmp_path / "a.xlsx")
+    monkeypatch.setattr(extract, "_calamine_sheets", broken)
+    assert extract_segments(tmp_path / "a.xlsx")[0].text == "品番\t10"
+
+
 def test_extract_docx_reads_content_controls_and_tracked_insertions_in_order(tmp_path):
     import docx
     from docx.oxml import parse_xml

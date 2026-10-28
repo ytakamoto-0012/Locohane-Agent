@@ -11,6 +11,7 @@ from dataclasses import dataclass
 import io
 import locale
 from pathlib import Path
+import re
 import threading
 
 SUPPORTED_EXTENSIONS = (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".md", ".txt", ".csv")
@@ -293,37 +294,171 @@ def _extract_xlsx(source) -> list[Segment]:
     図形はアンカー（左上が乗っているセル）の行、コメントは付いているセルの行の後ろに、セル番地を付けて
     差し込む（例: "[Shape C5] 承認欄"）。近くのセルと同じチャンクに入り、検索結果でも位置が分かるようにするため。
     セルではなく位置で置いた図形はシートの末尾に付ける。グラフシートはグラフのタイトルだけの区切りにする。
-    """
-    from openpyxl.chartsheet import Chartsheet
 
+    セルの値は python-calamine（Rust の実装で、openpyxl より大幅に速い）で読む。値の入った範囲が大きすぎるシートが
+    あるブック（_fits_calamine）と、calamine で読めなかったブックは openpyxl で読む。
+    """
     try:
         extras = _xlsx_sheet_extras(source)
     except Exception:  # noqa: BLE001 - 図形・コメントが読めなくても、セルの値は取り込む
         extras = {}
-    workbook = _load_workbook(source)
+    if _fits_calamine(source):
+        try:
+            return _xlsx_segments(_calamine_sheets(source), extras)
+        except BaseException as e:  # noqa: BLE001 - Rust 側の panic は BaseException の PanicException になる
+            if not isinstance(e, Exception) and type(e).__name__ != "PanicException":
+                raise
+    return _xlsx_segments(_openpyxl_sheets(source), extras)
+
+
+def _xlsx_segments(sheets, extras: dict[str, dict[int, list[str]]]) -> list[Segment]:
+    """sheets（シート名, 1行目からの各行のセルの値）ごとに、セルの行と図形・コメントの行（extras）を並べた区切り。"""
+    segments = []
+    for name, rows in sheets:
+        notes = dict(extras.get(name, {}))
+        lines = []
+        for row_number, row in enumerate(rows, start=1):
+            if text := _row_text(row):
+                lines.append(text)
+            lines.extend(notes.pop(row_number, []))
+        # データの最後の行より下に置いた図形・コメントと、位置で置いた図形（行 0 として集めたもの）。
+        for row_number in sorted(notes, key=lambda r: (r == 0, r)):
+            lines.extend(notes[row_number])
+        segments.append(Segment(f"Sheet: {name}", "\n".join(lines)))
+    return segments
+
+
+def _row_text(values) -> str:
+    """1行のセルの値をタブでつなぐ。空のセル（空白だけを含む）は空にし、末尾の空のセルは付けない。値の無い行は空文字。
+
+    途中の空のセルは、列の位置が分かるようにタブを残す。
+    """
+    end = len(values)
+    while end and values[end - 1] in (None, ""):  # 文字列にする前に、末尾の空のセルを落とす
+        end -= 1
+    cells = [_cell_text(v) for v in values[:end]]
+    while cells and not cells[-1]:
+        cells.pop()
+    return "\t".join(cells)
+
+
+def _cell_text(value) -> str:
+    if value is None:
+        return ""
+    # calamine は数値を float で返すため、整数は openpyxl と同じく "1.0" ではなく "1" にする
+    # （1e15 以上は Excel が指数表記で保存する桁のため float のまま）。
+    if isinstance(value, float) and value.is_integer() and abs(value) < 1e15:
+        value = int(value)
+    text = str(value)
+    return text if text.strip() else ""
+
+
+def _calamine_sheets(source):
+    """python-calamine でシートごとに (シート名, 1行目・A列からの各行のセルの値) を返す（空のセルは ""）。
+    グラフシート等のセルの無いシートは行を返さない。"""
+    from python_calamine import CalamineWorkbook, SheetTypeEnum
+
+    if isinstance(source, io.BytesIO):
+        source.seek(0)
+        workbook = CalamineWorkbook.from_filelike(source)
+    else:
+        workbook = CalamineWorkbook.from_path(source)
     try:
-        segments = []
-        for name in workbook.sheetnames:
-            sheet = workbook[name]
-            notes = extras.get(name, {})
-            rows = []
-            if not isinstance(sheet, Chartsheet):  # グラフシートにはセルが無い
-                # 使用範囲（<dimension ref>）を使わない。読み取り専用モードは各行を使用範囲の最大列まで埋めて返すため、
-                # 書式を最終行・最終列まで付けたブック（A1:XFD1048576）では 105万行 × 16384列 を回って終わらなくなる。
-                # 使わなければ、各行は実際にあるセルの列までになる（途中の抜けた行は空になる）。
-                sheet.reset_dimensions()
-                for row_number, row in enumerate(sheet.iter_rows(min_row=1, values_only=True), start=1):
-                    cells = ["" if v is None else str(v) for v in row]
-                    if any(c.strip() for c in cells):
-                        rows.append("\t".join(cells).rstrip("\t"))
-                    rows.extend(notes.pop(row_number, []))
-            # データの最後の行より下に置いた図形・コメントと、位置で置いた図形（行 0 として集めたもの）。
-            for row_number in sorted(notes, key=lambda r: (r == 0, r)):
-                rows.extend(notes[row_number])
-            segments.append(Segment(f"Sheet: {name}", "\n".join(rows)))
-        return segments
+        for sheet in workbook.sheets_metadata:
+            if sheet.typ != SheetTypeEnum.WorkSheet:
+                yield sheet.name, ()
+                continue
+            # skip_empty_area=False で A1 から並べる（行の位置で図形・コメントを差し込むため）。
+            yield sheet.name, workbook.get_sheet_by_name(sheet.name).to_python(skip_empty_area=False)
     finally:
         workbook.close()
+
+
+def _openpyxl_sheets(source):
+    """openpyxl の読み取り専用モードでシートごとに (シート名, 1行目からの各行のセルの値) を返す。"""
+    from openpyxl.chartsheet import Chartsheet
+
+    workbook = _load_workbook(source)
+    try:
+        for name in workbook.sheetnames:
+            sheet = workbook[name]
+            if isinstance(sheet, Chartsheet):  # グラフシートにはセルが無い
+                yield name, ()
+                continue
+            # 使用範囲（<dimension ref>）を使わない。読み取り専用モードは各行を使用範囲の最大列まで埋めて返すため、
+            # 書式を最終行・最終列まで付けたブック（A1:XFD1048576）では 105万行 × 16384列 を回って終わらなくなる。
+            # 使わなければ、各行は実際にあるセルの列までになる（途中の抜けた行は空になる）。
+            sheet.reset_dimensions()
+            yield name, sheet.iter_rows(min_row=1, values_only=True)
+    finally:
+        workbook.close()
+
+
+# calamine で読むシートの大きさの上限（A1 から値の入った最後の行・列までのセル数）。calamine はシートを
+# 値の入った範囲の長方形で持つため（1セル 32 バイト程度）、離れたセル（例: A1 と XFD100000）に値があると
+# 巨大なメモリーを確保しようとし、確保できないとプロセスごと終了する。上限を超えるブックは openpyxl で読む。
+_CALAMINE_MAX_CELLS = 10_000_000
+# 使用範囲（<dimension ref="A1:C20">）。シートの XML の先頭にあるため、先頭だけを読んで探す。
+_DIMENSION = re.compile(rb'<(?:\w+:)?dimension\s+ref="(?:[A-Z]+\d+:)?([A-Z]+)(\d+)"')
+_DIMENSION_HEAD_BYTES = 64 * 1024
+# 値（v）・数式（f）・インライン文字列（is）を持つセル（<c r="C5" t="s"><v>…）の列の文字・行番号。
+# 書式だけのセル（<c r="C5" s="1"/>）は含めない。セルごとに Python の処理を挟まないよう、findall で片方だけを取り出す。
+_VALUE_CELL = rb'<(?:\w+:)?c\s[^>]*?\br="{}"[^>]*>\s*<(?:\w+:)?(?:v|f|is)[\s>/]'
+_VALUE_CELL_COLUMN = re.compile(_VALUE_CELL.replace(b"{}", rb"([A-Z]{1,3})\d+"))
+_VALUE_CELL_ROW = re.compile(_VALUE_CELL.replace(b"{}", rb"[A-Z]{1,3}(\d+)"))
+
+
+def _fits_calamine(source) -> bool:
+    """どのシートも、値の入った範囲が _CALAMINE_MAX_CELLS 以下か（調べられなければ False）。
+
+    使用範囲（<dimension>）が上限以下ならそれを使う。書式を最終行・最終列まで付けたブックは使用範囲が
+    A1:XFD1048576 になるため、上限を超えたとき（と使用範囲が無いとき）は値のあるセルを数えて確かめる。
+    """
+    import posixpath
+    from xml.etree import ElementTree
+    import zipfile
+
+    try:
+        with zipfile.ZipFile(source) as package:
+            names = set(package.namelist())
+            rels_name = "xl/_rels/workbook.xml.rels"
+            if rels_name not in names:
+                return False
+            parts = [
+                posixpath.normpath(posixpath.join("xl", target)) if not target.startswith("/") else target.lstrip("/")
+                for rel in ElementTree.fromstring(package.read(rels_name)).iter(f"{{{_NS_PKG_REL}}}Relationship")
+                if rel.get("Type", "").endswith("/worksheet") and (target := rel.get("Target", ""))
+            ]
+            for part in parts:
+                if part in names and _value_area(package, part) > _CALAMINE_MAX_CELLS:
+                    return False
+        return True
+    except Exception:  # noqa: BLE001 - 調べられないブックは openpyxl で読む
+        return False
+
+
+def _value_area(package, part: str) -> int:
+    """シート（part）の A1 から値の入った最後の行・列までのセル数（使用範囲が上限以下ならそのセル数）。"""
+    with package.open(part) as f:
+        head = f.read(_DIMENSION_HEAD_BYTES)
+    if (m := _DIMENSION.search(head)) is not None:
+        row, col = _cell_position(m[1].decode() + m[2].decode())
+        if row * (col + 1) <= _CALAMINE_MAX_CELLS:
+            return row * (col + 1)
+    xml = package.read(part)
+    columns = set(_VALUE_CELL_COLUMN.findall(xml))
+    if not columns:
+        return 0
+    last_col = max(_cell_position(c.decode() + "1")[1] for c in columns)
+    # 行は上から順に並ぶため、末尾から広げながら探した最後の値のセルの行を使う（書式だけの行が末尾に続くブックもある）。
+    window = 1 << 20
+    while True:
+        start = max(len(xml) - window, 0)
+        rows = _VALUE_CELL_ROW.findall(xml, start)
+        if rows or start == 0:
+            last_row = max((int(r) for r in rows), default=0)
+            return last_row * (last_col + 1)
+        window *= 4
 
 
 def _load_workbook(source):

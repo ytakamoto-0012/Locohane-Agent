@@ -1,12 +1,13 @@
 # 第三者ライセンス告知 (THIRD_PARTY_LICENSES)
 
 本ファイルは Locohane が実行時に利用する第三者オープンソース
-パッケージとそのライセンスの一覧です（tools/gen_licenses.py で自動生成 / 生成日: 2026-07-20）。
+パッケージとそのライセンスの一覧です（tools/gen_licenses.py で自動生成 / 生成日: 2026-10-28）。
 対象は requirements.txt の直接依存から到達する実行時の推移的依存集合です。
 
 再生成:
 
-```bash
+```cmd
+call python_env.bat
 python tools/gen_licenses.py
 ```
 
@@ -15,11 +16,11 @@ python tools/gen_licenses.py
 | ライセンス種別 | パッケージ数 |
 |---|---:|
 | Apache 2.0 | 74 |
-| MIT | 55 |
+| MIT | 57 |
 | BSD | 26 |
 | PSF | 3 |
 | MPL 2.0 | 2 |
-| **合計** | **160** |
+| **合計** | **162** |
 
 > いずれも寛容ライセンス（MIT / Apache 2.0 / BSD / PSF / ISC）または
 > ファイル単位の弱いコピーレフト（MPL 2.0）であり、改変せず依存として利用する
@@ -47,7 +48,7 @@ python tools/gen_licenses.py
 | attrs | 26.1.0 | MIT | https://tidelift.com/subscription/pkg/pypi-attrs?utm_source=pypi-attrs&utm_medium=pypi |
 | bidict | 0.23.1 | Mozilla Public License 2.0 (MPL 2.0) | https://github.com/jab/bidict |
 | certifi | 2026.6.17 | Mozilla Public License 2.0 (MPL 2.0) | https://github.com/certifi/python-certifi |
-| chainlit | 2.11.1 | Apache-2.0 | https://chainlit.io/ |
+| chainlit | 2.12.0 | Apache-2.0 | https://chainlit.io/ |
 | charset-normalizer | 3.4.9 | MIT |  |
 | chevron | 0.14.0 | MIT License | https://github.com/noahmorrison/chevron |
 | click | 8.4.2 | BSD-3-Clause | https://github.com/pallets/click/ |
@@ -57,6 +58,7 @@ python tools/gen_licenses.py
 | deprecated | 1.3.1 | MIT License | https://github.com/laurent-laporte-pro/deprecated |
 | distro | 1.9.0 | Apache Software License | https://github.com/python-distro/distro |
 | et-xmlfile | 2.0.0 | MIT License | https://foss.heptapod.net/openpyxl/et_xmlfile |
+| exceptiongroup | 1.3.1 | MIT License | https://github.com/agronholm/exceptiongroup |
 | fastapi | 0.139.0 | MIT | https://github.com/fastapi/fastapi |
 | filetype | 1.2.0 | MIT License | https://github.com/h2non/filetype.py |
 | frozenlist | 1.8.0 | Apache-2.0 | https://github.com/aio-libs/frozenlist |
@@ -79,8 +81,8 @@ python tools/gen_licenses.py
 | langchain-openai | 1.3.5 | MIT License | https://docs.langchain.com/oss/python/integrations/providers/openai |
 | langchain-protocol | 0.0.18 | MIT License | https://github.com/langchain-ai/agent-protocol/tree/main/streaming |
 | langgraph | 1.2.9 | MIT | https://docs.langchain.com/oss/python/langgraph/overview |
-| langgraph-checkpoint | 4.1.1 | MIT | https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint |
-| langgraph-checkpoint-sqlite | 3.1.0 | MIT | https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint-sqlite |
+| langgraph-checkpoint | 4.3.1 | MIT | https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint |
+| langgraph-checkpoint-sqlite | 3.1.2 | MIT | https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint-sqlite |
 | langgraph-prebuilt | 1.1.0 | MIT | https://github.com/langchain-ai/langgraph/tree/main/libs/prebuilt |
 | langgraph-sdk | 0.4.2 | MIT | https://github.com/langchain-ai/langgraph/tree/main/libs/sdk-py |
 | langsmith | 0.10.2 | MIT | https://smith.langchain.com/ |
@@ -89,11 +91,11 @@ python tools/gen_licenses.py
 | lxml | 6.1.1 | BSD-3-Clause | https://lxml.de/ |
 | markupsafe | 3.0.3 | BSD-3-Clause | https://github.com/pallets/markupsafe/ |
 | marshmallow | 3.26.2 | MIT License | https://github.com/marshmallow-code/marshmallow |
-| mcp | 1.28.1 | MIT License | https://modelcontextprotocol.io |
+| mcp | 1.30.0 | MIT License | https://modelcontextprotocol.io |
 | multidict | 6.7.1 | Apache License 2.0 | https://github.com/aio-libs/multidict |
 | mypy-extensions | 1.1.0 | MIT | https://github.com/python/mypy_extensions |
 | nest-asyncio | 1.6.0 | BSD License | https://github.com/erdewit/nest_asyncio |
-| openai | 2.45.0 | Apache Software License | https://github.com/openai/openai-python |
+| openai | 2.54.0 | Apache Software License | https://github.com/openai/openai-python |
 | openpyxl | 3.1.5 | MIT License | https://openpyxl.readthedocs.io |
 | opentelemetry-api | 1.43.0 | Apache-2.0 | https://github.com/open-telemetry/opentelemetry-python/tree/main/opentelemetry-api |
 | opentelemetry-exporter-otlp-proto-common | 1.43.0 | Apache-2.0 | https://github.com/open-telemetry/opentelemetry-python/tree/main/exporter/opentelemetry-exporter-otlp-proto-common |
@@ -146,22 +148,23 @@ python tools/gen_licenses.py
 | orjson | 3.11.9 | MPL-2.0 AND (Apache-2.0 OR MIT) | https://github.com/ijl/orjson |
 | ormsgpack | 1.12.2 | Apache-2.0 OR MIT | https://github.com/ormsgpack/ormsgpack |
 | packaging | 26.2 | Apache-2.0 OR BSD-2-Clause | https://github.com/pypa/packaging |
-| pillow | 12.3.0 | MIT-CMU | https://tidelift.com/subscription/pkg/pypi-pillow?utm_source=pypi-pillow&utm_medium=pypi |
+| pillow | 13.0.0 | MIT-CMU | https://python-pillow.org |
 | propcache | 0.5.2 | Apache Software License | https://github.com/aio-libs/propcache |
 | protobuf | 7.35.1 | 3-Clause BSD License | https://developers.google.com/protocol-buffers/ |
 | pydantic | 2.13.4 | MIT | https://github.com/pydantic/pydantic |
 | pydantic-core | 2.46.4 | MIT | https://github.com/pydantic/pydantic |
 | pydantic-settings | 2.14.2 | MIT | https://github.com/pydantic/pydantic-settings |
 | pyjwt | 2.13.0 | MIT | https://github.com/jpadilla/pyjwt |
-| pypdf | 6.11.0 | BSD-3-Clause | https://github.com/py-pdf/pypdf |
+| pypdf | 6.21.2 | BSD-3-Clause | https://github.com/py-pdf/pypdf |
 | pypdfium2 | 4.30.0 | (Apache-2.0 OR BSD-3-Clause) AND LicenseRef-P | https://github.com/pypdfium2-team/pypdfium2 |
+| python-calamine | 0.9.0 | MIT | https://github.com/dimastbk/python-calamine |
 | python-docx | 1.2.0 | MIT License | https://github.com/python-openxml/python-docx |
 | python-dotenv | 1.2.2 | BSD-3-Clause | https://github.com/theskumar/python-dotenv |
 | python-engineio | 4.13.3 | MIT | https://github.com/miguelgrinberg/python-engineio |
 | python-multipart | 0.0.32 | Apache-2.0 | https://github.com/Kludex/python-multipart |
 | python-pptx | 1.0.2 | MIT License | https://github.com/scanny/python-pptx |
 | python-socketio | 5.16.3 | MIT | https://github.com/miguelgrinberg/python-socketio |
-| pywin32 | 312 | Python Software Foundation License | https://github.com/mhammond/pywin32 |
+| pywin32 | 311 | Python Software Foundation License | https://github.com/mhammond/pywin32 |
 | pyyaml | 6.0.3 | MIT License | https://pyyaml.org/ |
 | referencing | 0.37.0 | MIT | https://github.com/python-jsonschema/referencing |
 | regex | 2026.7.10 | Apache-2.0 AND CNRI-Python | https://github.com/mrabarnett/mrab-regex |
@@ -171,7 +174,7 @@ python tools/gen_licenses.py
 | rpds-py | 2026.6.3 | MIT | https://github.com/crate-py/rpds |
 | simple-websocket | 1.1.0 | MIT License | https://github.com/miguelgrinberg/simple-websocket |
 | sniffio | 1.3.1 | MIT License; Apache Software License | https://github.com/python-trio/sniffio |
-| sqlite-vec | 0.1.9 | MIT License, Apache License, Version 2.0 | https://github.com/asg017/sqlite-vec |
+| sqlite-vec | 0.1.9 | MIT License, Apache License, Version 2.0 | https://TODO.com |
 | sse-starlette | 3.4.5 | BSD-3-Clause | https://github.com/sysid/sse-starlette |
 | starlette | 1.3.1 | BSD-3-Clause | https://github.com/Kludex/starlette |
 | syncer | 2.0.3 | MIT License | https://github.com/miyakogi/syncer |
