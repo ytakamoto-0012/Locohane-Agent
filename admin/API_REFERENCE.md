@@ -564,8 +564,10 @@ $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/copy -H "$H
   -d '{"dest_instance":"org_b","dest_name":"manuals","with_vectors":true,"include_schedule":false}'
 # コピー先・参照元に選べるインスタンスと、そのコレクション・埋め込みの設定の一覧
 $C $BASE/api/knowledge/sources
-# 取り込みワーカー（全インスタンス共通の並列数の枠）の状態。load（準備）・embed（埋め込み）は枠ごとに
-# {instance, collection, detail（処理中のファイル）} か null（空き）。waiting は空きを待っている取り込み
+# 取り込みワーカー（全インスタンス共通の並列数の枠）の状態。load（準備するファイル）・embed（埋め込みのリクエスト）は枠ごとに
+# {instance, collection, detail（処理中のファイル）} か null（空き）。requests は埋め込みのリクエストの並列数。
+# files は埋め込みを待っている・埋め込み中のファイルごとの {instance, collection, detail（パス）, done・total（埋め込み済み・
+# 全体の件数）, requests（送信中のリクエスト数）, idle_seconds（最後に進んでからの秒数）}。waiting は空きを待っている取り込み
 # （GET .../knowledge の workers にも同じものが付く）
 $C $BASE/api/knowledge/workers
 # 別のインスタンス（org_a）のコレクションを複製せずに参照する（name はこのインスタンスでの名前）。
@@ -587,7 +589,7 @@ cmd:
 
 ## 管理者設定
 
-全インスタンス共通の設定（`[vector_db] ingest_workers`・`ingest_processes`、`[admin] assistant_llm_instance`・`assistant_embedding_instance`）。
+全インスタンス共通の設定（`[vector_db] ingest_workers`・`ingest_processes`・`ingest_embed_requests`、`[admin] assistant_llm_instance`・`assistant_embedding_instance`）。
 `<instances_dir>/admin_settings.json` に保存し、config.ini より優先する（再起動なしで効く）。
 
 ```bash
@@ -595,7 +597,7 @@ cmd:
 $C $BASE/api/admin-settings
 # 保存（キーは "<section>.<key>"。config.ini と同じ値は上書きとして持たない。不正な値・無いインスタンスは 400）
 $C -X PUT $BASE/api/admin-settings -H "$H" -H "$J" \
-  -d '{"values":{"vector_db.ingest_workers":2,"vector_db.ingest_processes":0,"admin.assistant_llm_instance":"s_lab"}}'
+  -d '{"values":{"vector_db.ingest_workers":2,"vector_db.ingest_processes":0,"vector_db.ingest_embed_requests":8,"admin.assistant_llm_instance":"s_lab"}}'
 # 画面で保存した値を消して config.ini の値に戻す
 $C -X DELETE $BASE/api/admin-settings -H "$H"
 # インスタンスの [llm] main_url へ接続できるか（各接続先へ GET /models。ok・endpoints[].ok/detail）

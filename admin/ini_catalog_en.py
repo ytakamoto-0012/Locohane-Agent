@@ -1002,10 +1002,9 @@ DESCRIPTIONS: dict[str, str] = {
         'Excel) is terminated, and the file is listed in the failure list. If the time is not enough for documents of hundreds of pages, increase it.'
     ),
     'vector_db.ingest_workers': (
-        'Ingestion parallelism (1 or more). Used both for the number of files prepared in parallel (reading, extracting text, rendering images) and for the number of embedding requests sent at the same time.\n'
-        '1 (default) prepares one file at a time and sends one embedding request at a time. Chunks of a large file are also sent as several batches at the same time.\n'
-        'Embedding wait time only gets shorter if the inference server of embedding_url can process several requests at the same time\n'
-        '(for llama-server, start it with --parallel (-np) at or above this value; otherwise requests just queue up and it does not get faster).\n'
+        'Ingestion parallelism (1 or more). The number of files prepared in parallel (reading, extracting text, rendering images; the value of ingest_processes when it is 1 or more).\n'
+        'The number of embedding requests sent at the same time is set by ingest_embed_requests (0 means the same as this value).\n'
+        '1 (default) prepares one file at a time.\n'
         'With 2 or more, larger files are started first (to avoid one large file being left at the end while everything else waits).\n'
         'For Office files with image_input = true, each worker starts one Word / PowerPoint / Excel and reuses it during ingestion,\n'
         'so increase it only within the memory you have to spare.\n'
@@ -1022,6 +1021,14 @@ DESCRIPTIONS: dict[str, str] = {
         'When a child process crashes (PDFium fell over on a broken PDF, etc.), only that file is listed in the failure list and ingestion continues\n'
         '(with 0 the whole admin tool goes down, so for sources with many files of unknown origin, 1 or more is safer).\n'
         'With 1 or more, this is also the number of files prepared at the same time (in total across all instances and collections).'
+    ),
+    'vector_db.ingest_embed_requests': (
+        'Number of embedding requests sent at the same time during ingestion (0 or more). 0 (default) means the same as ingest_workers.\n'
+        'A file is embedded in several requests (text chunks in batches of embedding_batch_size, page images one at a time), so batches of a large file are also sent at the same time.\n'
+        'Embedding wait time only gets shorter if the inference server of embedding_url can process several requests at the same time\n'
+        '(for llama-server, start it with --parallel (-np) at or above this value; otherwise requests just queue up and it does not get faster). Shared by all instances:\n'
+        'at most this many are sent in total across the ingestions of all instances and collections\n'
+        '(can be changed in "Admin settings" of the settings dashboard; cannot be changed per instance).'
     ),
     'vector_db.scan_workers': (
         'Number of folders read at the same time when scanning the source folder (threads, 1 or more). Each differential ingestion reads all folders of the source\n'

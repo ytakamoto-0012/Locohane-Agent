@@ -889,6 +889,7 @@ const CONFIG_PRESETS = [
       "vector_db.office_timeout_seconds",
       "vector_db.ingest_workers",
       "vector_db.ingest_processes",
+      "vector_db.ingest_embed_requests",
       "vector_db.scan_workers",
       "vector_db.max_files_per_collection",
       "vector_db.chunk_size",

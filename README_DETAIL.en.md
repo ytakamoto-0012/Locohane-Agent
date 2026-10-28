@@ -1350,10 +1350,11 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
   one at a time within the same process (PDFium cannot be called from several threads at the same time). For Office files with `image_input = true`,
   each thread (child process) starts one Word / PowerPoint / Excel, reuses it during ingestion, and closes it when done.
 - **Embed**: the texts of several files (text chunks and file paths) are grouped into batches of `embedding_batch_size` and
-  up to `ingest_workers` are sent at the same time (chunks of a large file are also sent as several batches at the same time; images one at a time). When no embedding
+  up to `ingest_embed_requests` (default 0 = same as `ingest_workers`) are sent at the same time (chunks of a large file are also sent as several batches at the same time;
+  images one at a time; a file is split into several requests, so this may be larger than the number of files). When no embedding
   request is in flight, or no files are being prepared, batches are sent even if not full, so the embedding server is never left idle,
   and the more embedding falls behind, the larger the batches. Sending at the same time only gets faster if the inference server can process several
-  requests at the same time; for llama-server, start it with `--parallel` (`-np`) at or above `ingest_workers`.
+  requests at the same time; for llama-server, start it with `--parallel` (`-np`) at or above `ingest_embed_requests`.
   Embeddings are received as float32 bytes with `embedding_encoding_format = base64` (default) (smaller and faster to parse than numeric JSON;
   endpoints that do not support it switch to numeric arrays automatically).
 - **Write**: writes to the catalog, the vectors (sqlite-vec / Qdrant) and the keyword index are done on the main thread one file at a time,
@@ -1364,15 +1365,18 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
   ingestion of another collection running at the same time, or editing collections on the settings dashboard, does not fail with "database is locked").
 - **Stop**: pressing "Stop" starts no new files or batches (even after preparation of all files has started, the remaining embeddings are not sent),
   waits for the embeddings in flight to return, records only the files whose embedding finished, and stops (the button becomes "Stopping…" when pressed).
-- **Shared parallelism**: `ingest_workers` and `ingest_processes` are shared by all instances (they cannot be overridden per instance; change
+- **Shared parallelism**: `ingest_workers`, `ingest_processes` and `ingest_embed_requests` are shared by all instances (they cannot be overridden per instance; change
   them in "Admin settings" of the settings dashboard or in `config.ini`), and ingestion from the settings dashboard runs preparation and embedding at most this many **in total** across all
   instances and collections (ingesting several collections at once puts the same load on the embedding server and the PC as one).
   The rest waits for a free worker, and freed workers go to the earliest started ingestion first (`IngestSlots` in `src/vector_db/ingest.py`).
   A change of the parallelism takes effect from the next ingestion started (no need to restart the admin tool).
-- **Worker display**: the top of the Knowledge screen shows the workers shared by all instances as icons for "Prepare" and "Embed"
-  (idle = gray ring, preparing = spinning blue ring, embedding = pulsing green dot, waiting = blinking dotted ring; workers used by
-  ingestions of other instances are dimmed; hover an icon to see the file being processed). The "Status" column of each collection and the
-  instance cards show only the workers used by that ingestion.
+- **Worker display**: the top of the Knowledge screen shows the ingestion state shared by all instances for "Prepare" and "Embed".
+  One icon is one file (idle preparation worker = gray ring, preparing = spinning blue ring, waiting = blinking dotted ring; files of
+  ingestions of other instances are dimmed; hover an icon to see the file being processed). A file being embedded is a dot filled green by the
+  share already embedded, pulsing while requests are in flight. A file with requests in flight that has not progressed for 60 seconds or more
+  blinks yellow and is listed below as "Not progressing: file name (seconds, items)" (to find stuck files). The number of embedding icons is the ingestion
+  parallelism (`ingest_workers`; idle ones are gray rings), and the number of embedding requests in flight ("Requests 7/32") is also shown.
+  The "Status" column of each collection and the instance cards show only that ingestion.
 - **Queued deletion**: while ingestions or copies are running in the same instance, deleting a collection becomes "Waiting to delete" and runs
   after they finish (the keyword index, catalog, etc. are shared by the collections of an instance, so deleting during an ingestion causes
   "database is locked"). Ingestions of the same instance started while a deletion waits start after the deletion ("Waiting").
@@ -1692,10 +1696,11 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[vector_db]` | `embedded_image_min_px` | Lower limit (px, default 64) of the width and height of images taken out by `embedded_images`. Images smaller in either (icons, etc.) are not embedded. 0 means no size filter | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | Resolution at which pages are rendered as images with `image_input = true` (DPI, default 100) | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | Limit in seconds for one export of an Office file to PDF with `image_input = true` (default 180). When exceeded (stuck on an invisible dialog, etc.), that Office process is terminated and the file is listed in the failure list | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
-| `[vector_db]` | `ingest_workers` | Ingestion parallelism (default 1): the number of files prepared in parallel and the number of embedding requests sent at the same time. Parallel embedding also needs concurrent processing on the inference server (llama-server's `--parallel`) (see "Ingesting documents"). **Shared by all instances** (cannot be overridden per instance; can be changed in "Admin settings" of the settings dashboard; ingestion from the settings dashboard runs at most this many in total across all instances and collections) | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `ingest_workers` | Ingestion parallelism (default 1): the number of files prepared in parallel (the value of `ingest_processes` when it is 1 or more). The number of embedding requests sent at the same time is `ingest_embed_requests`. Parallel embedding also needs concurrent processing on the inference server (llama-server's `--parallel`) (see "Ingesting documents"). **Shared by all instances** (cannot be overridden per instance; can be changed in "Admin settings" of the settings dashboard; ingestion from the settings dashboard runs at most this many in total across all instances and collections) | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | Number of folders read at the same time when scanning the source folder (threads, default 8). Effective for folders on file servers | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | Maximum number of files ingested per collection (default 1000000). The excess is not ingested and a warning is shown on the Knowledge screen (already ingested files take priority, and the rest are chosen from the start in path order; see "Ingesting documents") | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
 | `[vector_db]` | `ingest_processes` | Number of child processes that extract text and render pages during ingestion (default 0 = no child processes; done in the `ingest_workers` threads). Set to 2 or more when there are CPU cores to spare and many PDFs, Excel files, etc. **Shared by all instances** (cannot be overridden per instance) | `VECTOR_DB_INGEST_PROCESSES` |
+| `[vector_db]` | `ingest_embed_requests` | Number of embedding requests sent at the same time during ingestion (default 0 = same as `ingest_workers`). A file is sent in several requests, so this may be larger than the number of files. Also needs concurrent processing on the inference server (llama-server's `--parallel`). **Shared by all instances** (cannot be overridden per instance; can be changed in "Admin settings" of the settings dashboard) | `VECTOR_DB_INGEST_EMBED_REQUESTS` |
 | `[vector_db]` | `top_k` | Number of results `search_documents`/`search_document_paths` return by default (default 5) | `VECTOR_DB_TOP_K` |
 | `[vector_db]` | `max_result_chars` | Maximum characters of the whole result of `search_documents`/`search_document_paths` (default 6000) | `VECTOR_DB_MAX_RESULT_CHARS` |
 | `[vector_db]` | `min_score` | Lower limit of the similarity (0.0-1.0, cosine similarity) of text chunks shown in results (default 0.3) | `VECTOR_DB_MIN_SCORE` |
@@ -1939,7 +1944,7 @@ The left sidebar of the `config.ini` tab has preset buttons that narrow the disp
 - **Parallelism**: `[llm] max_concurrent_requests`, `[graph] max_parallel`, `[subagent] max_parallel`
 - **Token control**: `[graph] token_guard_soft_threshold`, `[subagent] token_guard_soft_threshold`, `token_guard_hard_threshold`, `[context_trim] enabled`, `trigger_total_tokens`, `[context_compaction] enabled`, `token_threshold`, `single_request_token_threshold`, `pre_note_threshold`
 - **Skills**: `[paths] project_locohane_dir`, `[subagent] agent_type_run_script_allowlist`, `[main_agent_tool_guard] allow_entries`, `[plan] plan_approval_exempt_scripts`, each key of `[skill_creator]`, `[skill_lab] instance_locohane_dir`
-- **Vector DB**: `enabled`, `backend`, `distance`, `qdrant_url`, `qdrant_preset`, `embedding_url`, `embedding_routing_strategy`, `embedding_max_retries`, `search_embedding_max_retries`, `embedding_retry_interval_seconds`, `embedding_encoding_format`, `query_prefix`, `document_prefix`, `image_input`, `image_input_extensions`, `embedded_images`, `embedded_image_min_px`, `image_dpi`, `office_timeout_seconds`, `ingest_workers`, `ingest_processes`, `scan_workers`, `max_files_per_collection`, `chunk_size`, `chunk_overlap`, `max_file_mb`, `top_k`, `max_result_chars`, `min_score`, `image_min_score`, `path_min_score`, `rrf_weight_text`, `rrf_weight_keyword`, `rrf_weight_image`, `rrf_weight_path_keyword` of `[vector_db]`
+- **Vector DB**: `enabled`, `backend`, `distance`, `qdrant_url`, `qdrant_preset`, `embedding_url`, `embedding_routing_strategy`, `embedding_max_retries`, `search_embedding_max_retries`, `embedding_retry_interval_seconds`, `embedding_encoding_format`, `query_prefix`, `document_prefix`, `image_input`, `image_input_extensions`, `embedded_images`, `embedded_image_min_px`, `image_dpi`, `office_timeout_seconds`, `ingest_workers`, `ingest_processes`, `ingest_embed_requests`, `scan_workers`, `max_files_per_collection`, `chunk_size`, `chunk_overlap`, `max_file_mb`, `top_k`, `max_result_chars`, `min_score`, `image_min_score`, `path_min_score`, `rrf_weight_text`, `rrf_weight_keyword`, `rrf_weight_image`, `rrf_weight_path_keyword` of `[vector_db]`
 
 Presets consisting only of keys not shown for that kind of instance are not shown (skill tuning workers show few keys, so they have no presets).
 When the dashboard is displayed in English, the description of each key comes from the English catalog `admin/ini_catalog_en.py` (the Japanese comments in config.ini are authoritative).
@@ -2146,8 +2151,9 @@ change history (`admin_settings_save`).
 
 | Item | Key | Meaning |
 |---|---|---|
-| Ingestion parallelism | `[vector_db] ingest_workers` | Number of files prepared and embedding requests sent at the same time, in total across the ingestions of all instances and collections (see "Ingesting documents") |
-| Child processes for text extraction and rendering | `[vector_db] ingest_processes` | 0 uses threads. The screen shows the number of cores of this PC |
+| Ingestion parallelism | `[vector_db] ingest_workers` | Number of files prepared at the same time, in total across the ingestions of all instances and collections (see "Ingesting documents") |
+| Child processes for text extraction and rendering | `[vector_db] ingest_processes` | 0 uses threads. With 1 or more, this is also the number of files prepared at the same time. The screen shows the number of cores of this PC |
+| Embedding request parallelism | `[vector_db] ingest_embed_requests` | Number of embedding requests sent at the same time, in total across the ingestions of all instances and collections. 0 means the same as the ingestion parallelism |
 | LLM used for answers | `[admin] assistant_llm_instance` | Which instance's `[llm] main_url` provides the LLM that writes the answers of "Ask AI". If empty, the instance being asked about. Select an instance and press "Check connection" to send `GET /models` to each endpoint of its `main_url` and see whether it can be reached (the model is not run) |
 | Embedding used to find related settings | `[admin] assistant_embedding_instance` | Which instance's `[vector_db] embedding_url` provides the embedding server used to choose the settings and descriptions close to the question. Automatic if empty |
 

@@ -114,6 +114,7 @@ class _SlotUser:
     hungry: 種類ごとに、枠が空かずに始められない処理があるか。先に join() した取り込みが hungry の間は、
         後の取り込みはその種類の枠を取らない（先に始めた取り込みを優先し、後の取り込みは空き待ちにする）。
     wakeup: 枠が空いたときに結果を入れる Future（_Pipeline は自分の処理の完了と一緒にこれを待つ）。
+    embedding_files: 埋め込み中のファイルの状態の一覧を返す関数（_Pipeline.embedding_files。snapshot() の "files"）。
     """
 
     def __init__(self, instance: str, collection: str):
@@ -121,34 +122,38 @@ class _SlotUser:
         self.hungry = dict.fromkeys(SLOT_KINDS, False)
         self.failed: set[str] = set()
         self.wakeup: Future = Future()
+        self.embedding_files: Callable[[], list[dict]] | None = None
 
 
 class IngestSlots:
-    """取り込みの並列数の枠（"load": 準備、"embed": 埋め込みのリクエスト）。
+    """取り込みの並列数の枠（"load": 準備するファイル、"embed": 埋め込みのリクエスト）。
 
     同じ IngestSlots を渡した取り込み同士で共有する。管理ツール（admin/knowledge.py）は1つを全インスタンス・
-    全コレクションの取り込みで共有し、config.ini の [vector_db] ingest_workers・ingest_processes を
+    全コレクションの取り込みで共有し、config.ini の [vector_db] ingest_workers・ingest_processes・ingest_embed_requests を
     全体の並列数にする（コレクションごとに並列数分ずつ動くと、埋め込みサーバー・PC に負荷がかかりすぎるため）。
     枠を超える処理は空き待ちになり、空いた枠は先に始めた取り込みから順に使う。
 
-    snapshot() は各枠の状態（設定ダッシュボードのワーカーの表示用）。
+    snapshot() は各枠の状態と埋め込み中のファイル（設定ダッシュボードのワーカーの表示用）。
     """
 
-    def __init__(self, workers: int, processes: int = 0):
+    def __init__(self, workers: int, processes: int = 0, requests: int = 0):
         self._lock = threading.Lock()
         self._users: list[_SlotUser] = []
         # 種類ごとの使用中の枠: 枠の番号 → (使っている取り込み, 処理中のファイル等)。
         self._used: dict[str, dict[int, tuple[_SlotUser, str]]] = {kind: {} for kind in SLOT_KINDS}
-        self.workers, self.processes = workers, processes
+        self.workers, self.processes, self.requests = workers, processes, requests
 
-    def resize(self, workers: int, processes: int) -> None:
+    def resize(self, workers: int, processes: int, requests: int = 0) -> None:
         """並列数を変える（設定の変更を反映する。動いている取り込みのスレッド・子プロセスの数は変わらない）。"""
         with self._lock:
-            self.workers, self.processes = workers, processes
+            self.workers, self.processes, self.requests = workers, processes, requests
             self._wake_hungry()
 
     def capacity(self, kind: str) -> int:
-        return (self.processes or self.workers) if kind == "load" else self.workers
+        """kind の枠の数（準備は子プロセスを使うならその数、埋め込みは ingest_embed_requests（0 なら ingest_workers））。"""
+        if kind == "load":
+            return self.processes or self.workers
+        return self.requests or self.workers
 
     def join(self, instance: str, collection: str) -> _SlotUser:
         user = _SlotUser(instance, collection)
@@ -204,9 +209,10 @@ class IngestSlots:
                 u.wakeup.set_result(None)
 
     def snapshot(self) -> dict:
-        """各枠の状態（使用中なら instance・collection・detail、空きなら None）と、空きを待っている取り込み。"""
+        """各枠の状態（使用中なら instance・collection・detail、空きなら None）、埋め込み中のファイル（files。
+        _Pipeline.embedding_files に instance・collection を付けたもの）と、空きを待っている取り込み。"""
         with self._lock:
-            result: dict = {"workers": self.workers, "processes": self.processes}
+            result: dict = {"workers": self.workers, "processes": self.processes, "requests": self.capacity("embed")}
             for kind in SLOT_KINDS:
                 used = self._used[kind]
                 size = max([self.capacity(kind), *(i + 1 for i in used)])
@@ -214,12 +220,20 @@ class IngestSlots:
                     {"instance": used[i][0].instance, "collection": used[i][0].collection, "detail": used[i][1]} if i in used else None
                     for i in range(size)
                 ]
+            users = list(self._users)
             result["waiting"] = [
                 {"instance": u.instance, "collection": u.collection}
-                for u in self._users
+                for u in users
                 if any(u.hungry.values()) and not any(u is v for used in self._used.values() for v, _ in used.values())
             ]
-            return result
+        # 埋め込み中のファイルは各取り込みが自分のロックで返す（枠のロックの外で呼ぶ）。
+        result["files"] = [
+            {"instance": u.instance, "collection": u.collection, **f}
+            for u in users
+            if u.embedding_files is not None
+            for f in u.embedding_files()
+        ]
+        return result
 
 
 def _is_hidden(path: Path, st: os.stat_result | None = None) -> bool:
@@ -625,7 +639,7 @@ def ingest_collection(
         embedding_transport / store_transport: テスト用の httpx トランスポート。
         slots: 並列数の枠（IngestSlots）。ほかの取り込みと共有すると、並列数を合計で守る
             （準備・埋め込みのスレッド・子プロセスの数もその並列数にする）。省略時は cfg の
-            [vector_db] ingest_workers・ingest_processes で、この取り込みだけの枠を作る。
+            [vector_db] ingest_workers・ingest_processes・ingest_embed_requests で、この取り込みだけの枠を作る。
         instance: インスタンス名（slots の各枠の状態・ログに出すだけ）。
 
     Raises:
@@ -636,7 +650,7 @@ def ingest_collection(
     model = embedding_model(cfg)
     result = IngestResult()
     if slots is None:
-        slots = IngestSlots(cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes)
+        slots = IngestSlots(cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes, cfg.vector_db_ingest_embed_requests)
     started = time.monotonic()
     logger.info(
         "vector_db ingest: start instance=%s collection=%s rebuild=%s model=%s workers=%d processes=%d",
@@ -1114,14 +1128,22 @@ class _Writer:
 
 
 class _Job:
-    """埋め込みを待っている1ファイル。texts_to_embed()・pages の各埋め込みが返るたびに埋め、全部そろったら書き込む。"""
+    """埋め込みを待っている1ファイル。texts_to_embed()・pages の各埋め込みが返るたびに埋め、全部そろったら書き込む。
+
+    requests: このファイルの分を含む、送信中の埋め込みのリクエストの数。
+    changed_at: 最後に進んだ（埋め込みを待ち始めた・リクエストが返った）時刻（time.monotonic()）。
+        送信中なのに長く進まないファイルを、設定ダッシュボードで詰まっているものとして見せるため。
+    """
 
     def __init__(self, prepared: _Prepared):
         self.prepared = prepared
         self.texts = prepared.texts_to_embed()
         self.text_vectors: list[list[float] | None] = [None] * len(self.texts)
         self.image_vectors: list[list[float] | None] = [None] * len(prepared.pages)
-        self.remaining = len(self.texts) + len(prepared.pages)
+        self.total = len(self.texts) + len(prepared.pages)
+        self.remaining = self.total
+        self.requests = 0
+        self.changed_at = time.monotonic()
 
     def finish(self) -> _Prepared:
         self.prepared.set_vectors(self.text_vectors, self.image_vectors)
@@ -1133,7 +1155,7 @@ class _Pipeline:
 
     - 準備: [vector_db].ingest_workers 個のスレッド（ingest_processes が 1 以上なら、その数の子プロセス）で並列に行う。
     - 埋め込み: 複数のファイルのテキスト（本文のチャンクとファイルパス）を embedding_batch_size 件ずつにまとめ、
-      ingest_workers 個まで同時に送る。大きいファイルのチャンクも複数のバッチに分けて同時に送る。画像は1枚ずつ送る。
+      ingest_embed_requests 個（0 なら ingest_workers 個）まで同時に送る。大きいファイルのチャンクも複数のバッチに分けて同時に送る。画像は1枚ずつ送る。
       埋め込みのリクエストが1つも動いていないとき、または準備中のファイルが無いときは、件数が足りなくても送る
       （埋め込みサーバーを遊ばせないため。埋め込みが追いつかないときほど、まとまったバッチになる）。
     - 書き込み: SQLite（カタログ・sqlite-vec・キーワード索引）の接続はスレッド間で共有できないため、メインスレッドで
@@ -1161,8 +1183,9 @@ class _Pipeline:
         self.workers = slots.workers
         self.processes = slots.processes
         self.batch_size = cfg.vector_db_embedding_batch_size
-        self.load_limit = self.processes or self.workers
-        self._max_waiting = max(self.batch_size, 2 * max(self.workers, self.load_limit))
+        self.load_limit = slots.capacity("load")
+        self.embed_limit = slots.capacity("embed")
+        self._max_waiting = max(self.batch_size, 2 * max(self.embed_limit, self.load_limit))
         # 準備中のファイル: Future → (_load の引数, 1つだけで準備し直しているものか)。
         self.loads: dict[Future, tuple[tuple, bool]] = {}
         self.embeds: dict[Future, tuple[str, list[tuple[_Job, int]]]] = {}
@@ -1177,6 +1200,28 @@ class _Pipeline:
         self.instance = instance
         # 準備の枠が空かずに始められなかった次のファイル（次の回にこれから始める）。
         self._held_item: tuple[Path, os.stat_result] | None = None
+        # 埋め込みを待っている・埋め込み中のファイル（書き込んだら外す）。embedding_files() は別のスレッドから呼ばれる。
+        self._jobs: dict[int, _Job] = {}
+        self._jobs_lock = threading.Lock()
+
+    def embedding_files(self) -> list[dict]:
+        """埋め込みを待っている・埋め込み中のファイルの状態（IngestSlots.snapshot() の "files"）。
+
+        detail: ファイルのパス、done・total: 埋め込み済み・全体の件数、requests: 送信中のリクエストの数、
+        idle_seconds: 最後に進んでからの秒数。
+        """
+        now = time.monotonic()
+        with self._jobs_lock:
+            return [
+                {
+                    "detail": str(job.prepared.path),
+                    "done": job.total - job.remaining,
+                    "total": job.total,
+                    "requests": job.requests,
+                    "idle_seconds": round(now - job.changed_at, 1),
+                }
+                for job in self._jobs.values()
+            ]
 
     def _acquire(self, kind: str, detail: str) -> int | None:
         return self.slots.try_acquire(self.slot_user, kind, detail)
@@ -1201,8 +1246,9 @@ class _Pipeline:
         pages_root = tempfile.mkdtemp(prefix="locohane_vdb_pages_")
         self.options = replace(self.options, pages_dir=pages_root)
         self.load_pool = self._new_load_pool()
-        embed_pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="vector_db_embed")
+        embed_pool = ThreadPoolExecutor(max_workers=self.embed_limit, thread_name_prefix="vector_db_embed")
         self.slot_user = self.slots.join(self.instance, self.writer.name)
+        self.slot_user.embedding_files = self.embedding_files
         try:
             while True:
                 if not self.stopped and self.should_stop is not None and self.should_stop():
@@ -1325,11 +1371,13 @@ class _Pipeline:
             self._write(job)
             return
         self.waiting += 1
+        with self._jobs_lock:
+            self._jobs[id(job)] = job
         self.text_queue.extend((job, i) for i in range(len(job.texts)))
         self.image_queue.extend((job, i) for i in range(len(prepared.pages)))
 
     def _start_embeds(self, pool) -> None:
-        while not self.stopped and len(self.embeds) < self.workers:
+        while not self.stopped and len(self.embeds) < self.embed_limit:
             if len(self.text_queue) >= self.batch_size:
                 started = self._submit_texts(pool, self.batch_size)
             elif self.image_queue:
@@ -1352,6 +1400,9 @@ class _Pipeline:
             raise
         self._track(future, "embed", index)
         self.embeds[future] = (kind, items)
+        with self._jobs_lock:
+            for job in _jobs_of(items):
+                job.requests += 1
         return True
 
     def _submit_image(self, pool) -> bool:
@@ -1384,6 +1435,12 @@ class _Pipeline:
             # 埋め込みの再試行中に停止を求められた。このファイルは記録せず、次回の取り込みで処理する。
             self.stopped = True
             return
+        finally:
+            with self._jobs_lock:
+                now = time.monotonic()
+                for job in _jobs_of(items):
+                    job.requests -= 1
+                    job.changed_at = now
         for (job, index), vector in zip(items, vectors, strict=True):
             (job.text_vectors if kind == "text" else job.image_vectors)[index] = vector
             job.remaining -= 1
@@ -1392,10 +1449,17 @@ class _Pipeline:
                 self._write(job)
 
     def _write(self, job: _Job) -> None:
+        with self._jobs_lock:
+            self._jobs.pop(id(job), None)
         prepared = job.finish()
         self.writer.write(prepared)
         _remove_dir(prepared.page_dir)
         self.completed += 1
+
+
+def _jobs_of(items: list[tuple[_Job, int]]) -> list[_Job]:
+    """リクエストの items に含まれるファイル（重複なし、順序はそのまま）。"""
+    return list({id(job): job for job, _ in items}.values())
 
 
 def _embed_page(cfg: Config, page: PageImage, client, should_stop) -> list[list[float]]:

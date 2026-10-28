@@ -1365,10 +1365,11 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
   同じプロセスの中では1つずつ行う（PDFium は複数スレッドから同時に呼べない）。`image_input = true` の Office ファイルは、
   スレッド（子プロセス）ごとに Word / PowerPoint / Excel を1つずつ起動して取り込みの間使い回し、終わったら終了する。
 - **埋め込み**: 複数のファイルのテキスト（本文のチャンクとファイルパス）を `embedding_batch_size` 件ずつにまとめ、
-  `ingest_workers` 個まで同時に送る（大きいファイルのチャンクも複数のバッチを同時に送る。画像は1枚ずつ）。埋め込みの
+  `ingest_embed_requests` 個（既定0＝`ingest_workers` と同じ）まで同時に送る（大きいファイルのチャンクも複数のバッチを
+  同時に送る。画像は1枚ずつ。1ファイルは複数のリクエストに分かれるため、ファイル数より多くしてよい）。埋め込みの
   リクエストが1つも動いていないとき、または準備中のファイルが無いときは件数が足りなくても送るため、埋め込みサーバーを
   遊ばせず、埋め込みが追いつかないときほどまとまったバッチになる。同時に送って速くなるのは推論サーバーが同時に複数の
-  リクエストを処理できる場合だけで、llama-server なら `--parallel`（`-np`）を `ingest_workers` 以上にして起動する。
+  リクエストを処理できる場合だけで、llama-server なら `--parallel`（`-np`）を `ingest_embed_requests` 以上にして起動する。
   埋め込みは `embedding_encoding_format = base64`（既定）で float32 のバイト列として受け取る（数値の JSON より小さく解析が速い。
   対応しない接続先は自動で数値の配列に切り替える）。
 - **書き込み**: カタログ・ベクター（sqlite-vec / Qdrant）・キーワード索引への書き込みはメインスレッドで1ファイルずつ行い、
@@ -1379,15 +1380,18 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
   コレクションの取り込みや、設定ダッシュボードでのコレクションの編集が「database is locked」で失敗しないように）。
 - **停止**: 「停止」を押すと新しいファイル・バッチを始めず（全ファイルの準備を始めた後でも、残りの埋め込みを送らない）、
   送信中の埋め込みが返るのを待って、埋め込みまで終わったファイルだけを記録して止まる（ボタンは押した時点で「停止中…」になる）。
-- **並列数の共有**: `ingest_workers`・`ingest_processes` は全インスタンス共通の設定で（インスタンス別の上書きはできず、
+- **並列数の共有**: `ingest_workers`・`ingest_processes`・`ingest_embed_requests` は全インスタンス共通の設定で（インスタンス別の上書きはできず、
   設定ダッシュボードの「管理者設定」か `config.ini` で変える）、設定ダッシュボードの取り込みは全インスタンス・全コレクションの**合計で**この並列数までしか
   準備・埋め込みを動かさない（複数のコレクションを同時に取り込んでも、埋め込みサーバー・PC への負荷は1つのときと同じ）。
   超える分は空きを待ち、空いた枠は先に始めた取り込みから順に使う（`src/vector_db/ingest.py` の `IngestSlots`）。
   並列数の変更は次に始める取り込みから反映する（管理ツールの再起動は不要）。
-- **ワーカーの表示**: ナレッジ画面の上部に、全インスタンス共通の枠を「準備」「埋め込み」ごとにアイコンで出す
-  （空き＝灰の輪、準備中＝回る青の輪、埋め込み中＝脈打つ緑の点、空き待ち＝点滅する点線の輪。ほかのインスタンスの
-  取り込みが使っている枠は薄く出す。アイコンにマウスを載せると処理中のファイルが出る）。各コレクションの「状態」欄と
-  インスタンス一覧のカードには、その取り込みが使っている枠だけを出す。
+- **ワーカーの表示**: ナレッジ画面の上部に、全インスタンス共通の取り込みの状態を「準備」「埋め込み」ごとに出す。
+  アイコンは1つが1ファイル（準備の空き＝灰の輪、準備中＝回る青の輪、空き待ち＝点滅する点線の輪。ほかのインスタンスの
+  取り込みの分は薄く出す。アイコンにマウスを載せると処理中のファイルが出る）。埋め込み中のファイルは、埋め込み済みの割合
+  だけ緑で塗った点で、リクエストを送信中なら脈打つ。送信中なのに60秒以上進まないファイルは黄色で点滅させ、
+  「進んでいません: ファイル名（秒数・件数）」として下に一覧する（詰まっているファイルを見つけるため）。あわせて、
+  埋め込みのアイコンの数は取り込みの並列数（`ingest_workers`）で、空きは灰の輪。あわせて、送信中の埋め込みのリクエスト数（「リクエスト 7/32」）を出す。
+  各コレクションの「状態」欄とインスタンス一覧のカードには、その取り込みの分だけを出す。
 - **削除の順番待ち**: コレクションの削除は、同じインスタンスで取り込み・コピーが動いている間は「削除待ち」にして、
   それらが終わってから行う（キーワード索引・カタログ等は同じインスタンスのコレクションで共有するため、取り込み中に消すと
   「database is locked」になる）。削除待ちの間に始めた同じインスタンスの取り込みは、削除の後に始める（「待機中」）。
@@ -1706,10 +1710,11 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedded_image_min_px` | `embedded_images` で取り出す画像の幅・高さの下限（px、既定 64）。どちらかが下回る画像（アイコン等）は埋め込まない。0 なら大きさで除かない | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | `image_input = true` で Office ファイルを PDF に書き出す1回の上限秒数（既定180）。超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、そのファイルを失敗一覧に載せる | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
-| `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる。設定ダッシュボードの取り込みは全インスタンス・全コレクションの合計でこの並列数まで） | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数（`ingest_processes` が1以上ならそちらの値）。同時に送る埋め込みのリクエスト数は `ingest_embed_requests`（「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる。設定ダッシュボードの取り込みは全インスタンス・全コレクションの合計でこの並列数まで） | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | 取り込み元フォルダの走査で同時に読むフォルダの数（スレッド数、既定8）。ファイルサーバー上のフォルダで効く | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | 1コレクションで取り込む最大ファイル数（既定1000000）。超えた分は取り込まず、ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ。「文書の取り込み」参照） | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
 | `[vector_db]` | `ingest_processes` | 取り込みで本文の抽出・ページの画像化を行う子プロセスの数（既定0＝子プロセスを使わず `ingest_workers` のスレッドで行う）。CPU のコアに余裕があり PDF・Excel 等が多いときに 2 以上にする。**全インスタンス共通**（インスタンス別に上書きできない） | `VECTOR_DB_INGEST_PROCESSES` |
+| `[vector_db]` | `ingest_embed_requests` | 取り込みで同時に送る埋め込みのリクエスト数（既定0＝`ingest_workers` と同じ）。1ファイルは複数のリクエストに分けて送るため、ファイル数より多くしてよい。推論サーバー側も同時処理（llama-server の `--parallel`）が必要。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_INGEST_EMBED_REQUESTS` |
 | `[vector_db]` | `top_k` | `search_documents`・`search_document_paths` が既定で返す件数（既定5） | `VECTOR_DB_TOP_K` |
 | `[vector_db]` | `max_result_chars` | `search_documents`・`search_document_paths` の結果全体の最大文字数（既定6000） | `VECTOR_DB_MAX_RESULT_CHARS` |
 | `[vector_db]` | `min_score` | 結果に出す本文のチャンクの類似度（0.0〜1.0、コサイン類似度）の下限（既定0.3） | `VECTOR_DB_MIN_SCORE` |
@@ -1959,7 +1964,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`・`[token_ratio]` の各キー
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_input_extensions`・`embedded_images`・`embedded_image_min_px`・`image_dpi`・`office_timeout_seconds`・`ingest_workers`・`ingest_processes`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_input_extensions`・`embedded_images`・`embedded_image_min_px`・`image_dpi`・`office_timeout_seconds`・`ingest_workers`・`ingest_processes`・`ingest_embed_requests`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 
@@ -2189,8 +2194,9 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 
 | 項目 | キー | 内容 |
 |---|---|---|
-| 取り込みの並列数 | `[vector_db] ingest_workers` | 全インスタンス・全コレクションの取り込みの合計で、同時に準備するファイル数・同時に送る埋め込みのリクエスト数（「文書の取り込み」参照） |
-| 本文の抽出・画像化の子プロセス数 | `[vector_db] ingest_processes` | 0 ならスレッドで行う。画面にこの PC のコア数を出す |
+| 取り込みの並列数 | `[vector_db] ingest_workers` | 全インスタンス・全コレクションの取り込みの合計で、同時に準備するファイル数（「文書の取り込み」参照） |
+| 本文の抽出・画像化の子プロセス数 | `[vector_db] ingest_processes` | 0 ならスレッドで行う。1 以上なら同時に準備するファイル数もこの値。画面にこの PC のコア数を出す |
+| 埋め込みのリクエストの並列数 | `[vector_db] ingest_embed_requests` | 全インスタンス・全コレクションの取り込みの合計で、同時に送る埋め込みのリクエスト数。0 なら取り込みの並列数と同じ |
 | 回答に使う LLM | `[admin] assistant_llm_instance` | 「AIに相談」の回答を作る LLM を、どのインスタンスの `[llm] main_url` から取るか。空なら相談対象のインスタンス自身。インスタンスを選んで「接続を確認」を押すと、その `main_url` の各接続先へ `GET /models` を送ってつながるかを確かめる（モデルは動かさない） |
 | 関係する設定を探す埋め込み | `[admin] assistant_embedding_instance` | 相談内容に近い設定・説明を選ぶ埋め込みサーバーを、どのインスタンスの `[vector_db] embedding_url` から取るか。空なら自動 |
 

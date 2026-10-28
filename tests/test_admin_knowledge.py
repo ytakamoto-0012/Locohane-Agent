@@ -37,7 +37,7 @@ def env(tmp_path):
         client_ip=lambda _r: "127.0.0.1",
         config_loader=lambda name: configs[name],
         ingest_kwargs={"embedding_transport": embed.transport, "store_transport": qdrant.transport},
-        ingest_limits=lambda: (1, 0),
+        ingest_limits=lambda: (1, 0, 0),
     )
     app.include_router(router)
     # スケジューラーのスレッドは起動せず、テストから tick() を直接呼ぶ
@@ -432,12 +432,29 @@ def test_ingestions_share_the_parallelism_of_config_ini(env):
     assert client.get("/api/instances/org_a/knowledge").json()["workers"]["embed"] == [None]
 
     snapshot = {
+        "workers": 2,
+        "requests": 4,
         "load": [{"instance": "org_a", "collection": "docs", "detail": "a.pdf"}, None],
-        "embed": [{"instance": "org_b", "collection": "docs", "detail": "b.pdf"}],
+        "embed": [
+            {"instance": "org_b", "collection": "docs", "detail": "b.pdf"},
+            {"instance": "org_a", "collection": "docs", "detail": "c.pdf"},
+            {"instance": "org_a", "collection": "docs", "detail": "c.pdf"},
+        ],
+        "files": [
+            {"instance": "org_a", "collection": "docs", "detail": "c.pdf", "done": 3, "total": 8, "requests": 2, "idle_seconds": 1.5},
+            {"instance": "org_b", "collection": "docs", "detail": "b.pdf", "done": 0, "total": 2, "requests": 1, "idle_seconds": 0.1},
+        ],
         "waiting": [{"instance": "org_a", "collection": "x"}],
     }
-    assert knowledge.job_workers(snapshot, "org_a", "docs") == {"load": ["a.pdf"], "embed": [], "waiting": False}
-    assert knowledge.job_workers(snapshot, "org_a", "x") == {"load": [], "embed": [], "waiting": True}
+    assert knowledge.job_workers(snapshot, "org_a", "docs") == {
+        "load": [{"detail": "a.pdf"}],
+        "files": [{"detail": "c.pdf", "done": 3, "total": 8, "requests": 2, "idle_seconds": 1.5}],
+        "requests": 2,
+        "slots": 2,
+        "request_slots": 4,
+        "waiting": False,
+    }
+    assert knowledge.job_workers(snapshot, "org_a", "x") == {"load": [], "files": [], "requests": 0, "slots": 2, "request_slots": 4, "waiting": True}
 
 
 def test_overrides_reject_shared_ingestion_parallelism():

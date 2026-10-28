@@ -50,13 +50,19 @@ async function renderAdminSettings() {
   container.append(el("h3", { text: _t("ナレッジの取り込み") }));
   container.append(
     field("vector_db.ingest_workers", _t("取り込みの並列数"), number("vector_db.ingest_workers", 1), [
-      _t("全インスタンス・全コレクションの取り込みの合計で、同時に準備（読み取り・本文の抽出・画像化）するファイル数と、同時に送る埋め込みのリクエスト数です。超える分は空きを待ちます。"),
-      _t("埋め込みサーバー（llama-server なら --parallel）が同時に処理できる数を目安にしてください。"),
+      _t("全インスタンス・全コレクションの取り込みの合計で、同時に準備（読み取り・本文の抽出・画像化）するファイル数です。超える分は空きを待ちます。"),
     ])
   );
   container.append(
     field("vector_db.ingest_processes", _t("本文の抽出・画像化の子プロセス数"), number("vector_db.ingest_processes", 0), [
       _t("0 なら子プロセスを使わず、上の並列数のスレッドで行います。PDF・Excel 等が多く CPU に余裕があるときは、コア数を目安に増やすと速くなります（この PC のコア数: {0}）。", data.cpu_count || "?"),
+      _t("1 以上のときは、同時に準備するファイル数もこの値になります。"),
+    ])
+  );
+  container.append(
+    field("vector_db.ingest_embed_requests", _t("埋め込みのリクエストの並列数"), number("vector_db.ingest_embed_requests", 0), [
+      _t("全インスタンス・全コレクションの取り込みの合計で、同時に送る埋め込みのリクエスト数です。1ファイルは複数のリクエスト（本文のチャンクのバッチ・ページ画像1枚ずつ）に分けて送るため、ファイル数より多くできます。0 なら取り込みの並列数と同じです。"),
+      _t("埋め込みサーバー（llama-server なら --parallel）が同時に処理できる数を目安にしてください。"),
     ])
   );
 

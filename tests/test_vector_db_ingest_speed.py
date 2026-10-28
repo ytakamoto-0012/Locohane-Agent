@@ -412,3 +412,41 @@ def test_slots_prefer_the_earlier_ingestion():
     assert attempt(second, "b2") is None
     slots.resize(2, 0)
     assert second.wakeup.done() and attempt(second, "b2") == 1
+
+
+def test_embed_requests_are_limited_separately_from_files():
+    """埋め込みのリクエストの枠は ingest_embed_requests（0 なら ingest_workers）で、準備するファイルの枠とは別。"""
+    slots = ingest.IngestSlots(2, 0, 5)
+    assert (slots.capacity("load"), slots.capacity("embed")) == (2, 5)
+    assert len(slots.snapshot()["embed"]) == 5 and slots.snapshot()["requests"] == 5
+    slots.resize(3, 4, 0)
+    assert (slots.capacity("load"), slots.capacity("embed")) == (4, 3)
+
+
+def test_snapshot_lists_files_being_embedded(env):
+    """snapshot() の files は、埋め込み中のファイルごとに件数・送信中のリクエスト数・最後に進んでからの秒数を出す。
+
+    ingest_workers=1 でも、1ファイルのバッチを ingest_embed_requests 個まで同時に送る。
+    """
+    text = "\n\n".join(f"第{i}条 項目{i}の基準は{i}mmとする。" + "あ" * 150 for i in range(30))
+    (env["docs"] / "big.md").write_text(text, encoding="utf-8")
+    cfg = _config(env, vector_db_ingest_workers=1, vector_db_embedding_batch_size=4)
+    slots = ingest.IngestSlots(1, 0, 4)
+    seen: list[dict] = []
+    transport, state = _slow(env["embed"])
+    slow_handler = transport.handler
+
+    def handler(request):
+        seen.extend(slots.snapshot()["files"])
+        return slow_handler(request)
+
+    result = ingest.ingest_collection(
+        cfg, "docs", slots=slots, instance="inst1", **{**env["kwargs"], "embedding_transport": httpx.MockTransport(handler)}
+    )
+    assert result.added == 1
+    assert 1 < state["peak"] <= 4
+    big = [f for f in seen if f["detail"].endswith("big.md")]
+    assert big and all(f["instance"] == "inst1" and f["collection"] == "docs" for f in big)
+    assert max(f["requests"] for f in big) > 1 and big[0]["total"] >= 20
+    assert any(f["done"] > 0 for f in big) and all(0 <= f["done"] < f["total"] and f["idle_seconds"] >= 0 for f in big)
+    assert slots.snapshot()["files"] == []

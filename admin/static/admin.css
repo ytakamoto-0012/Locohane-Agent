@@ -503,7 +503,25 @@ input.narrow { width: 80px; }
 .kn-workers-label { margin-right: 2px; }
 .kn-worker { display: inline-block; width: 12px; height: 12px; box-sizing: border-box; border-radius: 50%; border: 2px solid var(--border); }
 .kn-worker.load { border-color: var(--accent); border-top-color: transparent; animation: kn-spin 0.9s linear infinite; }
-.kn-worker.embed { border: none; background: var(--ok); animation: kn-pulse 1.1s ease-in-out infinite; }
+/* 埋め込み中のファイル（1アイコン＝1ファイル）。埋め込み済みの割合（--kn-progress。knowledge.js の knowledgeFileIcon）だけ
+ * 緑で塗り、リクエストを送信中なら脈打つ。idle はリクエストの合間（送信中なし）、stalled は送信中なのに長く進まないもの。 */
+.kn-worker.embed {
+  border: 1.5px solid var(--ok);
+  background: conic-gradient(var(--ok) var(--kn-progress, 0%), transparent 0);
+  animation: kn-pulse 1.1s ease-in-out infinite;
+}
+.kn-worker.embed.idle { animation: none; }
+.kn-worker.embed.stalled { border-color: var(--warn); background: conic-gradient(var(--warn) var(--kn-progress, 0%), transparent 0); animation: kn-blink 1.6s ease-in-out infinite; }
+.kn-workers-count { margin-left: 4px; }
+/* 埋め込みのリクエストのメーター（knowledge.js の knowledgeRequestMeter）。 */
+.kn-request-meter { display: inline-flex; align-items: center; gap: 4px; }
+.kn-meter { display: inline-flex; gap: 2px; align-items: stretch; height: 12px; }
+.kn-meter > span { width: 4px; border-radius: 1px; background: var(--border); transition: background 0.2s; }
+.kn-meter > span.on { background: var(--ok); box-shadow: 0 0 3px var(--ok); }
+.kn-meter-bar { width: 120px; background: var(--border); border-radius: 2px; overflow: hidden; }
+.kn-meter-bar > .kn-meter-fill { width: 0; border-radius: 0; background: var(--ok); box-shadow: none; transition: width 0.3s; }
+.kn-meter-text { font-variant-numeric: tabular-nums; }
+.kn-stalled { margin: 0 0 8px; font-size: 12px; color: var(--warn); }
 .kn-worker.waiting { border: 2px dotted var(--warn); animation: kn-blink 1.6s ease-in-out infinite; }
 .kn-worker.other { opacity: 0.4; }
 .kn-workers-row { margin: 3px 0; }

@@ -5,7 +5,7 @@
 config.ini の後・インスタンス別の上書きの前に重ねる（src/config.py の ADMIN_SETTING_KEYS・_apply_admin_settings）。
 環境変数が設定されていればそちらが優先する（画面には「環境変数で上書き中」と出して編集させない）。
 
-- [vector_db] ingest_workers・ingest_processes: ナレッジの取り込みの並列数（全インスタンス・全コレクションの合計。
+- [vector_db] ingest_workers・ingest_processes・ingest_embed_requests: ナレッジの取り込みの並列数（全インスタンス・全コレクションの合計。
   admin/knowledge.py は取り込みを始めるたびに読み直す）。
 - [admin] assistant_llm_instance・assistant_embedding_instance: 「AIに相談」が回答・検索に使うインスタンス
   （admin/assistant.py は相談のたびに読み直す）。
@@ -46,6 +46,7 @@ class SettingSpec:
 SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("vector_db", "ingest_workers", "VECTOR_DB_INGEST_WORKERS", "positive_int"),
     SettingSpec("vector_db", "ingest_processes", "VECTOR_DB_INGEST_PROCESSES", "non_negative_int"),
+    SettingSpec("vector_db", "ingest_embed_requests", "VECTOR_DB_INGEST_EMBED_REQUESTS", "non_negative_int"),
     SettingSpec("admin", "assistant_llm_instance", "ADMIN_ASSISTANT_LLM_INSTANCE", "instance"),
     SettingSpec("admin", "assistant_embedding_instance", "ADMIN_ASSISTANT_EMBEDDING_INSTANCE", "instance"),
 )
@@ -172,6 +173,7 @@ def build_router(
         current = {
             ("vector_db", "ingest_workers"): str(effective.vector_db_ingest_workers),
             ("vector_db", "ingest_processes"): str(effective.vector_db_ingest_processes),
+            ("vector_db", "ingest_embed_requests"): str(effective.vector_db_ingest_embed_requests),
             ("admin", "assistant_llm_instance"): effective.admin_assistant_llm_instance,
             ("admin", "assistant_embedding_instance"): effective.admin_assistant_embedding_instance,
         }

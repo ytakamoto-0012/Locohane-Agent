@@ -193,10 +193,21 @@ def test_ingest_workers_default_and_validation(tmp_path, monkeypatch):
         load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
 
 
+def test_ingest_embed_requests_default_and_validation(tmp_path, monkeypatch):
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_ingest_embed_requests == 0
+    monkeypatch.setenv("VECTOR_DB_INGEST_EMBED_REQUESTS", "16")
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_ingest_embed_requests == 16
+    monkeypatch.setenv("VECTOR_DB_INGEST_EMBED_REQUESTS", "-1")
+    with pytest.raises(ValueError, match="ingest_embed_requests"):
+        load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+
+
 def test_ingest_parallelism_ignores_instance_overrides(tmp_path):
     """取り込みの並列数は全インスタンス共通のため、config_overrides.json の値は使わない（admin/knowledge.py 参照）。"""
-    cfg = _load(tmp_path, {"ingest_workers": "4", "ingest_processes": "2", "chunk_size": "300"})
-    assert (cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes, cfg.vector_db_chunk_size) == (1, 0, 300)
+    cfg = _load(tmp_path, {"ingest_workers": "4", "ingest_processes": "2", "ingest_embed_requests": "8", "chunk_size": "300"})
+    assert (
+        cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes, cfg.vector_db_ingest_embed_requests, cfg.vector_db_chunk_size
+    ) == (1, 0, 0, 300)
 
 
 def test_embedding_encoding_format_and_ingest_processes(tmp_path, monkeypatch):

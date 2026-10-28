@@ -51,6 +51,7 @@ ADMIN_SETTING_KEYS = frozenset(
     {
         ("vector_db", "ingest_workers"),
         ("vector_db", "ingest_processes"),
+        ("vector_db", "ingest_embed_requests"),
         ("admin", "assistant_llm_instance"),
         ("admin", "assistant_embedding_instance"),
     }
@@ -528,9 +529,10 @@ class Config:
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
         vector_db_office_timeout_seconds: image_input で Office ファイルを PDF に書き出す1回の上限秒数。
             超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。
-        vector_db_ingest_workers: 取り込みで並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。
+        vector_db_ingest_workers: 取り込みで並列に準備するファイル数（ingest_processes が 1 以上ならその数）。
         vector_db_ingest_processes: 取り込みで本文の抽出・ページの画像化を行う子プロセスの数。
             0 なら子プロセスを使わず、ワーカースレッドで行う。
+        vector_db_ingest_embed_requests: 取り込みで同時に送る埋め込みのリクエスト数。0 なら ingest_workers と同じ。
         vector_db_scan_workers: 取り込み元フォルダを走査するときに、同時に読むフォルダの数（スレッド数）。
         vector_db_max_files_per_collection: 1コレクションで取り込む最大ファイル数。超えた分は取り込まず、
             ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ）。
@@ -1103,6 +1105,7 @@ class Config:
     vector_db_office_timeout_seconds: float
     vector_db_ingest_workers: int
     vector_db_ingest_processes: int
+    vector_db_ingest_embed_requests: int
     vector_db_scan_workers: int
     vector_db_max_files_per_collection: int
     vector_db_top_k: int
@@ -3318,6 +3321,10 @@ def load_config(
         ),
         vector_db_ingest_processes=_non_negative_int(
             os.getenv("VECTOR_DB_INGEST_PROCESSES", vector_db.get("ingest_processes", 0)), "[vector_db].ingest_processes"
+        ),
+        vector_db_ingest_embed_requests=_non_negative_int(
+            os.getenv("VECTOR_DB_INGEST_EMBED_REQUESTS", vector_db.get("ingest_embed_requests", 0)),
+            "[vector_db].ingest_embed_requests",
         ),
         vector_db_scan_workers=_positive_int(
             os.getenv("VECTOR_DB_SCAN_WORKERS", vector_db.get("scan_workers", 8)), "[vector_db].scan_workers"

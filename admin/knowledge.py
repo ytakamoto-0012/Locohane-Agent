@@ -12,7 +12,7 @@
 インスタンス間のコピー（src/vector_db/collection_copy.py。取り込みと同じくジョブとしてスレッドで動かす）と、
 別のインスタンスのコレクションの参照（catalog.sqlite の collection_refs。検索は src/vector_db/search.py）も扱う。
 
-取り込みの並列数（[vector_db] ingest_workers・ingest_processes。「管理者設定」画面か config.ini）は、全インスタンス・全コレクションの
+取り込みの並列数（[vector_db] ingest_workers・ingest_processes・ingest_embed_requests。「管理者設定」画面か config.ini）は、全インスタンス・全コレクションの
 取り込みで1つの枠（src/vector_db/ingest.py の IngestSlots）を共有し、超える分は空き待ちにする
 （インスタンス別の上書きは使わない）。コレクションの削除もジョブにし、同じインスタンスの取り込み・コピーが
 終わってから行う（キーワード索引等をほかのコレクションの取り込みが書き込み中だと「database is locked」になるため。
@@ -399,24 +399,35 @@ def run_copy_job(
 
 
 def job_workers(snapshot: dict, instance: str, collection: str) -> dict:
-    """IngestSlots.snapshot() のうち、instance/collection の取り込みが使っている枠（種類ごとの処理中のファイル）と、
-    枠の空きを待っているか（waiting）。"""
+    """IngestSlots.snapshot() のうち、instance/collection の取り込みの分。
+
+    load: 準備中のファイル、files: 埋め込みを待っている・埋め込み中のファイル（_Pipeline.embedding_files）、
+    requests: 送信中の埋め込みのリクエストの数、slots: 取り込みの並列数（埋め込みのアイコンの数）、request_slots: 埋め込みのリクエストの並列数、waiting: 枠の空きを待っているか。
+    """
     def mine(slot: dict | None) -> bool:
         return slot is not None and slot["instance"] == instance and slot["collection"] == collection
 
-    result: dict = {kind: [s["detail"] for s in snapshot[kind] if mine(s)] for kind in ("load", "embed")}
-    result["waiting"] = any(mine(w) for w in snapshot["waiting"])
-    return result
+    def strip(slot: dict) -> dict:
+        return {k: v for k, v in slot.items() if k not in ("instance", "collection")}
+
+    return {
+        "load": [strip(s) for s in snapshot["load"] if mine(s)],
+        "files": [strip(f) for f in snapshot["files"] if mine(f)],
+        "requests": sum(1 for s in snapshot["embed"] if mine(s)),
+        "slots": snapshot["workers"],
+        "request_slots": snapshot["requests"],
+        "waiting": any(mine(w) for w in snapshot["waiting"]),
+    }
 
 
-def shared_ingest_limits(config_ini_path: Path) -> tuple[int, int]:
-    """全インスタンス共通の取り込みの並列数 (ingest_workers, ingest_processes)。
+def shared_ingest_limits(config_ini_path: Path) -> tuple[int, int, int]:
+    """全インスタンス共通の取り込みの並列数 (ingest_workers, ingest_processes, ingest_embed_requests)。
 
     config.ini に設定ダッシュボードの「管理者設定」（admin_settings.json）と環境変数を重ねた値で、インスタンス別の
     config_overrides.json は重ねない（存在しない overrides_path を渡し、default インスタンスの上書きも読まないようにする）。
     """
     cfg = load_config(config_path=config_ini_path, overrides_path=Path(os.devnull))
-    return cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes
+    return cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes, cfg.vector_db_ingest_embed_requests
 
 
 def next_run_at(times, weekdays, now: datetime) -> datetime | None:
@@ -579,7 +590,7 @@ def build_router(
     client_ip: Callable[[Request], str],
     config_loader: Callable[[str], Config] | None = None,
     ingest_kwargs: dict | None = None,
-    ingest_limits: Callable[[], tuple[int, int]] | None = None,
+    ingest_limits: Callable[[], tuple[int, int, int]] | None = None,
 ) -> APIRouter:
     """ナレッジ API の router を作る。
 
@@ -587,7 +598,7 @@ def build_router(
         config_loader: インスタンス名から設定を読む関数（テスト用の差し替え口。
             既定は instances/<名前>/config_overrides.json を重ねた load_config()）。
         ingest_kwargs: ingest_collection() へ追加で渡す引数（テスト用の httpx トランスポート等）。
-        ingest_limits: 全体の並列数 (ingest_workers, ingest_processes) を返す関数（テスト用の差し替え口。
+        ingest_limits: 全体の並列数 (ingest_workers, ingest_processes, ingest_embed_requests) を返す関数（テスト用の差し替え口。
             既定は config.ini（インスタンス別の上書きを重ねない）の [vector_db] の値。取り込みを始めるたびに読む）。
 
     返す router の ingest_scheduler 属性が時間指定の自動取り込みの IngestScheduler
@@ -609,13 +620,17 @@ def build_router(
     def _refresh_limits() -> None:
         """config.ini の並列数の変更を、管理ツールを再起動せずに次の取り込みから反映する。"""
         try:
-            workers, processes = limits()
+            workers, processes, requests = limits()
         except Exception as exc:  # noqa: BLE001 - 読めなければ今の並列数のまま取り込む
-            logger.warning("Knowledge: cannot read [vector_db] ingest_workers / ingest_processes from config.ini: %s", exc)
+            logger.warning(
+                "Knowledge: cannot read [vector_db] ingest_workers / ingest_processes / ingest_embed_requests from config.ini: %s", exc
+            )
             return
-        if (workers, processes) != (slots.workers, slots.processes):
-            logger.info("Knowledge: shared ingestion parallelism changed to workers=%d processes=%d.", workers, processes)
-            slots.resize(workers, processes)
+        if (workers, processes, requests) != (slots.workers, slots.processes, slots.requests):
+            logger.info(
+                "Knowledge: shared ingestion parallelism changed to workers=%d processes=%d embed_requests=%d.", workers, processes, requests
+            )
+            slots.resize(workers, processes, requests)
 
     def _launch_ingest(instance: str, cfg: Config, job: IngestJob) -> None:
         _refresh_limits()

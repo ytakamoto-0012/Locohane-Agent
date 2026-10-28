@@ -564,8 +564,10 @@ $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/copy -H "$H
   -d '{"dest_instance":"org_b","dest_name":"manuals","with_vectors":true,"include_schedule":false}'
 # Instances selectable as a copy destination or reference source, with their collections and embedding settings
 $C $BASE/api/knowledge/sources
-# State of the ingestion workers (the parallelism shared by all instances). load (prepare) and embed have one entry per worker:
-# {instance, collection, detail (the file being processed)} or null (idle). waiting lists the ingestions waiting for a free worker
+# State of the ingestion workers (the parallelism shared by all instances). load (files being prepared) and embed (embedding requests)
+# have one entry per worker: {instance, collection, detail (the file being processed)} or null (idle). requests is the embedding request
+# parallelism. files has one entry per file waiting for or being embedded: {instance, collection, detail (path), done/total (items embedded /
+# all items), requests (requests in flight), idle_seconds (seconds since the last progress)}. waiting lists the ingestions waiting for a free worker
 # (GET .../knowledge also returns the same as workers)
 $C $BASE/api/knowledge/workers
 # Reference a collection of another instance (org_a) without copying it (name is the name in this instance).
@@ -587,7 +589,7 @@ cmd:
 
 ## Admin settings
 
-Settings shared by all instances (`[vector_db] ingest_workers`, `ingest_processes`, `[admin] assistant_llm_instance`, `assistant_embedding_instance`).
+Settings shared by all instances (`[vector_db] ingest_workers`, `ingest_processes`, `ingest_embed_requests`, `[admin] assistant_llm_instance`, `assistant_embedding_instance`).
 Saved to `<instances_dir>/admin_settings.json`; they take precedence over config.ini (and apply without a restart).
 
 ```bash
@@ -595,7 +597,7 @@ Saved to `<instances_dir>/admin_settings.json`; they take precedence over config
 $C $BASE/api/admin-settings
 # Save (keys are "<section>.<key>"; values equal to config.ini are not kept as overrides; invalid values or unknown instances are 400)
 $C -X PUT $BASE/api/admin-settings -H "$H" -H "$J" \
-  -d '{"values":{"vector_db.ingest_workers":2,"vector_db.ingest_processes":0,"admin.assistant_llm_instance":"s_lab"}}'
+  -d '{"values":{"vector_db.ingest_workers":2,"vector_db.ingest_processes":0,"vector_db.ingest_embed_requests":8,"admin.assistant_llm_instance":"s_lab"}}'
 # Delete the values saved on the screen and go back to the config.ini values
 $C -X DELETE $BASE/api/admin-settings -H "$H"
 # Whether the instance's [llm] main_url can be reached (GET /models to each endpoint; ok, endpoints[].ok/detail)

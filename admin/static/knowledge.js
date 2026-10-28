@@ -23,29 +23,122 @@ function knowledgeJobActive(job) {
   return !!job && (job.state === "queued" || job.state === "running");
 }
 
-// 取り込みワーカー（全インスタンス共通の並列数の枠。admin/knowledge.py の IngestSlots.snapshot()）のアイコン。
-// 空きは灰の輪、準備（読み取り・抽出・画像化）は回る輪、埋め込みは脈打つ点（admin.css の .kn-worker）。
-function knowledgeWorkerIcon(kind, slot, mine) {
-  const label = kind === "load" ? _t("準備") : _t("埋め込み");
-  if (!slot) return el("span", { class: "kn-worker", title: _t(`{0}: 空き`, label) });
-  return el("span", {
-    class: `kn-worker ${kind}${mine ? "" : " other"}`,
-    title: `${label}: ${slot.instance}/${slot.collection}\n${slot.detail}`,
-  });
+// 送信中のリクエストがあるのに、この秒数より長く埋め込みが進まないファイルを「詰まっている」として目立たせる。
+const KNOWLEDGE_STALL_SECONDS = 60;
+
+function knowledgeFileStalled(f) {
+  return f.requests > 0 && f.idle_seconds >= KNOWLEDGE_STALL_SECONDS;
 }
 
-// 全インスタンス共通の枠の一覧（このインスタンス以外の取り込みが使っている枠は薄く出す）。
+function knowledgeBaseName(path) {
+  return String(path).split(/[\/]/).pop();
+}
+
+// 準備の枠（全インスタンス共通の並列数の枠。admin/knowledge.py の IngestSlots.snapshot() の load）のアイコン。
+// 空きは灰の輪、準備中（読み取り・抽出・画像化）は回る輪（admin.css の .kn-worker）。1アイコン＝1ファイル。
+function knowledgeLoadIcon(slot, mine) {
+  if (!slot) return el("span", { class: "kn-worker", title: _t("準備: 空き") });
+  const where = slot.instance ? `${slot.instance}/${slot.collection}\n` : "";
+  return el("span", { class: `kn-worker load${mine ? "" : " other"}`, title: `${_t("準備")}: ${where}${slot.detail}` });
+}
+
+// 埋め込み中のファイル（snapshot の files。src/vector_db/ingest.py の _Pipeline.embedding_files）のアイコン。1アイコン＝1ファイル。
+// そのファイルの埋め込み済みの割合だけ緑で塗り（--kn-progress）、リクエストを送信中なら脈打つ。送信中なのに
+// KNOWLEDGE_STALL_SECONDS 秒より長く進まないファイルは警告色（.stalled）。
+function knowledgeFileIcon(f, mine) {
+  const where = f.instance ? `${f.instance}/${f.collection}\n` : "";
+  const lines = [
+    `${_t("埋め込み")}: ${where}${f.detail}`,
+    _t(`埋め込み済み {0}/{1} 件・送信中のリクエスト {2}`, f.done, f.total, f.requests),
+    _t(`最後に進んでから {0} 秒`, Math.round(f.idle_seconds)),
+  ];
+  const state = knowledgeFileStalled(f) ? " stalled" : f.requests > 0 ? "" : " idle";
+  const icon = el("span", { class: `kn-worker embed${state}${mine ? "" : " other"}`, title: lines.join("\n") });
+  icon.style.setProperty("--kn-progress", `${f.total ? Math.round((100 * f.done) / f.total) : 0}%`);
+  return icon;
+}
+
+// 埋め込みの段階のファイルのうち、アイコンで出す limit 個（取り込みの並列数）。まだ1件も送っていないものは出さない。
+// 画像ファイルのパス等は多くのファイルを1つのバッチにまとめて送るため、送信中・一部済みのファイルは並列数より多くなる。
+// 詰まっているもの → 送信中のリクエストが多いもの → 長く進んでいないものの順に選ぶ。
+function knowledgeEmbedFiles(files, limit) {
+  return files
+    .filter((f) => f.requests > 0 || f.done > 0)
+    .sort((a, b) => knowledgeFileStalled(b) - knowledgeFileStalled(a) || b.requests - a.requests || b.idle_seconds - a.idle_seconds)
+    .slice(0, limit);
+}
+
+// 詰まっているファイルの一覧（パネル・行の下に出す）。
+// 多いときは長く進んでいないものから KNOWLEDGE_STALLED_LINES 件だけ出し、残りは件数だけ出す。
+const KNOWLEDGE_STALLED_LINES = 5;
+
+function knowledgeStalledList(files, withCollection) {
+  const stalled = files.filter(knowledgeFileStalled).sort((a, b) => b.idle_seconds - a.idle_seconds);
+  if (!stalled.length) return null;
+  const rest = stalled.length - KNOWLEDGE_STALLED_LINES;
+  return el("div", { class: "kn-stalled" }, [
+    ...stalled.slice(0, KNOWLEDGE_STALLED_LINES).map((f) =>
+      el("div", {
+        title: f.detail,
+        text: _t(
+          `進んでいません: {0}（{1} 秒・{2}/{3} 件・送信中 {4}）`,
+          (withCollection ? `${f.instance}/${f.collection}: ` : "") + knowledgeBaseName(f.detail),
+          Math.round(f.idle_seconds), f.done, f.total, f.requests
+        ),
+      })
+    ),
+    rest > 0 ? el("div", { text: _t(`ほか {0} ファイル`, rest) }) : null,
+  ]);
+}
+
+// 送信中の埋め込みのリクエスト数のメーター（上限の数だけ縦のセグメントを並べ、使っている分を光らせる。
+// 上限が KNOWLEDGE_METER_MAX_SEGMENTS を超えるときは1本のバーの長さで出す）。admin.css の .kn-meter。
+const KNOWLEDGE_METER_MAX_SEGMENTS = 40;
+
+function knowledgeRequestMeter(used, capacity) {
+  const title = _t("同時に送っている埋め込みのリクエストの数 / 並列数（管理者設定の「埋め込みのリクエストの並列数」）");
+  const cap = Math.max(capacity || 0, used);
+  let bar;
+  if (cap <= KNOWLEDGE_METER_MAX_SEGMENTS) {
+    bar = el("span", { class: "kn-meter" }, Array.from({ length: cap }, (_, i) => el("span", { class: i < used ? "on" : "" })));
+  } else {
+    const fill = el("span", { class: "kn-meter-fill" });
+    fill.style.width = `${Math.round((100 * used) / cap)}%`;
+    bar = el("span", { class: "kn-meter kn-meter-bar" }, [fill]);
+  }
+  return el("span", { class: "kn-workers-count kn-request-meter", title }, [
+    el("span", { class: "kn-workers-label", text: _t("リクエスト") }),
+    bar,
+    el("span", { class: "kn-meter-text", text: `${used}/${cap}` }),
+  ]);
+}
+
+// 全インスタンス共通の取り込みワーカーの状態（このインスタンス以外の取り込みの分は薄く出す）。
 function knowledgeWorkersPanel(workers, instance) {
   if (!workers) return el("div");
-  const group = (kind, label) =>
-    el("span", { class: "kn-workers" }, [
-      el("span", { class: "kn-workers-label", text: label }),
-      ...workers[kind].map((s) => knowledgeWorkerIcon(kind, s, !!s && s.instance === instance)),
-    ]);
+  const used = workers.embed.filter(Boolean).length;
+  const active = knowledgeEmbedFiles(workers.files || [], workers.workers);
+  // アイコンの数は取り込みの並列数（ingest_workers）。足りない分は空きの輪で埋める。
+  const empty = Array.from({ length: Math.max(0, workers.workers - active.length) }, () =>
+    el("span", { class: "kn-worker", title: _t("埋め込み: 空き") })
+  );
   const title = workers.processes
     ? _t(`取り込みワーカー（全インスタンス共通。並列数 {0}・子プロセス {1}）`, workers.workers, workers.processes)
     : _t(`取り込みワーカー（全インスタンス共通。並列数 {0}）`, workers.workers);
-  const parts = [el("span", { text: title }), group("load", _t("準備")), group("embed", _t("埋め込み"))];
+  const embedGroup = el("span", { class: "kn-workers" }, [
+    el("span", { class: "kn-workers-label", text: _t("埋め込み") }),
+    ...active.map((f) => knowledgeFileIcon(f, f.instance === instance)),
+    ...empty,
+    knowledgeRequestMeter(used, workers.requests),
+  ]);
+  const parts = [
+    el("span", { text: title }),
+    el("span", { class: "kn-workers" }, [
+      el("span", { class: "kn-workers-label", text: _t("準備") }),
+      ...workers.load.map((s) => knowledgeLoadIcon(s, !!s && s.instance === instance)),
+    ]),
+    embedGroup,
+  ];
   if (workers.waiting.length) {
     const names = workers.waiting.map((w) => `${w.instance}/${w.collection}`).join(", ");
     parts.push(
@@ -55,33 +148,37 @@ function knowledgeWorkersPanel(workers, instance) {
       ])
     );
   }
-  return el("div", { class: "kn-workers-panel" }, parts);
+  return el("div", {}, [el("div", { class: "kn-workers-panel" }, parts), knowledgeStalledList(workers.files || [], true)]);
 }
 
-// snapshot のうち instance/collection の取り込みが使っている枠（admin/knowledge.py の job_workers と同じ形）。
+// snapshot のうち instance/collection の取り込みの分（admin/knowledge.py の job_workers と同じ形）。
 function knowledgeJobWorkers(workers, instance, collection) {
   if (!workers) return null;
   const mine = (s) => !!s && s.instance === instance && s.collection === collection;
+  const strip = ({ instance: _i, collection: _c, ...rest }) => rest;
   return {
-    load: workers.load.filter(mine).map((s) => s.detail),
-    embed: workers.embed.filter(mine).map((s) => s.detail),
+    load: workers.load.filter(mine).map(strip),
+    files: (workers.files || []).filter(mine).map(strip),
+    requests: workers.embed.filter(mine).length,
+    slots: workers.workers,
+    request_slots: workers.requests,
     waiting: workers.waiting.some(mine),
   };
 }
 
-// 1つの取り込みが使っている枠のアイコン（インスタンス一覧のカードでも使う）。
+// 1つの取り込みの準備中・埋め込み中のファイルのアイコン（インスタンス一覧のカードでも使う）。
 function knowledgeJobWorkerIcons(w) {
   if (!w) return null;
-  const icons = [
-    ...w.load.map((d) => el("span", { class: "kn-worker load", title: _t(`準備: {0}`, d) })),
-    ...w.embed.map((d) => el("span", { class: "kn-worker embed", title: _t(`埋め込み: {0}`, d) })),
-  ];
+  const active = knowledgeEmbedFiles(w.files || [], w.slots);
+  const icons = [...w.load.map((s) => knowledgeLoadIcon(s, true)), ...active.map((f) => knowledgeFileIcon(f, true))];
+  if (w.requests) icons.push(knowledgeRequestMeter(w.requests, w.request_slots));
   if (w.waiting) icons.push(el("span", { class: "kn-worker waiting", title: _t("ほかの取り込みが並列数の枠を使っているため、空きを待っています") }));
-  return icons.length ? el("div", { class: "kn-workers kn-workers-row" }, icons) : null;
+  if (!icons.length) return null;
+  return el("div", {}, [el("div", { class: "kn-workers kn-workers-row" }, icons), knowledgeStalledList(w.files || [], false)]);
 }
 
 function knowledgeWorkersBusy(workers) {
-  return !!workers && (workers.load.some(Boolean) || workers.embed.some(Boolean) || workers.waiting.length > 0);
+  return !!workers && (workers.load.some(Boolean) || workers.embed.some(Boolean) || (workers.files || []).length > 0 || workers.waiting.length > 0);
 }
 
 async function knowledgeAction(fn) {
