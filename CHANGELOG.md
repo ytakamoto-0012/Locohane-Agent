@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-10-29
+
 ### 追加
 
 - ファイルの圧縮・解凍スキル `archive-tools` を同梱しました。zip/tar/tar.gz/tar.bz2/tar.xz の作成、中身の一覧、
@@ -493,7 +495,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.1...v0.4.2
