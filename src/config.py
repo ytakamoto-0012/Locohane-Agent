@@ -3415,7 +3415,8 @@ def load_config(
                     '["pdf-tools","read_pdf.py"],["pdf-tools","render_pdf_pages.py"],'
                     '["pptx-read","read_pptx.py"],["pptx-inspect","inspect_pptx.py"],'
                     '["pptx-render","render_pptx.py"],'
-                    '["web-search","search_web.py"]]',
+                    '["web-search","search_web.py"],'
+                    '["archive-tools","list_archive.py"]]',
                 ),
             )
         ),
@@ -3431,12 +3432,14 @@ def load_config(
                     '["explore","pptx-inspect"],'
                     '["explore",["pdf-tools","render_pdf_pages.py"]],'
                     '["explore",["pdf-tools","read_pdf.py"]],'
+                    '["explore",["archive-tools","list_archive.py"]],'
                     '["verifier","excel-render"],["verifier","excel-read"],'
                     '["verifier","docx-render"],["verifier","docx-read"],'
                     '["verifier","pptx-render"],["verifier","pptx-read"],'
                     '["verifier","pptx-inspect"],'
                     '["verifier",["pdf-tools","render_pdf_pages.py"]],'
-                    '["verifier",["pdf-tools","read_pdf.py"]]]',
+                    '["verifier",["pdf-tools","read_pdf.py"]],'
+                    '["verifier",["archive-tools","list_archive.py"]]]',
                 ),
             )
         ),

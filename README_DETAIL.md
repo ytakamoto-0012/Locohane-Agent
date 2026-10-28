@@ -480,6 +480,7 @@ Locohane/
 ├── skills/
 │   ├── SKILLS_README.md    # スキル開発者向けガイド
 │   ├── skill-creator/       # ユーザー別ドラフトスキルの作成・改善案の作成・eval検証を行うメタスキル
+│   ├── archive-tools/       # zip/tar等の圧縮・解凍・中身の一覧（標準ライブラリのみ）
 │   ├── docx-read/           # docx読込専用（段落・表・文書プロパティ・Track Changes有無）
 │   ├── docx-create/         # docx新規生成（見出し/段落/表/画像/ページ設定等）
 │   ├── docx-edit/           # 既存docxの編集（検索置換・Track Changes・段落追加削除）
@@ -878,6 +879,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 365 ^
 | `pptx-inspect` | `skills/` | スクリプト実行を伴う | 既存pptxテンプレートの構造読取専用（`pptx-edit`前の`shape_index`把握）。 |
 | `pptx-edit` | `skills/` | スクリプト実行を伴う | 既存pptxテンプレートの部分編集（デザインを保った差し替え・複製・削除・並び替え・画像/グラフの新規追加・画像トリミング）。 |
 | `pptx-render` | `skills/` | スクリプト実行を伴う | PowerPointスライドの画像化（レイアウト・図表・画像配置・強調表現の視覚把握）。 |
+| `archive-tools` | `skills/` | スクリプト実行を伴う | ファイル・フォルダの圧縮（zip/tar/tar.gz/tar.bz2/tar.xz）、アーカイブの中身の一覧、解凍（左記に加え単体の .gz/.bz2/.xz）。日本語版Windowsで作った cp932 名の zip も文字化けせずに展開し、展開先の外へ書き出すエントリ（Zip Slip）は展開しない。7z/RAR・AES暗号化zipは非対応。 |
 | `web-search` | `skills/` | スクリプト実行を伴う | Tavily APIによるWeb検索。スキル専用の`scripts/.env`にTAVILY_API_KEY設定時のみ動作（既定では通信なし）。 |
 
 `.locohane/skills/` はユーザー独自スキルの置き場（`skills/` とマージ走査、同名は優先）で、現状は使い方を示す `README.md` のみを含む。
