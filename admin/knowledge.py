@@ -11,6 +11,12 @@
 
 インスタンス間のコピー（src/vector_db/collection_copy.py。取り込みと同じくジョブとしてスレッドで動かす）と、
 別のインスタンスのコレクションの参照（catalog.sqlite の collection_refs。検索は src/vector_db/search.py）も扱う。
+
+取り込みの並列数（config.ini の [vector_db] ingest_workers・ingest_processes）は、全インスタンス・全コレクションの
+取り込みで1つの枠（src/vector_db/ingest.py の IngestSlots）を共有し、超える分は空き待ちにする
+（インスタンス別の上書きは使わない）。コレクションの削除もジョブにし、同じインスタンスの取り込み・コピーが
+終わってから行う（キーワード索引等をほかのコレクションの取り込みが書き込み中だと「database is locked」になるため。
+_JobRegistry.wait_turn）。
 """
 
 from __future__ import annotations
@@ -30,7 +36,7 @@ from src.config import Config, load_config
 from src.vector_db import catalog as vcat
 from src.vector_db.collection_copy import CopyError, check_compatible, copy_collection
 from src.vector_db.embeddings import EmbeddingError, embedding_model
-from src.vector_db.ingest import IngestError, effective_extensions, ingest_collection
+from src.vector_db.ingest import IngestError, IngestSlots, effective_extensions, ingest_collection
 from src.vector_db.keyword_index import open_keyword_index
 from src.vector_db.store import StoreError, open_store, path_collection_name, storage_collection_names
 
@@ -91,15 +97,17 @@ class ReferenceBody(BaseModel):
 
 @dataclass
 class IngestJob:
-    """1コレクションの取り込み（またはコピー）のジョブの状態（画面のポーリング用）。"""
+    """1コレクションの取り込み（またはコピー・削除）のジョブの状態（画面のポーリング用）。"""
 
     collection: str
     rebuild: bool
     actor: str
     trigger: str = "manual"  # manual / schedule（時間指定の自動取り込み）
-    kind: str = "ingest"  # ingest / copy（コピー先のコレクションのジョブ）
+    kind: str = "ingest"  # ingest / copy（コピー先のコレクションのジョブ）/ delete
     source: str | None = None  # kind=copy のコピー元（"インスタンス名/コレクション名"）
-    state: str = "running"  # running / done / error / stopped
+    # queued（同じインスタンスの削除・取り込みの終わり待ち。_JobRegistry.wait_turn）/ running / done / error / stopped
+    state: str = "queued"
+    seq: int = 0  # 登録順（_JobRegistry が付ける。順番待ちの順に使う）
     started_at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     finished_at: str | None = None
     done: int = 0
@@ -113,16 +121,69 @@ class IngestJob:
         return asdict(self)
 
 
+ACTIVE_STATES = ("queued", "running")
+
+
+def _active(job: IngestJob | None) -> bool:
+    return job is not None and job.state in ACTIVE_STATES
+
+
 class _JobRegistry:
     """(インスタンス名, コレクション名) ごとに最新の取り込みジョブを1件持つ。
 
     コピー中のコピー元のコレクション（copy_sources）は、コピーの途中で中身が変わらないよう取り込みを始めない。
+
+    同じインスタンスの中では、削除のジョブとほかのジョブ（取り込み・コピー先）を同時に動かさない
+    （_can_run。登録順に、削除は先に登録されたジョブがすべて終わってから、取り込み・コピーは先に登録された
+    削除が終わってから動く）。始められないジョブは queued のまま wait_turn() で待つ。
     """
 
+    WAIT_POLL_SECONDS = 1.0
+
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = threading.Condition()
         self._jobs: dict[tuple[str, str], IngestJob] = {}
         self._copy_sources: dict[tuple[str, str], int] = {}
+        self._seq = 0
+
+    def _register(self, instance: str, job: IngestJob) -> None:
+        """job を登録し、すぐ始められるなら running にする（ロックを取って呼ぶ）。"""
+        self._seq += 1
+        job.seq = self._seq
+        self._jobs[(instance, job.collection)] = job
+        if job.state == "queued" and self._can_run(instance, job):
+            job.state = "running"
+
+    def _can_run(self, instance: str, job: IngestJob) -> bool:
+        for (i, _c), other in self._jobs.items():
+            if i != instance or other is job or not _active(other):
+                continue
+            earlier = other.state == "running" or other.seq < job.seq
+            if job.kind == "delete" and earlier:
+                return False
+            if job.kind != "delete" and other.kind == "delete" and earlier:
+                return False
+        return True
+
+    def wait_turn(self, instance: str, job: IngestJob) -> bool:
+        """job を始められるまで待って running にする（待つ間に停止を求められたら stopped にして False）。"""
+        with self._lock:
+            if job.state == "queued":
+                logger.info("Knowledge: %s %s/%s is waiting for other jobs of the instance to finish.", job.kind, instance, job.collection)
+            while job.state == "queued" and not self._can_run(instance, job):
+                if job.stop_requested:
+                    job.state = "stopped"
+                    job.finished_at = datetime.now().isoformat(timespec="seconds")
+                    self._lock.notify_all()
+                    return False
+                self._lock.wait(self.WAIT_POLL_SECONDS)
+            job.state = "running"
+            return True
+
+    def notify(self) -> None:
+        """ジョブが終わった・停止を求められた（順番待ちのジョブを見直させる）。"""
+        with self._lock:
+            self._lock.notify_all()
 
     def is_copy_source(self, instance: str, collection: str) -> bool:
         with self._lock:
@@ -131,14 +192,13 @@ class _JobRegistry:
     def start_copy(self, instance: str, job: IngestJob, source_instance: str, source_collection: str) -> bool:
         """コピー先 (instance, job.collection) のジョブを登録し、コピー元を取り込み不可にする。
 
-        コピー先・コピー元のどちらかが取り込み中なら False。
+        コピー先・コピー元のどちらかが取り込み中（削除待ち・削除中も）なら False。
         """
         with self._lock:
             for key in ((instance, job.collection), (source_instance, source_collection)):
-                current = self._jobs.get(key)
-                if current is not None and current.state == "running":
+                if _active(self._jobs.get(key)):
                     return False
-            self._jobs[(instance, job.collection)] = job
+            self._register(instance, job)
             key = (source_instance, source_collection)
             self._copy_sources[key] = self._copy_sources.get(key, 0) + 1
             return True
@@ -161,50 +221,122 @@ class _JobRegistry:
             return {c: j for (i, c), j in self._jobs.items() if i == instance}
 
     def running(self) -> dict[str, list[IngestJob]]:
-        """取り込み中のジョブをインスタンス名ごとに返す（インスタンス一覧のカード用）。"""
+        """取り込み中（順番待ちを含む）のジョブをインスタンス名ごとに返す（インスタンス一覧のカード用）。"""
         with self._lock:
             result: dict[str, list[IngestJob]] = {}
             for (i, _c), j in sorted(self._jobs.items()):
-                if j.state == "running":
+                if _active(j):
                     result.setdefault(i, []).append(j)
             return result
 
     def start(self, instance: str, job: IngestJob) -> bool:
+        """job を登録する（同じコレクションのジョブが動いている・順番待ち中、またはコピー元なら False）。
+
+        すぐ始められるなら job.state は running、同じインスタンスの削除等を待つなら queued になる。
+        """
         with self._lock:
-            current = self._jobs.get((instance, job.collection))
-            if current is not None and current.state == "running":
+            if _active(self._jobs.get((instance, job.collection))):
                 return False
             if self._copy_sources.get((instance, job.collection), 0) > 0:
                 return False
-            self._jobs[(instance, job.collection)] = job
+            self._register(instance, job)
             return True
 
     def forget(self, instance: str, collection: str) -> None:
         with self._lock:
             self._jobs.pop((instance, collection), None)
+            self._lock.notify_all()
 
 
-def run_ingest_job(cfg: Config, job: IngestJob, **kwargs) -> None:
-    """job の取り込みを実行し、結果・エラーを job に書き込む（スレッドの本体）。"""
+def _log_job_end(instance: str, job: IngestJob, started: datetime) -> None:
+    seconds = (datetime.now() - started).total_seconds()
+    if job.state == "error":
+        logger.warning("Knowledge: %s %s/%s failed after %.1fs: %s", job.kind, instance, job.collection, seconds, job.error)
+    else:
+        logger.info("Knowledge: %s %s/%s finished (%s) in %.1fs.", job.kind, instance, job.collection, job.state, seconds)
+
+
+def run_ingest_job(cfg: Config, job: IngestJob, *, jobs: _JobRegistry | None = None, instance: str = "", **kwargs) -> None:
+    """job の取り込みを実行し、結果・エラーを job に書き込む（スレッドの本体）。
+
+    jobs を渡したら、同じインスタンスの削除が終わるまで待ってから始め（_JobRegistry.wait_turn）、終わったら知らせる。
+    kwargs は ingest_collection() へ渡す（slots 等）。
+    """
 
     def _progress(done: int, total: int, path: str) -> None:
         job.done, job.total, job.current = done, total, path
 
+    if jobs is not None and not jobs.wait_turn(instance, job):
+        logger.info("Knowledge: ingest %s/%s was cancelled while waiting.", instance, job.collection)
+        return
+    job.state = "running"
+    started = datetime.now()
+    logger.info(
+        "Knowledge: ingest %s/%s started (rebuild=%s, trigger=%s, actor=%s).", instance, job.collection, job.rebuild, job.trigger, job.actor
+    )
     try:
         result = ingest_collection(
-            cfg, job.collection, rebuild=job.rebuild, progress=_progress, should_stop=lambda: job.stop_requested, **kwargs
+            cfg, job.collection, rebuild=job.rebuild, progress=_progress, should_stop=lambda: job.stop_requested,
+            instance=instance, **kwargs,
         )
         job.result = result.to_dict()
         job.state = "stopped" if job.stop_requested else "done"
     except (IngestError, EmbeddingError, StoreError, vcat.CatalogError, OSError) as exc:
+        logger.warning("Knowledge: ingest %s/%s error: %s", instance, job.collection, exc, exc_info=True)
         job.error = str(exc)
         job.state = "error"
     except Exception as exc:  # noqa: BLE001 - 想定外の例外も画面に出して、ジョブが running のまま残らないようにする
+        logger.exception("Knowledge: ingest %s/%s unexpected error.", instance, job.collection)
         job.error = f"{type(exc).__name__}: {exc}"
         job.state = "error"
     finally:
         job.current = ""
         job.finished_at = datetime.now().isoformat(timespec="seconds")
+        _log_job_end(instance, job, started)
+        if jobs is not None:
+            jobs.notify()
+
+
+def run_delete_job(cfg: Config, instance: str, job: IngestJob, jobs: _JobRegistry, *, store_transport=None) -> None:
+    """コレクション job.collection のベクター・キーワード索引・記録を消す（順番が来るまで待つ）。
+
+    成功したらジョブの記録も消し、失敗したら error のジョブを残す（画面のその行にエラーを出す）。
+    消す順は保存先 → キーワード索引 → カタログ（途中で失敗しても一覧に残り、削除をやり直せる）。
+    """
+    if not jobs.wait_turn(instance, job):
+        logger.info("Knowledge: delete %s/%s was cancelled while waiting.", instance, job.collection)
+        return
+    started = datetime.now()
+    logger.info("Knowledge: delete %s/%s started (actor=%s).", instance, job.collection, job.actor)
+    try:
+        with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+            catalog.get(job.collection)
+            store = open_store(cfg, transport=store_transport)
+            try:
+                for storage in storage_collection_names(job.collection):
+                    store.drop_collection(storage)
+            finally:
+                store.close()
+            with open_keyword_index(cfg.vector_db_dir) as keywords:
+                keywords.drop_collection(job.collection)
+                keywords.drop_collection(path_collection_name(job.collection))
+            catalog.delete(job.collection)
+        job.state = "done"
+    except StoreError as exc:
+        logger.warning("Knowledge: delete %s/%s error: %s", instance, job.collection, exc, exc_info=True)
+        job.error = _t("ベクターを削除できませんでした: {0}", exc)
+        job.state = "error"
+    except Exception as exc:  # noqa: BLE001 - sqlite のロック等も画面に出して、ジョブが running のまま残らないようにする
+        logger.exception("Knowledge: delete %s/%s unexpected error.", instance, job.collection)
+        job.error = _t("削除できませんでした: {0}", f"{type(exc).__name__}: {exc}")
+        job.state = "error"
+    finally:
+        job.finished_at = datetime.now().isoformat(timespec="seconds")
+        _log_job_end(instance, job, started)
+        if job.state == "done":
+            jobs.forget(instance, job.collection)
+        else:
+            jobs.notify()
 
 
 def run_copy_job(
@@ -218,12 +350,24 @@ def run_copy_job(
     with_vectors: bool,
     include_schedule: bool,
     store_transport=None,
+    dst_instance: str = "",
 ) -> None:
-    """コピーを実行し、結果・エラーを job に書き込む（スレッドの本体）。終わったらコピー元の取り込みを再び許す。"""
+    """コピーを実行し、結果・エラーを job に書き込む（スレッドの本体）。終わったらコピー元の取り込みを再び許す。
+
+    コピー先のインスタンス dst_instance の削除が終わるまで待ってから始める（_JobRegistry.wait_turn）。
+    """
 
     def _progress(done: int, total: int, path: str) -> None:
         job.done, job.total, job.current = done, total, path
 
+    if not jobs.wait_turn(dst_instance, job):
+        logger.info("Knowledge: copy %s -> %s/%s was cancelled while waiting.", job.source, dst_instance, job.collection)
+        jobs.finish_copy(src_instance, src_name)
+        return
+    started = datetime.now()
+    logger.info(
+        "Knowledge: copy %s -> %s/%s started (with_vectors=%s, actor=%s).", job.source, dst_instance, job.collection, with_vectors, job.actor
+    )
     try:
         job.result = copy_collection(
             src_cfg,
@@ -239,27 +383,55 @@ def run_copy_job(
         )
         job.state = "stopped" if job.result.get("stopped") else "done"
     except (CopyError, StoreError, vcat.CatalogError, OSError) as exc:
+        logger.warning("Knowledge: copy %s -> %s/%s error: %s", job.source, dst_instance, job.collection, exc, exc_info=True)
         job.error = str(exc)
         job.state = "error"
     except Exception as exc:  # noqa: BLE001 - 想定外の例外も画面に出して、ジョブが running のまま残らないようにする
+        logger.exception("Knowledge: copy %s -> %s/%s unexpected error.", job.source, dst_instance, job.collection)
         job.error = f"{type(exc).__name__}: {exc}"
         job.state = "error"
     finally:
         job.current = ""
         job.finished_at = datetime.now().isoformat(timespec="seconds")
+        _log_job_end(dst_instance, job, started)
         jobs.finish_copy(src_instance, src_name)
+        jobs.notify()
 
 
-def next_scheduled_run(c: vcat.Collection, now: datetime) -> datetime | None:
-    """c の自動取り込みが次に動く日時（now より後の最初の時刻。無効なら None）。"""
-    if not c.schedule_enabled or not c.schedule_times:
+def job_workers(snapshot: dict, instance: str, collection: str) -> dict:
+    """IngestSlots.snapshot() のうち、instance/collection の取り込みが使っている枠（種類ごとの処理中のファイル）と、
+    枠の空きを待っているか（waiting）。"""
+    def mine(slot: dict | None) -> bool:
+        return slot is not None and slot["instance"] == instance and slot["collection"] == collection
+
+    result: dict = {kind: [s["detail"] for s in snapshot[kind] if mine(s)] for kind in ("load", "embed")}
+    result["waiting"] = any(mine(w) for w in snapshot["waiting"])
+    return result
+
+
+def shared_ingest_limits(config_ini_path: Path) -> tuple[int, int]:
+    """全インスタンス共通の取り込みの並列数 (ingest_workers, ingest_processes)。
+
+    config.ini（と環境変数）の値で、インスタンス別の config_overrides.json は重ねない
+    （存在しない overrides_path を渡し、default インスタンスの上書きも読まないようにする）。
+    """
+    cfg = load_config(config_path=config_ini_path, overrides_path=Path(os.devnull))
+    return cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes
+
+
+def next_run_at(times, weekdays, now: datetime) -> datetime | None:
+    """時刻 times（"HH:MM"、昇順）・曜日 weekdays（0=月〜6=日、空は毎日）の予定が次に来る日時（now より後。無ければ None）。
+
+    ナレッジの自動取り込みと、データのバックアップ（admin/data_backup.py）で使う。
+    """
+    if not times:
         return None
     base = now.replace(second=0, microsecond=0)
     for day in range(8):
         date = base + timedelta(days=day)
-        if c.schedule_weekdays and date.weekday() not in c.schedule_weekdays:
+        if weekdays and date.weekday() not in weekdays:
             continue
-        for t in c.schedule_times:
+        for t in times:
             hour, minute = (int(x) for x in t.split(":"))
             candidate = date.replace(hour=hour, minute=minute)
             if candidate > now:
@@ -267,12 +439,38 @@ def next_scheduled_run(c: vcat.Collection, now: datetime) -> datetime | None:
     return None
 
 
-def _is_due(c: vcat.Collection, minute: datetime) -> bool:
+def is_due_at(times, weekdays, minute: datetime) -> bool:
+    """minute（秒以下は見ない）が、時刻 times・曜日 weekdays の予定に当たるか。"""
+    if weekdays and minute.weekday() not in weekdays:
+        return False
+    return minute.strftime("%H:%M") in times
+
+
+def due_minutes(last: datetime | None, now: datetime, max_catch_up: int) -> list[datetime]:
+    """前回確認した分 last の次の分から now の分までを順に返す（遡るのは max_catch_up 分まで。初回・同じ分なら空）。
+
+    スレッドの起床が遅れても予定の分を飛ばさないため（IngestScheduler・data_backup.BackupScheduler）。
+    """
+    current = now.replace(second=0, microsecond=0)
+    if last is None or current <= last:
+        return []
+    minutes = []
+    m = max(last + timedelta(minutes=1), current - timedelta(minutes=max_catch_up - 1))
+    while m <= current:
+        minutes.append(m)
+        m += timedelta(minutes=1)
+    return minutes
+
+
+def next_scheduled_run(c: vcat.Collection, now: datetime) -> datetime | None:
+    """c の自動取り込みが次に動く日時（now より後の最初の時刻。無効なら None）。"""
     if not c.schedule_enabled:
-        return False
-    if c.schedule_weekdays and minute.weekday() not in c.schedule_weekdays:
-        return False
-    return minute.strftime("%H:%M") in c.schedule_times
+        return None
+    return next_run_at(c.schedule_times, c.schedule_weekdays, now)
+
+
+def _is_due(c: vcat.Collection, minute: datetime) -> bool:
+    return c.schedule_enabled and is_due_at(c.schedule_times, c.schedule_weekdays, minute)
 
 
 class IngestScheduler:
@@ -293,13 +491,14 @@ class IngestScheduler:
         jobs: _JobRegistry,
         loader: Callable[[str], Config],
         audit_log_path: Path,
-        ingest_kwargs: dict,
+        launch: Callable[[str, Config, IngestJob], None],
     ) -> None:
+        """launch: 登録したジョブの取り込みをスレッドで始める関数（build_router の _launch_ingest）。"""
         self._instances_root = instances_root
         self._jobs = jobs
         self._loader = loader
         self._audit_log_path = audit_log_path
-        self._ingest_kwargs = ingest_kwargs
+        self._launch = launch
         self._last_minute: datetime | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -327,16 +526,11 @@ class IngestScheduler:
 
     def tick(self, now: datetime) -> list[tuple[str, str]]:
         """前回から now までに来た時刻の取り込みを始め、始めた (インスタンス名, コレクション名) を返す。"""
-        current = now.replace(second=0, microsecond=0)
         last = self._last_minute
-        self._last_minute = current
-        if last is None or current <= last:
+        self._last_minute = now.replace(second=0, microsecond=0)
+        minutes = due_minutes(last, now, self.MAX_CATCH_UP_MINUTES)
+        if not minutes:
             return []
-        minutes = []
-        m = max(last + timedelta(minutes=1), current - timedelta(minutes=self.MAX_CATCH_UP_MINUTES - 1))
-        while m <= current:
-            minutes.append(m)
-            m += timedelta(minutes=1)
 
         started: list[tuple[str, str]] = []
         for name in inst.list_instance_names(self._instances_root):
@@ -358,13 +552,7 @@ class IngestScheduler:
                 if not self._jobs.start(name, job):
                     logger.info("Scheduled ingestion: %s/%s is already ingesting or being copied, skipping this run.", name, c.name)
                     continue
-                threading.Thread(
-                    target=run_ingest_job,
-                    args=(cfg, job),
-                    kwargs=self._ingest_kwargs,
-                    name=f"knowledge-ingest-{name}-{c.name}",
-                    daemon=True,
-                ).start()
+                self._launch(name, cfg, job)
                 audit.append(
                     self._audit_log_path,
                     {
@@ -391,6 +579,7 @@ def build_router(
     client_ip: Callable[[Request], str],
     config_loader: Callable[[str], Config] | None = None,
     ingest_kwargs: dict | None = None,
+    ingest_limits: Callable[[], tuple[int, int]] | None = None,
 ) -> APIRouter:
     """ナレッジ API の router を作る。
 
@@ -398,14 +587,18 @@ def build_router(
         config_loader: インスタンス名から設定を読む関数（テスト用の差し替え口。
             既定は instances/<名前>/config_overrides.json を重ねた load_config()）。
         ingest_kwargs: ingest_collection() へ追加で渡す引数（テスト用の httpx トランスポート等）。
+        ingest_limits: 全体の並列数 (ingest_workers, ingest_processes) を返す関数（テスト用の差し替え口。
+            既定は config.ini（インスタンス別の上書きを重ねない）の [vector_db] の値。取り込みを始めるたびに読む）。
 
     返す router の ingest_scheduler 属性が時間指定の自動取り込みの IngestScheduler
     （手動の取り込みとジョブの記録を共有する）。start()・stop() は呼び出し側（admin/server.py の lifespan）で行う。
-    ingest_jobs 属性はジョブの記録（_JobRegistry）。
+    ingest_jobs 属性はジョブの記録（_JobRegistry）、ingest_slots 属性は全体で共有する並列数の枠（IngestSlots）。
     """
     router = APIRouter()
     jobs = _JobRegistry()
     extra_ingest_kwargs = dict(ingest_kwargs or {})
+    limits = ingest_limits or (lambda: shared_ingest_limits(CONFIG_INI_PATH))
+    slots = IngestSlots(*limits())
 
     def _audit(request: Request, user: str, instance: str, action: str, **extra) -> None:
         audit.append(audit_log_path, {"instance": instance, "actor": user, "remote_addr": client_ip(request), "action": action, **extra})
@@ -413,11 +606,33 @@ def build_router(
     def _default_loader(name: str) -> Config:
         return load_config(config_path=CONFIG_INI_PATH, overrides_path=inst.overrides_path(instances_root, name), instance_name=name)
 
+    def _refresh_limits() -> None:
+        """config.ini の並列数の変更を、管理ツールを再起動せずに次の取り込みから反映する。"""
+        try:
+            workers, processes = limits()
+        except Exception as exc:  # noqa: BLE001 - 読めなければ今の並列数のまま取り込む
+            logger.warning("Knowledge: cannot read [vector_db] ingest_workers / ingest_processes from config.ini: %s", exc)
+            return
+        if (workers, processes) != (slots.workers, slots.processes):
+            logger.info("Knowledge: shared ingestion parallelism changed to workers=%d processes=%d.", workers, processes)
+            slots.resize(workers, processes)
+
+    def _launch_ingest(instance: str, cfg: Config, job: IngestJob) -> None:
+        _refresh_limits()
+        threading.Thread(
+            target=run_ingest_job,
+            args=(cfg, job),
+            kwargs={"jobs": jobs, "instance": instance, "slots": slots, **extra_ingest_kwargs},
+            name=f"knowledge-ingest-{instance}-{job.collection}",
+            daemon=True,
+        ).start()
+
     loader = config_loader or _default_loader
-    # インスタンス一覧のカード（admin/server.py の /api/monitor/overview）が取り込み中のジョブを読む口
+    # インスタンス一覧のカード（admin/server.py の /api/monitor/overview）が取り込み中のジョブ・枠の状態を読む口
     router.ingest_jobs = jobs
+    router.ingest_slots = slots
     router.ingest_scheduler = IngestScheduler(
-        instances_root=instances_root, jobs=jobs, loader=loader, audit_log_path=audit_log_path, ingest_kwargs=extra_ingest_kwargs
+        instances_root=instances_root, jobs=jobs, loader=loader, audit_log_path=audit_log_path, launch=_launch_ingest
     )
 
     def _cfg(name: str) -> Config:
@@ -567,7 +782,14 @@ def build_router(
             # コピーを始めた直後で、まだ catalog にできていないコピー先のジョブ・定義の作成で失敗したコピーのジョブ。
             "copy_jobs": [j.to_dict() for c, j in running.items() if j.kind == "copy" and c not in names],
             "references": [_reference_dict(name, cfg, r) for r in refs],
+            # 全インスタンスで共有する取り込みの枠の状態（画面のワーカーのアイコン）。
+            "workers": slots.snapshot(),
         }
+
+    @router.get("/api/knowledge/workers")
+    def get_knowledge_workers(user: str = Depends(require_login)):
+        """全インスタンスで共有する取り込みの枠の状態（IngestSlots.snapshot）。"""
+        return slots.snapshot()
 
     @router.get("/api/knowledge/sources")
     def get_knowledge_sources(user: str = Depends(require_login)):
@@ -661,10 +883,17 @@ def build_router(
 
     @router.delete("/api/instances/{name}/knowledge/collections/{collection}")
     def delete_collection(name: str, collection: str, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
+        """コレクションを削除する。
+
+        同じインスタンスで取り込み・コピーが動いていなければその場で削除して {"ok": true} を返す。
+        動いていれば削除のジョブを順番待ちにして {"ok": true, "queued": true, "job": ...} を返す
+        （それらが終わってから削除する。共有のキーワード索引等への書き込みとぶつからないようにするため）。
+        """
         cfg = _cfg(name)
         job = jobs.get(name, collection)
-        if job is not None and job.state == "running":
-            raise HTTPException(status_code=409, detail=_t("取り込み中のコレクションは削除できません。先に停止してください。"))
+        if _active(job):
+            detail = _t("削除の処理中です。") if job.kind == "delete" else _t("取り込み中のコレクションは削除できません。先に停止してください。")
+            raise HTTPException(status_code=409, detail=detail)
         if jobs.is_copy_source(name, collection):
             raise HTTPException(status_code=409, detail=_t("コピー中のコレクションは削除できません。コピーが終わってから削除してください。"))
         with vcat.open_catalog(cfg.vector_db_dir) as catalog:
@@ -672,21 +901,24 @@ def build_router(
                 catalog.get(collection)
             except vcat.CatalogError as exc:
                 raise HTTPException(status_code=404, detail=str(exc)) from exc
-            try:
-                store = open_store(cfg, transport=extra_ingest_kwargs.get("store_transport"))
-                try:
-                    for storage in storage_collection_names(collection):
-                        store.drop_collection(storage)
-                finally:
-                    store.close()
-            except StoreError as exc:
-                raise HTTPException(status_code=502, detail=_t("ベクターを削除できませんでした: {0}", exc)) from exc
-            with open_keyword_index(cfg.vector_db_dir) as keywords:
-                keywords.drop_collection(collection)
-                keywords.drop_collection(path_collection_name(collection))
-            catalog.delete(collection)
-        jobs.forget(name, collection)
+        job = IngestJob(collection=collection, rebuild=False, actor=user, kind="delete")
+        if not jobs.start(name, job):
+            raise HTTPException(status_code=409, detail=_t("このコレクションは取り込み中です。"))
         _audit(request, user, name, "knowledge_collection_delete", collection=collection)
+        store_transport = extra_ingest_kwargs.get("store_transport")
+        if job.state == "queued":
+            logger.info("Knowledge: delete %s/%s queued until the other jobs of the instance finish.", name, collection)
+            threading.Thread(
+                target=run_delete_job,
+                args=(cfg, name, job, jobs),
+                kwargs={"store_transport": store_transport},
+                name=f"knowledge-delete-{name}-{collection}",
+                daemon=True,
+            ).start()
+            return {"ok": True, "queued": True, "job": job.to_dict()}
+        run_delete_job(cfg, name, job, jobs, store_transport=store_transport)
+        if job.state == "error":
+            raise HTTPException(status_code=502, detail=job.error)
         return {"ok": True}
 
     @router.post("/api/instances/{name}/knowledge/collections/{collection}/ingest")
@@ -705,10 +937,11 @@ def build_router(
             raise HTTPException(status_code=409, detail=_t("このコレクションはコピー中です。コピーが終わってから取り込んでください。"))
         job = IngestJob(collection=collection, rebuild=body.rebuild, actor=user)
         if not jobs.start(name, job):
+            current = jobs.get(name, collection)
+            if current is not None and current.kind == "delete":
+                raise HTTPException(status_code=409, detail=_t("このコレクションは削除の処理中です。"))
             raise HTTPException(status_code=409, detail=_t("このコレクションは取り込み中です。"))
-        threading.Thread(
-            target=run_ingest_job, args=(cfg, job), kwargs=extra_ingest_kwargs, name=f"knowledge-ingest-{name}-{collection}", daemon=True
-        ).start()
+        _launch_ingest(name, cfg, job)
         _audit(request, user, name, "knowledge_ingest_start", collection=collection, rebuild=body.rebuild)
         return job.to_dict()
 
@@ -753,6 +986,7 @@ def build_router(
                 "with_vectors": body.with_vectors,
                 "include_schedule": body.include_schedule,
                 "store_transport": extra_ingest_kwargs.get("store_transport"),
+                "dst_instance": body.dest_instance,
             },
             name=f"knowledge-copy-{name}-{collection}",
             daemon=True,
@@ -816,9 +1050,14 @@ def build_router(
     def stop_ingest(name: str, collection: str, request: Request, user: str = Depends(require_login), _c=Depends(require_csrf)):
         _cfg(name)
         job = jobs.get(name, collection)
-        if job is None or job.state != "running":
+        if not _active(job):
             raise HTTPException(status_code=409, detail=_t("取り込み中ではありません。"))
+        if job.kind == "delete" and job.state == "running":
+            raise HTTPException(status_code=409, detail=_t("削除は始まっているため止められません。"))
         job.stop_requested = True
+        # 順番待ちのジョブはすぐ取りやめる（_JobRegistry.wait_turn）。
+        jobs.notify()
+        logger.info("Knowledge: stop requested for %s %s/%s (%s) by %s.", job.kind, name, collection, job.state, user)
         _audit(request, user, name, "knowledge_ingest_stop", collection=collection)
         return job.to_dict()
 

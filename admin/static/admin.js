@@ -148,6 +148,7 @@ function navigate(view) {
   if (view === "instances") return renderInstances();
   if (view === "settings") return renderSettings();
   if (view === "audit") return renderAudit();
+  if (view === "data-backup") return renderDataBackup();
   if (view === "skill-lab") return renderSkillLab();
   if (view === "api-docs") return renderApiDocs();
 }
@@ -281,6 +282,17 @@ function renderCardIngest(box, item) {
     return;
   }
   const rows = jobs.map((j) => {
+    // 削除・順番待ち（admin/knowledge.py の IngestJob.kind / state）は進捗が無いため、状態だけを出す。
+    if (j.kind === "delete" || j.state === "queued") {
+      const labels = j.kind === "delete" ? KNOWLEDGE_DELETE_LABELS : j.kind === "copy" ? KNOWLEDGE_COPY_LABELS : KNOWLEDGE_JOB_LABELS;
+      const state = labels[j.state] || j.state;
+      return el("div", { class: "card-ingest-job", title: `${j.collection}\n${state}` }, [
+        el("div", { class: "card-ingest-head" }, [
+          el("span", { class: "card-ingest-name", text: j.collection }),
+          el("span", { class: "card-ingest-count", text: state }),
+        ]),
+      ]);
+    }
     const state = j.stop_requested ? _t("停止中") : j.trigger === "schedule" ? _t("取り込み中（自動）") : _t("取り込み中");
     const count = j.total ? _t(`{0} / {1} ファイル`, fmtNum(j.done), fmtNum(j.total)) : _t("対象を確認中");
     const current = j.current ? j.current.split(/[\\/]/).pop() : "";
@@ -290,6 +302,8 @@ function renderCardIngest(box, item) {
         el("span", { class: "card-ingest-count", text: `${state} ${count}` }),
       ]),
       knowledgeProgressBar(j.done, j.total),
+      // 使っている取り込みワーカー（全インスタンス共通の並列数の枠）のアイコン。
+      knowledgeJobWorkerIcons(j.workers),
       current ? el("div", { class: "card-ingest-file", text: current }) : null,
     ]);
   });

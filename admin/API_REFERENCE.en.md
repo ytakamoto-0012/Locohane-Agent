@@ -548,11 +548,14 @@ $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "
   -d '{"schedule_enabled":true,"schedule_times":["02:00"],"schedule_weekdays":[0,1,2,3,4]}'
 # Start ingestion (incremental). rebuild=true deletes all vectors and ingests again
 $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/ingest -H "$H" -H "$J" -d '{"rebuild":false}'
-# Progress and results (state: running/done/error/stopped, done/total, result.failed)
+# Progress and results (state: queued/running/done/error/stopped, done/total, result.failed; kind is ingest/copy/delete;
+# queued means waiting for a collection deletion in the same instance to finish)
 $C $BASE/api/instances/default/knowledge/collections/manuals/job
 # Stop ingestion
 $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/stop -H "$H"
-# Delete a collection (the vectors are deleted too; the source documents are not)
+# Delete a collection (the vectors are deleted too; the source documents are not). If ingestions or copies are running in the same
+# instance, a delete job (kind "delete") is queued and {"ok":true,"queued":true,"job":{...}} is returned; it deletes after they finish
+# (progress: .../collections/manuals/job; while queued it can be cancelled with .../stop)
 $C -X DELETE $BASE/api/instances/default/knowledge/collections/manuals -H "$H"
 # Copy to another instance (org_b). with_vectors=true duplicates the vectors, keyword index and file records
 # (400 if the embedding model, document_prefix or distance differs from the destination; false copies only the definition).
@@ -561,6 +564,10 @@ $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/copy -H "$H
   -d '{"dest_instance":"org_b","dest_name":"manuals","with_vectors":true,"include_schedule":false}'
 # Instances selectable as a copy destination or reference source, with their collections and embedding settings
 $C $BASE/api/knowledge/sources
+# State of the ingestion workers (the parallelism shared by all instances). load (prepare) and embed have one entry per worker:
+# {instance, collection, detail (the file being processed)} or null (idle). waiting lists the ingestions waiting for a free worker
+# (GET .../knowledge also returns the same as workers)
+$C $BASE/api/knowledge/workers
 # Reference a collection of another instance (org_a) without copying it (name is the name in this instance).
 # Each entry of references in the overview has status (ok / incompatible / missing) and reason
 $C -X POST $BASE/api/instances/default/knowledge/references -H "$H" -H "$J" \
@@ -576,6 +583,24 @@ cmd:
 %C% -X POST %BASE%/api/instances/default/knowledge/collections -H %H% -H %J% -d "{\"name\":\"manuals\",\"source_folder\":\"D:/shared/manuals\"}"
 %C% -X POST %BASE%/api/instances/default/knowledge/collections/manuals/ingest -H %H% -H %J% -d "{\"rebuild\":false}"
 %C% %BASE%/api/instances/default/knowledge/collections/manuals/job
+```
+
+## Data backup
+
+Saves `[admin] instances_dir` and the `[paths] common_data_dir` of all instances to the destination as a dated zip (shared by all instances).
+
+```bash
+# Effective settings (settings), where each item comes from (sources: dashboard / config.ini), run state (job: state is running/done/error/stopped,
+# done/total, result.file, result.failed), next scheduled run (next_run_at) and the zips in the destination (backups)
+$C $BASE/api/data-backup
+# Save the settings (<instances_dir>/data_backup.json; takes precedence over [data_backup] in config.ini; 400 if the destination is inside a backup source)
+$C -X PUT $BASE/api/data-backup/settings -H "$H" -H "$J" \
+  -d '{"enabled":true,"dest_dir":"\\\\fileserver\\share\\locohane_backup","times":["02:00"],"weekdays":[],"keep":7,"exclude_workdir":true,"exclude_logs":true,"exclude":[]}'
+# Delete the settings saved on the screen and go back to the config.ini defaults
+$C -X DELETE $BASE/api/data-backup/settings -H "$H"
+# Back up now (400 if no destination is set, 409 if one is running) / stop
+$C -X POST $BASE/api/data-backup/run -H "$H"
+$C -X POST $BASE/api/data-backup/stop -H "$H"
 ```
 
 ## Admin assistant (Ask AI)

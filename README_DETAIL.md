@@ -564,6 +564,11 @@ Locohane/
 
 すべて `data/` 配下（`config.ini` の `[paths]`/`[elements]`/`[log]`/`[default_workdir]` 等の `dir` 系キーで変更可）。`data/` は `.gitignore` 済み。保存先ルートをまとめて変更したい場合は、各キーを個別に書き換える代わりに `[paths] common_data_dir`（既定 `./data/${instance}`）だけを変更すればよい（対応するキーの値は `${common_data_dir}` を参照する形で書かれている）。`${instance}` は起動中のインスタンス名（`app.bat` で直接起動した場合は `default`）に置換されるため、既定ではインスタンスごとに `data/<インスタンス名>/` へ分かれる。下表の `data/` は、既定設定では `data/<インスタンス名>/`（例: `data/default/`）を指す。
 
+**ネットワーク上には置けない:** `[admin] instances_dir`・`[paths] common_data_dir`・`checkpoint_db`・`[thread_store] db`・`[vector_db] dir`
+（SQLite を置く場所）は、ローカルディスクに限る。UNC パス（`\\server\share\…`）・ネットワークドライブ（Z: 等）を指定すると、起動時と
+設定ダッシュボードの保存時にエラーになる（ファイル共有上の SQLite はロックが遅く不確実で、「database is locked」で処理が失敗しやすく、WAL も使えないため）。
+ファイル共有へは「データのバックアップ」（設定ダッシュボード節）で退避する。
+
 **旧バージョン（データを `data/` 直下に保存していた版）からの移行:** 既定の保存先が `./data` から `./data/${instance}` に変わったため、そのまま起動すると過去のスレッド・永続メモリー等が見えなくなる（消えてはいない）。アプリ停止中に、`data/` 直下のファイル・フォルダ（`checkpoints.sqlite`・`chat_threads.sqlite`・`memory/`・`logs/`・`elements/`・`plans/`・`path_memory/`・`logs_chat/`・`temp/`・`app.lock` 等）を `data/default/` へ移動すれば引き継げる。移動せず旧来の場所を使い続けたい場合は、管理ツールの設定画面で default インスタンスの `[paths] common_data_dir` を `./data` にする。
 
 | パス | 中身 | 削除してよいタイミング | 削除方法 |
@@ -1372,10 +1377,25 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
   コレクションの取り込みや、設定ダッシュボードでのコレクションの編集が「database is locked」で失敗しないように）。
 - **停止**: 「停止」を押すと新しいファイル・バッチを始めず（全ファイルの準備を始めた後でも、残りの埋め込みを送らない）、
   送信中の埋め込みが返るのを待って、埋め込みまで終わったファイルだけを記録して止まる（ボタンは押した時点で「停止中…」になる）。
+- **並列数の共有**: `ingest_workers`・`ingest_processes` は全インスタンス共通の設定で（インスタンス別の上書きはできず、
+  `config.ini` を直接編集する）、設定ダッシュボードの取り込みは全インスタンス・全コレクションの**合計で**この並列数までしか
+  準備・埋め込みを動かさない（複数のコレクションを同時に取り込んでも、埋め込みサーバー・PC への負荷は1つのときと同じ）。
+  超える分は空きを待ち、空いた枠は先に始めた取り込みから順に使う（`src/vector_db/ingest.py` の `IngestSlots`）。
+  並列数の変更は次に始める取り込みから反映する（管理ツールの再起動は不要）。
+- **ワーカーの表示**: ナレッジ画面の上部に、全インスタンス共通の枠を「準備」「埋め込み」ごとにアイコンで出す
+  （空き＝灰の輪、準備中＝回る青の輪、埋め込み中＝脈打つ緑の点、空き待ち＝点滅する点線の輪。ほかのインスタンスの
+  取り込みが使っている枠は薄く出す。アイコンにマウスを載せると処理中のファイルが出る）。各コレクションの「状態」欄と
+  インスタンス一覧のカードには、その取り込みが使っている枠だけを出す。
+- **削除の順番待ち**: コレクションの削除は、同じインスタンスで取り込み・コピーが動いている間は「削除待ち」にして、
+  それらが終わってから行う（キーワード索引・カタログ等は同じインスタンスのコレクションで共有するため、取り込み中に消すと
+  「database is locked」になる）。削除待ちの間に始めた同じインスタンスの取り込みは、削除の後に始める（「待機中」）。
+  削除待ちは「削除を取りやめ」で取りやめられる。
 
-取り込みは対象インスタンスの設定（`config_overrides.json` を重ねたもの）で行う。本体インスタンスが起動中でも
-取り込みと検索は同時に行え、本体の再起動は不要。コレクションの作成・取り込み・削除は変更履歴（監査ログ）に残る。
-同じ操作はコマンドラインからも行える（コレクションの作成はダッシュボードで行っておく）:
+取り込みは対象インスタンスの設定（`config_overrides.json` を重ねたもの）で行う（並列数だけは全インスタンス共通の `config.ini` の値）。
+本体インスタンスが起動中でも取り込みと検索は同時に行え、本体の再起動は不要。コレクションの作成・取り込み・削除は変更履歴（監査ログ）に残り、
+取り込み・削除の経過（開始・終了・件数・失敗したファイル・エラーの詳細）は管理ツールのログ `instances/_admin_logs/admin_*.log` に出る。
+同じ操作はコマンドラインからも行える（コレクションの作成はダッシュボードで行っておく。コマンドラインの取り込みは
+管理ツールの取り込みとは枠を共有せず、それだけで config.ini の並列数まで動く）:
 
 ```cmd
 python -m src.vector_db.ingest --instance default --collection manuals
@@ -1524,7 +1544,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[llm]` | `max_concurrent_requests` | 推論サーバーへの同時リクエスト数上限。1以上でSemaphore(N)ガード（既定1＝完全直列化）、0以下で無制限。全セッション合算で数え、生成1回の間だけ枠を占有する。`[graph]`/`[subagent]` の `max_parallel` がこの値より大きくても、超えた分はLLM呼び出しの直前で待つだけで、エラーにはならない（待ち時間はタイムアウトに数えない） | `LLM_MAX_CONCURRENT_REQUESTS` |
 | `[llm]` | `round_robin_slots_probe_timeout_seconds` | `round_robin`/`priority_failover`戦略がprovider="llama_cpp"の接続先を選ぶ前に送るGET /slots問い合わせ自体のタイムアウト秒数（既定3、確認できなければ空きありとみなすfail-safe） | `LLM_ROUND_ROBIN_SLOTS_PROBE_TIMEOUT_SECONDS` |
 | `[llm]` | `round_robin_busy_poll_interval_seconds` | `round_robin`/`priority_failover`戦略で候補の全接続先に空きスロットが無かった場合、再確認までに待機する秒数（既定2） | `LLM_ROUND_ROBIN_BUSY_POLL_INTERVAL_SECONDS` |
-| `[paths]` | `common_data_dir` | 各種データ保存先パスの共通ベースディレクトリ（既定 `./data/${instance}`）。本セクションの`checkpoint_db`/`memory_dir`/`plans_dir`、および`[log]`/`[default_workdir]`/`[path_memory]`/`[chat_log]`の`dir`系キーの値に`${common_data_dir}`と書くとここで指定した値に置換される（configparser標準の補間ではなくconfig.py側の独自置換）。`common_data_dir`自身とこれらのキーでは`${instance}`がインスタンス名（環境変数`LOCOHANE_INSTANCE`、未設定なら`default`）に置換される | `COMMON_DATA_DIR` |
+| `[paths]` | `common_data_dir` | 各種データ保存先パスの共通ベースディレクトリ（既定 `./data/${instance}`）。本セクションの`checkpoint_db`/`memory_dir`/`plans_dir`、および`[log]`/`[default_workdir]`/`[path_memory]`/`[chat_log]`の`dir`系キーの値に`${common_data_dir}`と書くとここで指定した値に置換される（configparser標準の補間ではなくconfig.py側の独自置換）。`common_data_dir`自身とこれらのキーでは`${instance}`がインスタンス名（環境変数`LOCOHANE_INSTANCE`、未設定なら`default`）に置換される。ローカルディスクのみ（UNC パス・ネットワークドライブは不可） | `COMMON_DATA_DIR` |
 | `[paths]` | `skills_dir` | スキルフォルダ | `SKILLS_DIR` |
 | `[paths]` | `agents_dir` | エージェント種別定義フォルダ（`dispatch_agent` の `agent_type`） | `AGENTS_DIR` |
 | `[paths]` | `project_locohane_dir` | プロジェクト固有の拡張ディレクトリ（ClaudeCode の `.claude/` 相当）。配下の `skills/`（`skills_dir` にマージ走査、同名は優先）・`agents/`（`agents_dir` にマージ走査、同名は優先）・`LOCOHANE.md`（プロジェクト固有指示、存在しなくてもエラーにならない）を自動検知する。`nudge_messages` と同じリスト形式で複数ディレクトリ指定可。要素を `{"dir": ..., "python": ...}` の辞書で書くと、そのディレクトリの `skills/` 配下の `.py` スクリプトだけを専用のPython環境で起動する（`[scripts].python` より優先） | `PROJECT_LOCOHANE_DIR` |
@@ -1684,10 +1704,10 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedded_image_min_px` | `embedded_images` で取り出す画像の幅・高さの下限（px、既定 64）。どちらかが下回る画像（アイコン等）は埋め込まない。0 なら大きさで除かない | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | `image_input = true` で Office ファイルを PDF に書き出す1回の上限秒数（既定180）。超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、そのファイルを失敗一覧に載せる | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
-| `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照） | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数と、同時に送る埋め込みのリクエスト数。埋め込みを並列にするには推論サーバー側も同時処理（llama-server の `--parallel`）が必要（「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの取り込みは全インスタンス・全コレクションの合計でこの並列数まで） | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | 取り込み元フォルダの走査で同時に読むフォルダの数（スレッド数、既定8）。ファイルサーバー上のフォルダで効く | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | 1コレクションで取り込む最大ファイル数（既定1000000）。超えた分は取り込まず、ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ。「文書の取り込み」参照） | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
-| `[vector_db]` | `ingest_processes` | 取り込みで本文の抽出・ページの画像化を行う子プロセスの数（既定0＝子プロセスを使わず `ingest_workers` のスレッドで行う）。CPU のコアに余裕があり PDF・Excel 等が多いときに 2 以上にする | `VECTOR_DB_INGEST_PROCESSES` |
+| `[vector_db]` | `ingest_processes` | 取り込みで本文の抽出・ページの画像化を行う子プロセスの数（既定0＝子プロセスを使わず `ingest_workers` のスレッドで行う）。CPU のコアに余裕があり PDF・Excel 等が多いときに 2 以上にする。**全インスタンス共通**（インスタンス別に上書きできない） | `VECTOR_DB_INGEST_PROCESSES` |
 | `[vector_db]` | `top_k` | `search_documents`・`search_document_paths` が既定で返す件数（既定5） | `VECTOR_DB_TOP_K` |
 | `[vector_db]` | `max_result_chars` | `search_documents`・`search_document_paths` の結果全体の最大文字数（既定6000） | `VECTOR_DB_MAX_RESULT_CHARS` |
 | `[vector_db]` | `min_score` | 結果に出す本文のチャンクの類似度（0.0〜1.0、コサイン類似度）の下限（既定0.3） | `VECTOR_DB_MIN_SCORE` |
@@ -1729,6 +1749,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[admin]` | `assistant_embedding_instance` | 埋め込みの接続先を取るインスタンス名。空欄なら自動で探す | `ADMIN_ASSISTANT_EMBEDDING_INSTANCE` |
 | `[admin]` | `assistant_max_history_messages` | AI に渡す直近の会話の最大メッセージ数 | `ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES` |
 | `[admin]` | `instances_dir` | インスタンス別ディレクトリのルート（既定 `./instances`）。app.bat直接起動時のdefaultインスタンスの`.env`・`config_overrides.json`の読み込み先にも使われる。変更時は既存の中身を手動で移動する | `INSTANCES_DIR` |
+| `[data_backup]` | `enabled`・`dest_dir`・`times`・`weekdays`・`keep`・`exclude_workdir`・`exclude_logs`・`exclude` | データのバックアップ（「データバックアップ」節）の既定値。全インスタンス共通（インスタンス別に上書きできない）。設定ダッシュボードで保存した値（`<instances_dir>/data_backup.json`）が優先する | - |
 | `[ui]` | `default_language` | 表示言語の既定値（`auto`＝ブラウザの言語 / `ja` / `en`）。利用者が画面で言語を選ぶとそちらが優先される。AI も選んだ言語で回答する（「言語切り替え（日本語 / 英語）」節） | `UI_DEFAULT_LANGUAGE` |
 | `[ui]` | `max_display_messages` | チャット画面に描画するメッセージの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_MESSAGES` |
 | `[ui]` | `max_display_side_steps` | サイドパネルに描画するツール呼び出し等のStepの最大件数（表示専用の間引き、`0`で無制限） | `UI_MAX_DISPLAY_SIDE_STEPS` |
@@ -2023,6 +2044,8 @@ instances/
 │   └── app_stdout.log           # 本体プロセスの標準出力
 ├── <他のインスタンス名>/
 │   └── ...（同上）
+├── data_backup.json             # 設定ダッシュボードで保存したデータのバックアップの設定（「データのバックアップ」節）
+├── _admin_logs/                 # 管理ツールの動作ログ（admin_*.log。ナレッジの取り込み・削除の経過等。[log] max_lines 行で切り替え）
 └── admin_changes.log            # 全インスタンス共通の変更履歴（JSON Lines）
 ```
 
@@ -2152,6 +2175,28 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 起動した（管理ツールが起動に関与しない）インスタンスでも同じように見える
 ようにするためと、管理ツールと本体の間に認証用の秘密を共有する仕組みが
 無いため（本体は `0.0.0.0` で公開されうる）。
+
+### データのバックアップ
+
+上部の「データバックアップ」タブで、`[admin] instances_dir` と全インスタンスの `[paths] common_data_dir` を、日時つきの zip
+（`locohane_backup_YYYYMMDD_HHMMSS.zip`）にまとめて保存先へ退避する（`admin/data_backup.py`）。データ本体（SQLite）は
+ローカルディスクに置く必要があるため（下記）、ファイル共有へはこのバックアップで退避する。
+
+- **設定**: `config.ini` の `[data_backup]`（保存先 `dest_dir`・自動バックアップ `enabled`・時刻 `times`・曜日 `weekdays`・残す世代数 `keep`・
+  除外 `exclude_workdir`／`exclude_logs`／`exclude`）が既定値で、画面で保存した値は `<instances_dir>/data_backup.json` に持ち、そちらを
+  優先する（各項目にどちらの値かを表示する。「config.ini の既定に戻す」で画面の値を消す）。全インスタンス共通の設定で、インスタンス別の
+  `config_overrides.json` では上書きできない。保存先は絶対パス（UNC パス可）で、バックアップ元の中は指定できない。
+- **中身**: zip の中は `instances/…`・`data/<インスタンス名>/…` と `manifest.json`（版・元の場所・件数・バックアップできなかったファイル）。
+  `common_data_dir` の外に置いた `checkpoint_db`・`[thread_store] db`・`[vector_db] dir` は `data/<インスタンス名>/_external/<キー名>/` に入る。
+  既定では作業フォルダ（`[default_workdir] dir`）とログ（`[log] dir`・`[chat_log] dir`・`instances/_admin_logs/`・`app_stdout.log`）を除く。
+  SQLite（会話履歴・スレッド一覧・ナレッジ等）は使用中でも壊れないよう SQLite のバックアップ機能で写し、`-wal`・`-shm`・`-journal` は入れない。
+  Qdrant のデータ（Qdrant サーバー側）は含まない（Qdrant のスナップショット機能で別に退避する）。
+- **実行**: 自動バックアップは管理ツールが起動している間だけ、指定の時刻・曜日に動く（止まっていた間の分は後から実行しない）。
+  「今すぐバックアップ」で手動でも実行でき、実行中は進捗と「停止」が出る。作成中は `.partial` に書き、完了したら改名する
+  （途中で止めた・失敗した zip は残らない）。`keep` 世代を超えた古い zip は消す。経過は管理ツールのログ（`instances/_admin_logs/admin_*.log`）と
+  変更履歴（`data_backup_start`・`data_backup_end`）に残る。
+- **復元**: 管理ツールとインスタンスを止めてから zip を展開し、`instances/` を `[admin] instances_dir` へ、`data/<インスタンス名>/` を
+  各インスタンスの `common_data_dir` へ戻す（元の場所は `manifest.json` にある）。
 
 ### 管理アシスタント（AIに相談）
 

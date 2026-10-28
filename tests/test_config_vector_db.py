@@ -184,22 +184,32 @@ def test_embedding_retry_and_routing_defaults_and_validation(tmp_path):
         _load(tmp_path, {"embedding_retry_interval_seconds": "0"})
 
 
-def test_ingest_workers_default_and_validation(tmp_path):
+def test_ingest_workers_default_and_validation(tmp_path, monkeypatch):
     assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_ingest_workers == 1
-    assert _load(tmp_path, {"ingest_workers": "4"}).vector_db_ingest_workers == 4
+    monkeypatch.setenv("VECTOR_DB_INGEST_WORKERS", "4")
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_ingest_workers == 4
+    monkeypatch.setenv("VECTOR_DB_INGEST_WORKERS", "0")
     with pytest.raises(ValueError, match="ingest_workers"):
-        _load(tmp_path, {"ingest_workers": "0"})
+        load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
 
 
-def test_embedding_encoding_format_and_ingest_processes(tmp_path):
+def test_ingest_parallelism_ignores_instance_overrides(tmp_path):
+    """取り込みの並列数は全インスタンス共通のため、config_overrides.json の値は使わない（admin/knowledge.py 参照）。"""
+    cfg = _load(tmp_path, {"ingest_workers": "4", "ingest_processes": "2", "chunk_size": "300"})
+    assert (cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes, cfg.vector_db_chunk_size) == (1, 0, 300)
+
+
+def test_embedding_encoding_format_and_ingest_processes(tmp_path, monkeypatch):
     cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
     assert (cfg.vector_db_embedding_encoding_format, cfg.vector_db_ingest_processes) == ("base64", 0)
-    cfg = _load(tmp_path, {"embedding_encoding_format": "FLOAT", "ingest_processes": "4"})
+    monkeypatch.setenv("VECTOR_DB_INGEST_PROCESSES", "4")
+    cfg = _load(tmp_path, {"embedding_encoding_format": "FLOAT"})
     assert (cfg.vector_db_embedding_encoding_format, cfg.vector_db_ingest_processes) == ("float", 4)
     with pytest.raises(ValueError, match="embedding_encoding_format"):
         _load(tmp_path, {"embedding_encoding_format": "binary"})
+    monkeypatch.setenv("VECTOR_DB_INGEST_PROCESSES", "-1")
     with pytest.raises(ValueError, match="ingest_processes"):
-        _load(tmp_path, {"ingest_processes": "-1"})
+        _load(tmp_path, {})
 
 
 def test_scan_workers_and_max_files_per_collection(tmp_path):

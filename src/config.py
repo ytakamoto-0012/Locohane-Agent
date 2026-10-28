@@ -39,8 +39,15 @@ DEFAULT_INSTANCE_NAME = "default"
 # インスタンス別ディレクトリのルート（[admin].instances_dir）の既定値。
 DEFAULT_INSTANCES_DIR = "./instances"
 # [admin] セクションは、上記のインスタンス別上書きの対象外（管理ツール自身の
-# 起動設定を、管理ツールで変更できてしまう循環を避けるため）。
-_ADMIN_OVERRIDE_EXEMPT_SECTION = "admin"
+# 起動設定を、管理ツールで変更できてしまう循環を避けるため）。[data_backup] も全インスタンス共通の
+# 管理ツールの設定（データのバックアップ。admin/data_backup.py）のため対象外。
+_OVERRIDE_EXEMPT_SECTIONS = frozenset({"admin", "data_backup"})
+# インスタンス別に上書きできない（全インスタンス共通の）キー。ナレッジの取り込みの並列数は、管理ツールが
+# 全インスタンス・全コレクションの取り込みで1つの枠として共有する（admin/knowledge.py。admin/overrides.py の
+# _GLOBAL_ONLY_KEYS と同じ）。
+_GLOBAL_ONLY_KEYS = frozenset({("vector_db", "ingest_workers"), ("vector_db", "ingest_processes")})
+# _GLOBAL_ONLY_KEYS を上書きしようとした (ファイル, セクション, キー) のうち、警告を出したもの。
+_warned_global_only: set[tuple[str, str, str]] = set()
 
 # main_routing_strategy / sub_routing_strategy が取りうる値。
 # src/llm/routing.py の _select_endpoint() がこの文字列で分岐する。
@@ -1364,6 +1371,57 @@ def _resolve(base: Path, value: str) -> Path:
     return p if p.is_absolute() else (base / p).resolve()
 
 
+# GetDriveTypeW の DRIVE_REMOTE（ネットワークドライブ）。
+_DRIVE_REMOTE = 4
+
+
+def is_network_path(path: Path | str) -> bool:
+    """path がネットワーク上の場所（UNC パス、または Windows のネットワークドライブ）か。
+
+    UNC は \\\\server\\share・//server/share・\\\\?\\UNC\\... の形。ドライブ文字（Z: 等）は Windows の
+    GetDriveTypeW で割り当て先がネットワークかを調べる（Windows 以外・調べられないときは False）。
+    """
+    text = str(path)
+    if text.startswith(("\\\\", "//")) and not text.startswith(("\\\\?\\", "\\\\.\\")):
+        return True
+    if text.upper().startswith("\\\\?\\UNC\\"):
+        return True
+    drive = text.removeprefix("\\\\?\\")[:2]
+    if sys.platform != "win32" or len(drive) != 2 or drive[1] != ":" or not drive[0].isalpha():
+        return False
+    try:
+        import ctypes
+
+        return ctypes.windll.kernel32.GetDriveTypeW(f"{drive}\\") == _DRIVE_REMOTE
+    except (AttributeError, OSError):
+        return False
+
+
+def _reject_network_path(path: Path, label: str) -> None:
+    """SQLite を置くパスがネットワーク上なら ValueError（_validate_local_data_paths 参照）。"""
+    if is_network_path(path):
+        raise ValueError(
+            f"{label} must be on a local disk, not a network share or network drive: {path}. "
+            "SQLite databases on a network share lock slowly and unreliably (e.g. 'database is locked'), so keep the data on a "
+            "local disk and back it up to the share with the settings dashboard's data backup ([data_backup])."
+        )
+
+
+def _validate_local_data_paths(cfg: "Config") -> None:
+    """SQLite を置くパス（common_data_dir・checkpoint_db・[thread_store] db・[vector_db] dir）をローカルディスクに限る。
+
+    ネットワーク上の SQLite はロックの取り合いで「database is locked」になりやすく、WAL も使えない（SQLite の制約）。
+    環境変数で指定した値も含め、解決後のパスで判定する。
+    """
+    for path, label in (
+        (cfg.common_data_dir, "[paths].common_data_dir"),
+        (cfg.checkpoint_db, "[paths].checkpoint_db"),
+        (cfg.thread_store_db, "[thread_store].db"),
+        (cfg.vector_db_dir, "[vector_db].dir"),
+    ):
+        _reject_network_path(path, label)
+
+
 def resolve_instances_root(config_path: Path | None = None) -> Path:
     """インスタンス別ディレクトリのルート（[admin].instances_dir）を絶対パスで返す。
 
@@ -1382,7 +1440,10 @@ def resolve_instances_root(config_path: Path | None = None) -> Path:
         parser = configparser.ConfigParser(interpolation=None)
         parser.read(config_path or DEFAULT_CONFIG_PATH, encoding="utf-8")
         raw = parser.get("admin", "instances_dir", fallback=DEFAULT_INSTANCES_DIR)
-    return _resolve(PROJECT_ROOT, raw)
+    root = _resolve(PROJECT_ROOT, raw)
+    # インスタンスの設定・記録（config_overrides.json・SQLite を持つ data の既定の置き場の隣）もローカルディスクに限る。
+    _reject_network_path(root, "[admin].instances_dir")
+    return root
 
 
 def resolve_ssl_files(config_path: Path | None = None) -> tuple[Path, Path] | None:
@@ -3772,6 +3833,7 @@ def load_config(
 
     _validate_skill_draft_dir(cfg)
     _validate_vector_db(cfg)
+    _validate_local_data_paths(cfg)
 
     # data 配下のディレクトリを確実に用意する（checkpoint_db は親ディレクトリを作る）。
     cfg.checkpoint_db.parent.mkdir(parents=True, exist_ok=True)
@@ -3830,7 +3892,8 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
     必要がない（新しいconfig.iniキーを追加した場合も自動的に上書き対象になる）。
 
     [admin] セクションは上書き対象から除外する（管理ツール自身の起動設定を
-    管理ツールから変更できてしまう循環を避けるため）。
+    管理ツールから変更できてしまう循環を避けるため）。_GLOBAL_ONLY_KEYS（全インスタンス共通の
+    キー）も除外する。
 
     Args:
         parser: config.ini を読み込み済みの ConfigParser（このオブジェクトを
@@ -3852,9 +3915,9 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
     for section, section_values in data.items():
         if not isinstance(section_values, dict):
             raise ValueError(f"{path}: the value of section {section!r} must be an object (a dict keyed by key name).")
-        if section == _ADMIN_OVERRIDE_EXEMPT_SECTION:
+        if section in _OVERRIDE_EXEMPT_SECTIONS:
             logger.warning(
-                "%s: ignoring section [%s] because it cannot be overridden (edit config.ini directly for the admin tool's own startup settings).",
+                "%s: ignoring section [%s] because it cannot be overridden per instance (it holds the admin tool's own settings).",
                 path,
                 section,
             )
@@ -3874,6 +3937,17 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
                     section,
                     key,
                 )
+                continue
+            if (section, key) in _GLOBAL_ONLY_KEYS:
+                # 管理ツールは設定を何度も読み直すため、同じファイル・キーの警告は1回だけ出す。
+                if (str(path), section, key) not in _warned_global_only:
+                    _warned_global_only.add((str(path), section, key))
+                    logger.warning(
+                        "%s: ignoring key [%s].%s because it is shared by all instances (edit config.ini directly).",
+                        path,
+                        section,
+                        key,
+                    )
                 continue
             parser.set(section, key, str(value))
 

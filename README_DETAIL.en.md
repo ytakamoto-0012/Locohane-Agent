@@ -560,6 +560,11 @@ Specification: <https://agentskills.io/specification>
 
 Everything is under `data/` (changeable with the `dir` keys of `[paths]`/`[elements]`/`[log]`/`[default_workdir]` etc. in `config.ini`). `data/` is .gitignored. To change the storage root all at once, instead of rewriting each key individually, change only `[paths] common_data_dir` (default `./data/${instance}`) (the values of the corresponding keys are written referring to `${common_data_dir}`). `${instance}` is replaced with the name of the running instance (`default` when started directly with `app.bat`), so by default data is separated per instance into `data/<instance name>/`. `data/` in the table below means `data/<instance name>/` (e.g. `data/default/`) with the default settings.
 
+**Not on a network:** `[admin] instances_dir`, `[paths] common_data_dir`, `checkpoint_db`, `[thread_store] db` and `[vector_db] dir`
+(where SQLite databases are kept) must be on a local disk. A UNC path (`\\server\share\…`) or a network drive (Z: etc.) is rejected at startup
+and when saving on the settings dashboard (SQLite on a file share locks slowly and unreliably, operations easily fail with "database is locked",
+and WAL cannot be used). Use "Data backup" (in the settings dashboard section) to keep copies on a file share.
+
 **Migrating from old versions (that stored data directly under `data/`):** the default storage location changed from `./data` to `./data/${instance}`, so if you just start it, past threads, persistent memory, etc. become invisible (they are not deleted). While the app is stopped, moving the files and folders directly under `data/` (`checkpoints.sqlite`, `chat_threads.sqlite`, `memory/`, `logs/`, `elements/`, `plans/`, `path_memory/`, `logs_chat/`, `temp/`, `app.lock`, etc.) to `data/default/` carries them over. If you want to keep using the old location without moving, set `[paths] common_data_dir` of the default instance to `./data` on the admin tool's settings screen.
 
 | Path | Content | When it may be deleted | How to delete |
@@ -1359,10 +1364,26 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
   ingestion of another collection running at the same time, or editing collections on the settings dashboard, does not fail with "database is locked").
 - **Stop**: pressing "Stop" starts no new files or batches (even after preparation of all files has started, the remaining embeddings are not sent),
   waits for the embeddings in flight to return, records only the files whose embedding finished, and stops (the button becomes "Stopping…" when pressed).
+- **Shared parallelism**: `ingest_workers` and `ingest_processes` are shared by all instances (they cannot be overridden per instance; edit
+  `config.ini` directly), and ingestion from the settings dashboard runs preparation and embedding at most this many **in total** across all
+  instances and collections (ingesting several collections at once puts the same load on the embedding server and the PC as one).
+  The rest waits for a free worker, and freed workers go to the earliest started ingestion first (`IngestSlots` in `src/vector_db/ingest.py`).
+  A change of the parallelism takes effect from the next ingestion started (no need to restart the admin tool).
+- **Worker display**: the top of the Knowledge screen shows the workers shared by all instances as icons for "Prepare" and "Embed"
+  (idle = gray ring, preparing = spinning blue ring, embedding = pulsing green dot, waiting = blinking dotted ring; workers used by
+  ingestions of other instances are dimmed; hover an icon to see the file being processed). The "Status" column of each collection and the
+  instance cards show only the workers used by that ingestion.
+- **Queued deletion**: while ingestions or copies are running in the same instance, deleting a collection becomes "Waiting to delete" and runs
+  after they finish (the keyword index, catalog, etc. are shared by the collections of an instance, so deleting during an ingestion causes
+  "database is locked"). Ingestions of the same instance started while a deletion waits start after the deletion ("Waiting").
+  A waiting deletion can be cancelled with "Cancel deletion".
 
-Ingestion uses the settings of the target instance (with `config_overrides.json` layered). Ingestion and search can run at the same time
-even while the main instance is running, and the main instance does not need a restart. Creating, ingesting and deleting collections are recorded in the change history (audit log).
-The same operations can also be done from the command line (create the collection on the dashboard first):
+Ingestion uses the settings of the target instance (with `config_overrides.json` layered; only the parallelism is the shared value of `config.ini`).
+Ingestion and search can run at the same time even while the main instance is running, and the main instance does not need a restart.
+Creating, ingesting and deleting collections are recorded in the change history (audit log), and the progress of ingestion and deletion (start, end,
+counts, failed files, error details) is written to the admin tool's log `instances/_admin_logs/admin_*.log`.
+The same operations can also be done from the command line (create the collection on the dashboard first; command-line ingestion does not
+share the admin tool's workers and runs up to the parallelism of config.ini on its own):
 
 ```cmd
 python -m src.vector_db.ingest --instance default --collection manuals
@@ -1513,7 +1534,7 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[llm]` | `max_concurrent_requests` | Upper limit on concurrent requests to the inference server. 1 or more guards with Semaphore(N) (default 1 = fully serialized); 0 or less is unlimited. Counted across all sessions, occupying a slot only during one generation. Even if `max_parallel` of `[graph]`/`[subagent]` is larger than this value, the excess just waits right before calling the LLM, without errors (waiting time is not counted toward timeouts) | `LLM_MAX_CONCURRENT_REQUESTS` |
 | `[llm]` | `round_robin_slots_probe_timeout_seconds` | Timeout in seconds of the GET /slots query itself, sent before the `round_robin`/`priority_failover` strategies choose an endpoint with provider="llama_cpp" (default 3; fail-safe that considers it free if it cannot be checked) | `LLM_ROUND_ROBIN_SLOTS_PROBE_TIMEOUT_SECONDS` |
 | `[llm]` | `round_robin_busy_poll_interval_seconds` | Seconds to wait before rechecking when none of the candidate endpoints had free slots under the `round_robin`/`priority_failover` strategies (default 2) | `LLM_ROUND_ROBIN_BUSY_POLL_INTERVAL_SECONDS` |
-| `[paths]` | `common_data_dir` | Common base directory for the various data storage paths (default `./data/${instance}`). Writing `${common_data_dir}` in the values of `checkpoint_db`/`memory_dir`/`plans_dir` of this section and the `dir` keys of `[log]`/`[default_workdir]`/`[path_memory]`/`[chat_log]` replaces it with this value (not configparser's standard interpolation but config.py's own replacement). In `common_data_dir` itself and these keys, `${instance}` is replaced with the instance name (the environment variable `LOCOHANE_INSTANCE`, `default` if not set) | `COMMON_DATA_DIR` |
+| `[paths]` | `common_data_dir` | Common base directory for the various data storage paths (default `./data/${instance}`). Writing `${common_data_dir}` in the values of `checkpoint_db`/`memory_dir`/`plans_dir` of this section and the `dir` keys of `[log]`/`[default_workdir]`/`[path_memory]`/`[chat_log]` replaces it with this value (not configparser's standard interpolation but config.py's own replacement). In `common_data_dir` itself and these keys, `${instance}` is replaced with the instance name (the environment variable `LOCOHANE_INSTANCE`, `default` if not set). Local disk only (no UNC paths or network drives) | `COMMON_DATA_DIR` |
 | `[paths]` | `skills_dir` | Skills folder | `SKILLS_DIR` |
 | `[paths]` | `agents_dir` | Agent kind definitions folder (`agent_type` of `dispatch_agent`) | `AGENTS_DIR` |
 | `[paths]` | `project_locohane_dir` | Project-specific extension directories (equivalent to Claude Code's `.claude/`). Automatically detects `skills/` (merged into the scan of `skills_dir`, same names take precedence), `agents/` (merged into the scan of `agents_dir`, same names take precedence) and `LOCOHANE.md` (project-specific instructions; no error if missing) under it. Several directories can be specified in the same list form as `nudge_messages`. Writing an element as a dict `{"dir": ..., "python": ...}` starts only the `.py` scripts under that directory's `skills/` with a dedicated Python environment (takes precedence over `[scripts].python`) | `PROJECT_LOCOHANE_DIR` |
@@ -1671,10 +1692,10 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[vector_db]` | `embedded_image_min_px` | Lower limit (px, default 64) of the width and height of images taken out by `embedded_images`. Images smaller in either (icons, etc.) are not embedded. 0 means no size filter | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | Resolution at which pages are rendered as images with `image_input = true` (DPI, default 100) | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | Limit in seconds for one export of an Office file to PDF with `image_input = true` (default 180). When exceeded (stuck on an invisible dialog, etc.), that Office process is terminated and the file is listed in the failure list | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
-| `[vector_db]` | `ingest_workers` | Ingestion parallelism (default 1): the number of files prepared in parallel and the number of embedding requests sent at the same time. Parallel embedding also needs concurrent processing on the inference server (llama-server's `--parallel`) (see "Ingesting documents") | `VECTOR_DB_INGEST_WORKERS` |
+| `[vector_db]` | `ingest_workers` | Ingestion parallelism (default 1): the number of files prepared in parallel and the number of embedding requests sent at the same time. Parallel embedding also needs concurrent processing on the inference server (llama-server's `--parallel`) (see "Ingesting documents"). **Shared by all instances** (cannot be overridden per instance; ingestion from the settings dashboard runs at most this many in total across all instances and collections) | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | Number of folders read at the same time when scanning the source folder (threads, default 8). Effective for folders on file servers | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | Maximum number of files ingested per collection (default 1000000). The excess is not ingested and a warning is shown on the Knowledge screen (already ingested files take priority, and the rest are chosen from the start in path order; see "Ingesting documents") | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
-| `[vector_db]` | `ingest_processes` | Number of child processes that extract text and render pages during ingestion (default 0 = no child processes; done in the `ingest_workers` threads). Set to 2 or more when there are CPU cores to spare and many PDFs, Excel files, etc. | `VECTOR_DB_INGEST_PROCESSES` |
+| `[vector_db]` | `ingest_processes` | Number of child processes that extract text and render pages during ingestion (default 0 = no child processes; done in the `ingest_workers` threads). Set to 2 or more when there are CPU cores to spare and many PDFs, Excel files, etc. **Shared by all instances** (cannot be overridden per instance) | `VECTOR_DB_INGEST_PROCESSES` |
 | `[vector_db]` | `top_k` | Number of results `search_documents`/`search_document_paths` return by default (default 5) | `VECTOR_DB_TOP_K` |
 | `[vector_db]` | `max_result_chars` | Maximum characters of the whole result of `search_documents`/`search_document_paths` (default 6000) | `VECTOR_DB_MAX_RESULT_CHARS` |
 | `[vector_db]` | `min_score` | Lower limit of the similarity (0.0-1.0, cosine similarity) of text chunks shown in results (default 0.3) | `VECTOR_DB_MIN_SCORE` |
@@ -1716,6 +1737,7 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[admin]` | `assistant_embedding_instance` | Name of the instance to take the embedding endpoints from. If empty, it is searched automatically | `ADMIN_ASSISTANT_EMBEDDING_INSTANCE` |
 | `[admin]` | `assistant_max_history_messages` | Maximum number of recent conversation messages passed to the AI | `ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES` |
 | `[admin]` | `instances_dir` | Root of the per-instance directories (default `./instances`). Also used as the location the default instance's `.env` and `config_overrides.json` are read from when started directly with app.bat. When changed, move the existing contents by hand | `INSTANCES_DIR` |
+| `[data_backup]` | `enabled`, `dest_dir`, `times`, `weekdays`, `keep`, `exclude_workdir`, `exclude_logs`, `exclude` | Defaults of the data backup (see "Data backup"). Shared by all instances (cannot be overridden per instance). Values saved on the settings dashboard (`<instances_dir>/data_backup.json`) take precedence | - |
 | `[ui]` | `default_language` | Default display language (`auto` = the browser's language / `ja` / `en`). When a user chooses a language on screen, that takes precedence. The AI also answers in the chosen language (the "Language switching (Japanese / English)" section) | `UI_DEFAULT_LANGUAGE` |
 | `[ui]` | `max_display_messages` | Maximum number of messages drawn on the chat screen (display-only thinning; `0` is unlimited) | `UI_MAX_DISPLAY_MESSAGES` |
 | `[ui]` | `max_display_side_steps` | Maximum number of steps such as tool calls drawn in the side panel (display-only thinning; `0` is unlimited) | `UI_MAX_DISPLAY_SIDE_STEPS` |
@@ -1993,6 +2015,8 @@ instances/
 │   └── app_stdout.log           # stdout of the main process
 ├── <other instance name>/
 │   └── ... (same as above)
+├── data_backup.json             # data backup settings saved on the settings dashboard (see "Data backup")
+├── _admin_logs/                 # admin tool log (admin_*.log: progress of knowledge ingestion/deletion, etc.; rotated every [log] max_lines lines)
 └── admin_changes.log            # change history shared by all instances (JSON Lines)
 ```
 
@@ -2109,6 +2133,30 @@ Data sources:
 It reads files instead of communicating with the main app over HTTP so that instances started directly with `app.bat`
 (where the admin tool was not involved in starting them) look the same, and because there is no mechanism
 for sharing an authentication secret between the admin tool and the main app (the main app may be published on `0.0.0.0`).
+
+### Data backup
+
+The "Data backup" tab at the top saves `[admin] instances_dir` and the `[paths] common_data_dir` of all instances to a destination as a dated zip
+(`locohane_backup_YYYYMMDD_HHMMSS.zip`) (`admin/data_backup.py`). The data itself (SQLite) must be on a local disk (see below), so use this
+backup to keep copies on a file share.
+
+- **Settings**: `[data_backup]` in `config.ini` (destination `dest_dir`, scheduled backup `enabled`, times `times`, days `weekdays`, generations
+  to keep `keep`, exclusions `exclude_workdir`/`exclude_logs`/`exclude`) gives the defaults; values saved on the screen are kept in
+  `<instances_dir>/data_backup.json` and take precedence (each item shows which one is used; "Reset to the config.ini defaults" deletes the
+  screen's values). It is shared by all instances and cannot be overridden by an instance's `config_overrides.json`. The destination is an
+  absolute path (UNC paths allowed) and cannot be inside a backup source.
+- **Contents**: the zip holds `instances/…`, `data/<instance name>/…` and `manifest.json` (version, original locations, counts, files that could
+  not be backed up). `checkpoint_db`, `[thread_store] db` and `[vector_db] dir` placed outside `common_data_dir` go into
+  `data/<instance name>/_external/<key name>/`. By default the working folder (`[default_workdir] dir`) and logs (`[log] dir`, `[chat_log] dir`,
+  `instances/_admin_logs/`, `app_stdout.log`) are excluded. SQLite databases (conversation history, thread list, knowledge, etc.) are copied
+  with the SQLite backup feature so they stay consistent even while in use; `-wal`, `-shm` and `-journal` files are not included.
+  Qdrant data (on the Qdrant server) is not included (back it up separately with Qdrant's snapshots).
+- **Running**: scheduled backups run at the set times and days only while the admin tool is running (missed times are not run later).
+  "Back up now" runs one manually, and progress and "Stop" are shown while running. The zip is written as `.partial` and renamed when complete
+  (a stopped or failed zip is not left behind). Zips beyond `keep` generations are deleted oldest first. Progress is written to the admin tool's
+  log (`instances/_admin_logs/admin_*.log`) and the change history (`data_backup_start`, `data_backup_end`).
+- **Restoring**: stop the admin tool and the instances, extract the zip, and put `instances/` back into `[admin] instances_dir` and
+  `data/<instance name>/` into each instance's `common_data_dir` (the original locations are in `manifest.json`).
 
 ### Admin assistant (Ask AI)
 

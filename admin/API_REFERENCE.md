@@ -548,11 +548,14 @@ $C -X PUT $BASE/api/instances/default/knowledge/collections/manuals -H "$H" -H "
   -d '{"schedule_enabled":true,"schedule_times":["02:00"],"schedule_weekdays":[0,1,2,3,4]}'
 # 取り込み開始（差分）。rebuild=true で全ベクターを消して取り込み直す
 $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/ingest -H "$H" -H "$J" -d '{"rebuild":false}'
-# 進捗・結果（state: running/done/error/stopped、done/total、result.failed）
+# 進捗・結果（state: queued/running/done/error/stopped、done/total、result.failed。kind は ingest/copy/delete。
+# queued は同じインスタンスのコレクションの削除の終わり待ち）
 $C $BASE/api/instances/default/knowledge/collections/manuals/job
 # 取り込みの停止
 $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/stop -H "$H"
-# コレクションの削除（ベクターも削除。取り込み元の文書は消えない）
+# コレクションの削除（ベクターも削除。取り込み元の文書は消えない）。同じインスタンスで取り込み・コピーが動いていれば
+# 削除のジョブ（kind が "delete"）を順番待ちにして {"ok":true,"queued":true,"job":{...}} を返し、それらが終わってから消す
+# （進捗は .../collections/manuals/job。順番待ちの間は .../stop で取りやめられる）
 $C -X DELETE $BASE/api/instances/default/knowledge/collections/manuals -H "$H"
 # 別のインスタンス（org_b）へコピー。with_vectors=true はベクター・キーワード索引・ファイル記録まで複製する
 # （コピー先と埋め込みモデル・document_prefix・距離関数が違えば 400。false なら定義だけ）。進捗はコピー先の
@@ -561,6 +564,10 @@ $C -X POST $BASE/api/instances/default/knowledge/collections/manuals/copy -H "$H
   -d '{"dest_instance":"org_b","dest_name":"manuals","with_vectors":true,"include_schedule":false}'
 # コピー先・参照元に選べるインスタンスと、そのコレクション・埋め込みの設定の一覧
 $C $BASE/api/knowledge/sources
+# 取り込みワーカー（全インスタンス共通の並列数の枠）の状態。load（準備）・embed（埋め込み）は枠ごとに
+# {instance, collection, detail（処理中のファイル）} か null（空き）。waiting は空きを待っている取り込み
+# （GET .../knowledge の workers にも同じものが付く）
+$C $BASE/api/knowledge/workers
 # 別のインスタンス（org_a）のコレクションを複製せずに参照する（name はこのインスタンスでの名前）。
 # 一覧の references に status（ok / incompatible / missing）と reason が付く
 $C -X POST $BASE/api/instances/default/knowledge/references -H "$H" -H "$J" \
@@ -576,6 +583,24 @@ cmd:
 %C% -X POST %BASE%/api/instances/default/knowledge/collections -H %H% -H %J% -d "{\"name\":\"manuals\",\"source_folder\":\"D:/shared/manuals\"}"
 %C% -X POST %BASE%/api/instances/default/knowledge/collections/manuals/ingest -H %H% -H %J% -d "{\"rebuild\":false}"
 %C% %BASE%/api/instances/default/knowledge/collections/manuals/job
+```
+
+## データのバックアップ
+
+`[admin] instances_dir` と全インスタンスの `[paths] common_data_dir` を、日時つきの zip にまとめて保存先へ退避する（全インスタンス共通）。
+
+```bash
+# 実効の設定（settings）・項目ごとの出どころ（sources: dashboard / config.ini）・実行状態（job: state は running/done/error/stopped、
+# done/total、result.file・result.failed）・次回予定（next_run_at）・保存先の zip の一覧（backups）
+$C $BASE/api/data-backup
+# 設定を保存（<instances_dir>/data_backup.json。config.ini の [data_backup] より優先。保存先がバックアップ元の中なら 400）
+$C -X PUT $BASE/api/data-backup/settings -H "$H" -H "$J" \
+  -d '{"enabled":true,"dest_dir":"\\\\fileserver\\share\\locohane_backup","times":["02:00"],"weekdays":[],"keep":7,"exclude_workdir":true,"exclude_logs":true,"exclude":[]}'
+# 画面で保存した設定を消して config.ini の既定に戻す
+$C -X DELETE $BASE/api/data-backup/settings -H "$H"
+# 今すぐバックアップ（保存先が未設定なら 400、実行中なら 409）・停止
+$C -X POST $BASE/api/data-backup/run -H "$H"
+$C -X POST $BASE/api/data-backup/stop -H "$H"
 ```
 
 ## 管理アシスタント（AIに相談）

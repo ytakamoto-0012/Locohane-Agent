@@ -10,12 +10,79 @@ function knowledgePath(name, suffix) {
   return `/api/instances/${encodeURIComponent(name)}/knowledge${suffix || ""}`;
 }
 
-const KNOWLEDGE_JOB_LABELS = { running: _t("取り込み中"), done: _t("完了"), error: _t("エラー"), stopped: _t("停止") };
-const KNOWLEDGE_COPY_LABELS = { running: _t("コピー中"), done: _t("コピー完了"), error: _t("コピーのエラー"), stopped: _t("コピーを停止") };
+// ジョブの状態（admin/knowledge.py の IngestJob.state）。queued は同じインスタンスの削除・取り込みの終わり待ち。
+const KNOWLEDGE_JOB_LABELS = { queued: _t("待機中"), running: _t("取り込み中"), done: _t("完了"), error: _t("エラー"), stopped: _t("停止") };
+const KNOWLEDGE_COPY_LABELS = { queued: _t("コピー待ち"), running: _t("コピー中"), done: _t("コピー完了"), error: _t("コピーのエラー"), stopped: _t("コピーを停止") };
+const KNOWLEDGE_DELETE_LABELS = { queued: _t("削除待ち"), running: _t("削除中"), done: _t("削除完了"), error: _t("削除のエラー"), stopped: _t("削除を取りやめ") };
 // 参照の状態（admin/knowledge.py の _reference_dict）。
 const KNOWLEDGE_REF_LABELS = { ok: _t("検索できます"), incompatible: _t("検索できません（設定が違います）"), missing: _t("検索できません（参照元がありません）") };
 // 自動取り込みの曜日（catalog.sqlite の schedule_weekdays。0=月〜6=日、Python の weekday() と同じ）。
 const KNOWLEDGE_WEEKDAYS = [_t("月"), _t("火"), _t("水"), _t("木"), _t("金"), _t("土"), _t("日")];
+
+function knowledgeJobActive(job) {
+  return !!job && (job.state === "queued" || job.state === "running");
+}
+
+// 取り込みワーカー（全インスタンス共通の並列数の枠。admin/knowledge.py の IngestSlots.snapshot()）のアイコン。
+// 空きは灰の輪、準備（読み取り・抽出・画像化）は回る輪、埋め込みは脈打つ点（admin.css の .kn-worker）。
+function knowledgeWorkerIcon(kind, slot, mine) {
+  const label = kind === "load" ? _t("準備") : _t("埋め込み");
+  if (!slot) return el("span", { class: "kn-worker", title: _t(`{0}: 空き`, label) });
+  return el("span", {
+    class: `kn-worker ${kind}${mine ? "" : " other"}`,
+    title: `${label}: ${slot.instance}/${slot.collection}\n${slot.detail}`,
+  });
+}
+
+// 全インスタンス共通の枠の一覧（このインスタンス以外の取り込みが使っている枠は薄く出す）。
+function knowledgeWorkersPanel(workers, instance) {
+  if (!workers) return el("div");
+  const group = (kind, label) =>
+    el("span", { class: "kn-workers" }, [
+      el("span", { class: "kn-workers-label", text: label }),
+      ...workers[kind].map((s) => knowledgeWorkerIcon(kind, s, !!s && s.instance === instance)),
+    ]);
+  const title = workers.processes
+    ? _t(`取り込みワーカー（全インスタンス共通。並列数 {0}・子プロセス {1}）`, workers.workers, workers.processes)
+    : _t(`取り込みワーカー（全インスタンス共通。並列数 {0}）`, workers.workers);
+  const parts = [el("span", { text: title }), group("load", _t("準備")), group("embed", _t("埋め込み"))];
+  if (workers.waiting.length) {
+    const names = workers.waiting.map((w) => `${w.instance}/${w.collection}`).join(", ");
+    parts.push(
+      el("span", { class: "kn-workers", title: _t(`空きを待っている取り込み: {0}`, names) }, [
+        el("span", { class: "kn-worker waiting" }),
+        el("span", { text: _t(`空き待ち {0}`, workers.waiting.length) }),
+      ])
+    );
+  }
+  return el("div", { class: "kn-workers-panel" }, parts);
+}
+
+// snapshot のうち instance/collection の取り込みが使っている枠（admin/knowledge.py の job_workers と同じ形）。
+function knowledgeJobWorkers(workers, instance, collection) {
+  if (!workers) return null;
+  const mine = (s) => !!s && s.instance === instance && s.collection === collection;
+  return {
+    load: workers.load.filter(mine).map((s) => s.detail),
+    embed: workers.embed.filter(mine).map((s) => s.detail),
+    waiting: workers.waiting.some(mine),
+  };
+}
+
+// 1つの取り込みが使っている枠のアイコン（インスタンス一覧のカードでも使う）。
+function knowledgeJobWorkerIcons(w) {
+  if (!w) return null;
+  const icons = [
+    ...w.load.map((d) => el("span", { class: "kn-worker load", title: _t(`準備: {0}`, d) })),
+    ...w.embed.map((d) => el("span", { class: "kn-worker embed", title: _t(`埋め込み: {0}`, d) })),
+  ];
+  if (w.waiting) icons.push(el("span", { class: "kn-worker waiting", title: _t("ほかの取り込みが並列数の枠を使っているため、空きを待っています") }));
+  return icons.length ? el("div", { class: "kn-workers kn-workers-row" }, icons) : null;
+}
+
+function knowledgeWorkersBusy(workers) {
+  return !!workers && (workers.load.some(Boolean) || workers.embed.some(Boolean) || workers.waiting.length > 0);
+}
 
 async function knowledgeAction(fn) {
   try {
@@ -52,6 +119,8 @@ async function renderKnowledgePanel(container, name) {
     );
   }
 
+  const workersBox = el("div");
+  container.append(workersBox);
   const list = el("div");
   container.append(list);
   container.append(buildCreateCollectionForm(container, name));
@@ -59,6 +128,7 @@ async function renderKnowledgePanel(container, name) {
 
   const draw = (d) => {
     const collections = d.collections;
+    workersBox.replaceChildren(knowledgeWorkersPanel(d.workers, name));
     list.innerHTML = "";
     const rows = collections.map((c) => [
       el("div", {}, [el("strong", { text: c.name }), c.description ? el("div", { class: "hint", text: c.description }) : null]),
@@ -72,7 +142,7 @@ async function renderKnowledgePanel(container, name) {
       c.model ? _t(`{0}（{1} 次元）`, c.model, c.dim) : "-",
       fmtTime(c.last_ingested_at),
       knowledgeScheduleCell(c, data.enabled),
-      knowledgeJobCell(c.job, data.max_file_mb),
+      knowledgeJobCell(c.job, data.max_file_mb, knowledgeJobWorkers(d.workers, name, c.name)),
       knowledgeActions(container, name, c, data.enabled),
     ]);
     list.append(
@@ -80,15 +150,15 @@ async function renderKnowledgePanel(container, name) {
     );
     // コピーを始めた直後（コピー先の定義ができる前）と、定義を作れずに終わったコピーのジョブ。
     for (const job of d.copy_jobs || []) {
-      list.append(el("div", { class: "hint" }, [_t(`{0}（{1} から）: `, job.collection, job.source), knowledgeJobCell(job, d.max_file_mb)]));
+      list.append(el("div", { class: "hint" }, [_t(`{0}（{1} から）: `, job.collection, job.source), knowledgeJobCell(job, d.max_file_mb, null)]));
     }
   };
   draw(data);
 
-  // 取り込み・コピー中のジョブがある間（と、終わった直後の1回）だけ表示を更新する
-  // （編集中の追加フォームを描き直さないよう、一覧の表だけを差し替える）。
+  // 取り込み・コピー・削除中（順番待ちを含む）のジョブか、ほかのインスタンスの取り込みが枠を使っている間（と、
+  // 終わった直後の1回）だけ表示を更新する（編集中の追加フォームを描き直さないよう、一覧の表と枠の表示だけを差し替える）。
   const hasRunning = (d) =>
-    d.collections.some((c) => c.job && c.job.state === "running") || (d.copy_jobs || []).some((j) => j.state === "running");
+    d.collections.some((c) => knowledgeJobActive(c.job)) || (d.copy_jobs || []).some(knowledgeJobActive) || knowledgeWorkersBusy(d.workers);
   let wasRunning = hasRunning(data);
   startMonitorPolling(container, async () => {
     if (!wasRunning) return;
@@ -111,16 +181,28 @@ function knowledgeScheduleCell(c, enabled) {
   return el("div", {}, parts);
 }
 
-function knowledgeJobCell(job, maxFileMb) {
+// workers: このジョブが使っている取り込みの枠（knowledgeJobWorkers）。
+function knowledgeJobCell(job, maxFileMb, workers) {
   if (!job) return "-";
   // 停止を求めた後は、処理中のファイルが終わるまで running のままのため「停止中」と出す。
-  const labels = job.kind === "copy" ? KNOWLEDGE_COPY_LABELS : KNOWLEDGE_JOB_LABELS;
+  const labels = job.kind === "copy" ? KNOWLEDGE_COPY_LABELS : job.kind === "delete" ? KNOWLEDGE_DELETE_LABELS : KNOWLEDGE_JOB_LABELS;
   const label = job.state === "running" && job.stop_requested ? _t("停止中") : labels[job.state] || job.state;
   const parts = [el("strong", { text: job.trigger === "schedule" ? _t(`{0}（自動）`, label) : label })];
   if (job.kind === "copy" && job.source) parts.push(el("div", { class: "hint", text: _t(`コピー元 {0}`, job.source) }));
-  if (job.state === "running") {
+  if (job.state === "queued") {
+    parts.push(
+      el("div", {
+        class: "hint",
+        text: job.kind === "delete"
+          ? _t("同じインスタンスの取り込み・コピーが終わってから削除します。")
+          : _t("同じインスタンスのコレクションの削除が終わってから始めます。"),
+      })
+    );
+  }
+  if (job.state === "running" && job.kind !== "delete") {
     parts.push(knowledgeProgressBar(job.done, job.total));
     parts.push(el("div", { class: "hint", text: _t(`{0} / {1} ファイル`, job.done, job.total || "?") }));
+    parts.push(knowledgeJobWorkerIcons(workers));
     if (job.current) parts.push(el("div", { class: "hint", text: job.current }));
   }
   if (job.result && job.result.kind === "copy") {
@@ -197,20 +279,26 @@ function knowledgeProgressBar(done, total) {
 }
 
 function knowledgeActions(container, name, c, enabled) {
-  const running = c.job && c.job.state === "running";
+  const running = knowledgeJobActive(c.job);
   const path = `/collections/${encodeURIComponent(c.name)}`;
   const buttons = [];
-  if (running) {
+  if (running && c.job.kind === "delete" && c.job.state === "running") {
+    const busy = el("button", { text: _t("削除中…") });
+    busy.disabled = true;
+    buttons.push(busy);
+  } else if (running) {
+    // 順番待ちの削除は「削除を取りやめ」（すぐ取りやめる）。取り込み・コピーの停止は処理中のファイルが終わるまで待つ。
+    const idleText = c.job.kind === "delete" ? _t("削除を取りやめ") : _t("停止");
     // 停止はすぐには効かない（処理中のファイルの埋め込みを待つ）ため、押したらその場で「停止中…」にして押せなくする。
     const stopBtn = el("button", {
-      text: c.job.stop_requested ? _t("停止中…") : _t("停止"),
+      text: c.job.stop_requested ? _t("停止中…") : idleText,
       onclick: async () => {
         stopBtn.disabled = true;
         stopBtn.textContent = _t("停止中…");
         if (await knowledgeAction(() => api(knowledgePath(name, `${path}/stop`), { method: "POST" }))) renderKnowledgePanel(container, name);
         else {
           stopBtn.disabled = false;
-          stopBtn.textContent = _t("停止");
+          stopBtn.textContent = idleText;
         }
       },
     });

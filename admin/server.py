@@ -33,6 +33,7 @@ from src.version import __version__
 from . import api_docs, assistant, assistant_index, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
 from . import ini_catalog_en
 from . import instances as inst
+from . import data_backup as data_backup_api
 from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
 from .ini_catalog import parse_file as parse_ini_file
@@ -51,13 +52,15 @@ CONFIG_INI_PATH = PROJECT_ROOT / "config.ini"
 INSTANCES_ROOT = resolve_instances_root(CONFIG_INI_PATH)
 PROJECT_ENV_PATH = PROJECT_ROOT / ".env"
 AUDIT_LOG_PATH = INSTANCES_ROOT / "admin_changes.log"
+# 管理ツール自身の動作ログ（admin_*.log。ナレッジの取り込み・削除の経過・エラー等）。
+ADMIN_LOG_DIR = INSTANCES_ROOT / "_admin_logs"
 SETTINGS_DIR = PROJECT_ROOT / "public" / "settings"
 SETTINGS_BACKUP_DIR = INSTANCES_ROOT / "_settings_backups"
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 CONFIG_PY_PATH = PROJECT_ROOT / "src" / "config.py"
 
 # [admin] セクションは、インスタンス別 config_overrides.json の上書き対象外
-# （overrides.py の _EXEMPT_SECTION）。plain load_config() は安全にこの目的で使える。
+# （overrides.py の _EXEMPT_SECTIONS）。plain load_config() は安全にこの目的で使える。
 _cfg = load_config()
 
 _admin_users = auth.load_admin_users(PROJECT_ENV_PATH)
@@ -94,7 +97,9 @@ async def _lifespan(_app: FastAPI):
             except supervisor.SupervisorError as exc:
                 logger.warning("autostart: failed to start instance %r: %s", name, exc)
     _knowledge_router.ingest_scheduler.start()
+    _data_backup_router.backup_scheduler.start()
     yield
+    _data_backup_router.backup_scheduler.stop()
     _knowledge_router.ingest_scheduler.stop()
     if _cfg.admin_stop_apps_on_exit:
         _supervisor.stop_all()
@@ -965,6 +970,7 @@ def get_monitor_overview(user: str = Depends(require_login)):
     """全インスタンスの接続中ユーザー数・生成中スレッド数・ナレッジの取り込み状況（インスタンス一覧のカード用）。"""
     result = []
     ingesting = _knowledge_router.ingest_jobs.running()
+    workers = _knowledge_router.ingest_slots.snapshot()
     for name in inst.list_instance_names(INSTANCES_ROOT):
         try:
             cfg = monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name)
@@ -993,9 +999,16 @@ def get_monitor_overview(user: str = Depends(require_login)):
                 "log_counts_24h": monitor.recent_level_counts(cfg.log_dir),
                 # 生成中スレッドごとの LLM リクエストの入力トークン（メイン・サブの最大値）。
                 "context_series": context_series,
-                # ナレッジで取り込み中のコレクション（管理ツールのプロセス内のジョブ）。
+                # ナレッジで取り込み中（順番待ち・削除を含む）のコレクション（管理ツールのプロセス内のジョブ）と、
+                # そのジョブが使っている取り込みの枠（knowledge.job_workers。カードのワーカーのアイコン）。
                 "ingesting": [
-                    {k: getattr(j, k) for k in ("collection", "trigger", "started_at", "done", "total", "current", "stop_requested")}
+                    {
+                        **{
+                            k: getattr(j, k)
+                            for k in ("collection", "kind", "state", "trigger", "started_at", "done", "total", "current", "stop_requested")
+                        },
+                        "workers": knowledge_api.job_workers(workers, name, j.collection),
+                    }
                     for j in ingesting.get(name, [])
                 ],
             }
@@ -1145,6 +1158,23 @@ app.include_router(_knowledge_router)
 
 
 # ---------------------------------------------------------------------------
+# データバックアップ（instances_dir と全インスタンスの common_data_dir の zip。admin/data_backup.py）
+# ---------------------------------------------------------------------------
+
+# 時間指定の自動バックアップ（_data_backup_router.backup_scheduler）は _lifespan で起動・停止する。
+_data_backup_router = data_backup_api.build_router(
+    require_login=require_login,
+    require_csrf=require_csrf,
+    instances_root=INSTANCES_ROOT,
+    config_ini_path=CONFIG_INI_PATH,
+    audit_log_path=AUDIT_LOG_PATH,
+    client_ip=_client_ip,
+    config_loader=lambda name: monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name),
+)
+app.include_router(_data_backup_router)
+
+
+# ---------------------------------------------------------------------------
 # 管理アシスタント（右上の「AIに相談」。admin/assistant.py。設定は読むだけで変更しない）
 # ---------------------------------------------------------------------------
 
@@ -1227,9 +1257,26 @@ if STATIC_DIR.is_dir():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 
+def _setup_file_logging() -> None:
+    """管理ツールのログ（ナレッジの取り込み・削除等）を ADMIN_LOG_DIR/admin_*.log にも書く。
+
+    行数でのローテーションは [log].max_lines（本体の app_*.log と同じ）。[log].level = none なら書かない。
+    """
+    if _cfg.log_level == "none":
+        return
+    from src.log_rotation import LineCountRotatingFileHandler
+
+    ADMIN_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handler = LineCountRotatingFileHandler(ADMIN_LOG_DIR, _cfg.log_max_lines, clear_on_startup=False, prefix="admin")
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(threadName)s] %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(handler)
+    logger.info("Admin tool log: %s", ADMIN_LOG_DIR)
+
+
 def main() -> None:
     import uvicorn
 
+    _setup_file_logging()
     ssl_kwargs = {"ssl_certfile": str(SSL_FILES[0]), "ssl_keyfile": str(SSL_FILES[1])} if SSL_FILES else {}
     uvicorn.run(app, host=_cfg.admin_host, port=_cfg.admin_port, log_level="info", **ssl_kwargs)
 

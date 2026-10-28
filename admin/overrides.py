@@ -25,7 +25,13 @@ from admin.i18n import t as _t
 # [admin] セクションは管理ツール自身の起動設定であり、インスタンス別の
 # 上書き対象外（src/config.py の _apply_config_overrides も同じ理由で無視する。
 # ここでは無視するのではなく、保存時点で明示的なエラーとして拒否する）。
-_EXEMPT_SECTION = "admin"
+# [data_backup] も全インスタンス共通の管理ツールの設定（ダッシュボードの「データバックアップ」画面で編集する。
+# admin/data_backup.py）のため対象外。
+_EXEMPT_SECTIONS = frozenset({"admin", "data_backup"})
+# 全インスタンス共通の設定（インスタンス別に上書きできないキー）。取り込みの並列数は、管理ツールが
+# 全インスタンス・全コレクションの取り込みで1つの枠として共有する（admin/knowledge.py 参照。
+# src/config.py の _GLOBAL_ONLY_KEYS と同じ）。
+_GLOBAL_ONLY_KEYS = frozenset({("vector_db", "ingest_workers"), ("vector_db", "ingest_processes")})
 
 
 class OverridesError(Exception):
@@ -112,8 +118,14 @@ def _build_new_data(
     key_index = {(info.section, info.key): info for info in ini_catalog.keys}
 
     for (section, key), value in updates.items():
-        if section == _EXEMPT_SECTION:
+        if section == "admin":
             raise ValidationError(_t("[admin] セクションは管理ツールからは変更できません（config.ini を直接編集してください）。"))
+        if section in _EXEMPT_SECTIONS:
+            raise ValidationError(_t("[{0}] セクションは全インスタンス共通の設定です。「データバックアップ」画面で変更してください。", section))
+        if (section, key) in _GLOBAL_ONLY_KEYS:
+            raise ValidationError(
+                _t("[{0}].{1} は全インスタンス共通の設定のため、インスタンス別には変更できません（config.ini を直接編集してください）。", section, key)
+            )
         info = key_index.get((section, key))
         if info is None:
             raise ValidationError(_t("[{0}].{1} は config.ini に存在しないキーです。", section, key))

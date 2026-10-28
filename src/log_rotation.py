@@ -5,7 +5,8 @@
 要件のこのアプリでは独自実装が必要。
 
 ファイル名は起動時固定ではなく、ローテーションのたびに「今」の日時から
-<log_dir>/app_YYYYMMDD_HHMMSS.log の形式で作り直す。
+<log_dir>/app_YYYYMMDD_HHMMSS.log の形式で作り直す（接頭辞 app は prefix で変えられる。
+設定ダッシュボード（管理ツール）は admin_*.log に書く）。
 同一秒に複数回ローテーションする場合は _1, _2... の連番を付けて衝突を
 避ける。
 
@@ -42,6 +43,7 @@ class LineCountRotatingFileHandler(logging.Handler):
         max_lines: int,
         clear_on_startup: bool,
         encoding: str = "utf-8",
+        prefix: str = _PREFIX,
     ) -> None:
         """Handler を構築し、書き込み先ファイルを1つ確定させる。
 
@@ -52,9 +54,11 @@ class LineCountRotatingFileHandler(logging.Handler):
                 作成する。False なら直近の既存 app_*.log への追記を試み、
                 既に max_lines 以上であればその場でローテーションする。
             encoding: ファイルのエンコーディング。
+            prefix: ファイル名の接頭辞（<prefix>_YYYYMMDD_HHMMSS.log）。
         """
         super().__init__()
         self.log_dir = log_dir
+        self.prefix = prefix
         self.max_lines = max_lines
         self.encoding = encoding
         self._stream = None
@@ -79,7 +83,7 @@ class LineCountRotatingFileHandler(logging.Handler):
             self._stream = latest.open("a", encoding=self.encoding)
 
     def _latest_existing_file(self) -> Path | None:
-        candidates = list(self.log_dir.glob(f"{_PREFIX}_*.log"))
+        candidates = list(self.log_dir.glob(f"{self.prefix}_*.log"))
         if not candidates:
             return None
         return max(candidates, key=lambda p: p.stat().st_mtime)
@@ -91,12 +95,12 @@ class LineCountRotatingFileHandler(logging.Handler):
 
     def _build_new_path(self) -> Path:
         stamp = datetime.now().strftime(_STAMP_FMT)
-        base = self.log_dir / f"{_PREFIX}_{stamp}.log"
+        base = self.log_dir / f"{self.prefix}_{stamp}.log"
         if not base.exists():
             return base
         n = 1
         while True:
-            candidate = self.log_dir / f"{_PREFIX}_{stamp}_{n}.log"
+            candidate = self.log_dir / f"{self.prefix}_{stamp}_{n}.log"
             if not candidate.exists():
                 return candidate
             n += 1
@@ -111,6 +115,10 @@ class LineCountRotatingFileHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             text = self.format(record) + "\n"
+            if self._stream is None:
+                # close() の後にも書けるよう、同じファイルを開き直す（標準の FileHandler と同じ）。uvicorn は起動時に
+                # logging の設定をやり直し、それまでのハンドラーを閉じるため（管理ツールの admin_*.log。admin/server.py）。
+                self._stream = self._current_path.open("a", encoding=self.encoding)
             self._stream.write(text)
             self._stream.flush()
             self._line_count += text.count("\n")
@@ -122,4 +130,5 @@ class LineCountRotatingFileHandler(logging.Handler):
     def close(self) -> None:
         if self._stream is not None:
             self._stream.close()
+            self._stream = None
         super().close()

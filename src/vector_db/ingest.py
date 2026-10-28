@@ -15,6 +15,7 @@ from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field, replace
 import hashlib
 import heapq
+import itertools
 import logging
 import os
 import shutil
@@ -100,6 +101,125 @@ def _too_large_hint(cfg: Config, count: int) -> str:
         f"{count} files exceeded the size limit (config.ini [vector_db] max_file_mb = {cfg.vector_db_max_file_mb}MB, a Locohane limit) "
         "and were not ingested. Increase max_file_mb and run the ingestion (diff) again to ingest them."
     )
+
+
+SLOT_KINDS = ("load", "embed")
+# 枠が空くのを待っている間に、停止の求めを見直す間隔（秒）。
+_SLOT_POLL_SECONDS = 1.0
+
+
+class _SlotUser:
+    """IngestSlots を使う1つの取り込み（_Pipeline）。
+
+    hungry: 種類ごとに、枠が空かずに始められない処理があるか。先に join() した取り込みが hungry の間は、
+        後の取り込みはその種類の枠を取らない（先に始めた取り込みを優先し、後の取り込みは空き待ちにする）。
+    wakeup: 枠が空いたときに結果を入れる Future（_Pipeline は自分の処理の完了と一緒にこれを待つ）。
+    """
+
+    def __init__(self, instance: str, collection: str):
+        self.instance, self.collection = instance, collection
+        self.hungry = dict.fromkeys(SLOT_KINDS, False)
+        self.failed: set[str] = set()
+        self.wakeup: Future = Future()
+
+
+class IngestSlots:
+    """取り込みの並列数の枠（"load": 準備、"embed": 埋め込みのリクエスト）。
+
+    同じ IngestSlots を渡した取り込み同士で共有する。管理ツール（admin/knowledge.py）は1つを全インスタンス・
+    全コレクションの取り込みで共有し、config.ini の [vector_db] ingest_workers・ingest_processes を
+    全体の並列数にする（コレクションごとに並列数分ずつ動くと、埋め込みサーバー・PC に負荷がかかりすぎるため）。
+    枠を超える処理は空き待ちになり、空いた枠は先に始めた取り込みから順に使う。
+
+    snapshot() は各枠の状態（設定ダッシュボードのワーカーの表示用）。
+    """
+
+    def __init__(self, workers: int, processes: int = 0):
+        self._lock = threading.Lock()
+        self._users: list[_SlotUser] = []
+        # 種類ごとの使用中の枠: 枠の番号 → (使っている取り込み, 処理中のファイル等)。
+        self._used: dict[str, dict[int, tuple[_SlotUser, str]]] = {kind: {} for kind in SLOT_KINDS}
+        self.workers, self.processes = workers, processes
+
+    def resize(self, workers: int, processes: int) -> None:
+        """並列数を変える（設定の変更を反映する。動いている取り込みのスレッド・子プロセスの数は変わらない）。"""
+        with self._lock:
+            self.workers, self.processes = workers, processes
+            self._wake_hungry()
+
+    def capacity(self, kind: str) -> int:
+        return (self.processes or self.workers) if kind == "load" else self.workers
+
+    def join(self, instance: str, collection: str) -> _SlotUser:
+        user = _SlotUser(instance, collection)
+        with self._lock:
+            self._users.append(user)
+        return user
+
+    def leave(self, user: _SlotUser) -> None:
+        with self._lock:
+            if user in self._users:
+                self._users.remove(user)
+            self._wake_hungry()
+
+    def begin_round(self, user: _SlotUser) -> None:
+        """_Pipeline の1回の処理の開始（end_round() までに枠を取れなかった種類だけを hungry のままにする）。"""
+        with self._lock:
+            user.failed = set()
+            if user.wakeup.done():
+                user.wakeup = Future()
+
+    def end_round(self, user: _SlotUser) -> None:
+        with self._lock:
+            changed = False
+            for kind in SLOT_KINDS:
+                hungry = kind in user.failed
+                changed |= user.hungry[kind] and not hungry
+                user.hungry[kind] = hungry
+            if changed:
+                self._wake_hungry()
+
+    def try_acquire(self, user: _SlotUser, kind: str, detail: str) -> int | None:
+        """kind の枠を1つ取る（取れたら枠の番号、空きが無い・先の取り込みが空きを待っているなら None）。"""
+        with self._lock:
+            used = self._used[kind]
+            free = next((i for i in range(self.capacity(kind)) if i not in used), None)
+            earlier = self._users[: self._users.index(user)] if user in self._users else []
+            if free is None or any(u.hungry[kind] for u in earlier):
+                user.failed.add(kind)
+                user.hungry[kind] = True
+                return None
+            used[free] = (user, detail)
+            return free
+
+    def release(self, kind: str, index: int) -> None:
+        with self._lock:
+            self._used[kind].pop(index, None)
+            self._wake_hungry()
+
+    def _wake_hungry(self) -> None:
+        # 誰が枠を取れるかは try_acquire() で決めるため、空きを待っている取り込みをすべて起こす。
+        for u in self._users:
+            if any(u.hungry.values()) and not u.wakeup.done():
+                u.wakeup.set_result(None)
+
+    def snapshot(self) -> dict:
+        """各枠の状態（使用中なら instance・collection・detail、空きなら None）と、空きを待っている取り込み。"""
+        with self._lock:
+            result: dict = {"workers": self.workers, "processes": self.processes}
+            for kind in SLOT_KINDS:
+                used = self._used[kind]
+                size = max([self.capacity(kind), *(i + 1 for i in used)])
+                result[kind] = [
+                    {"instance": used[i][0].instance, "collection": used[i][0].collection, "detail": used[i][1]} if i in used else None
+                    for i in range(size)
+                ]
+            result["waiting"] = [
+                {"instance": u.instance, "collection": u.collection}
+                for u in self._users
+                if any(u.hungry.values()) and not any(u is v for used in self._used.values() for v, _ in used.values())
+            ]
+            return result
 
 
 def _is_hidden(path: Path, st: os.stat_result | None = None) -> bool:
@@ -484,6 +604,8 @@ def ingest_collection(
     should_stop: Callable[[], bool] | None = None,
     embedding_transport: httpx.BaseTransport | None = None,
     store_transport: httpx.BaseTransport | None = None,
+    slots: IngestSlots | None = None,
+    instance: str = "",
 ) -> IngestResult:
     """コレクション name の取り込み元フォルダを差分で取り込む。
 
@@ -501,6 +623,10 @@ def ingest_collection(
         should_stop: True を返したら残りのファイルを処理せずに終える（埋め込みの再試行を
             待っているファイルもその場でやめ、記録せずに次回の取り込みへ回す）。
         embedding_transport / store_transport: テスト用の httpx トランスポート。
+        slots: 並列数の枠（IngestSlots）。ほかの取り込みと共有すると、並列数を合計で守る
+            （準備・埋め込みのスレッド・子プロセスの数もその並列数にする）。省略時は cfg の
+            [vector_db] ingest_workers・ingest_processes で、この取り込みだけの枠を作る。
+        instance: インスタンス名（slots の各枠の状態・ログに出すだけ）。
 
     Raises:
         IngestError: コレクションが無い、取り込み元フォルダが無い、または
@@ -509,6 +635,13 @@ def ingest_collection(
     """
     model = embedding_model(cfg)
     result = IngestResult()
+    if slots is None:
+        slots = IngestSlots(cfg.vector_db_ingest_workers, cfg.vector_db_ingest_processes)
+    started = time.monotonic()
+    logger.info(
+        "vector_db ingest: start instance=%s collection=%s rebuild=%s model=%s workers=%d processes=%d",
+        instance or "-", name, rebuild, model, slots.workers, slots.processes,
+    )
     with open_catalog(cfg.vector_db_dir) as catalog:
         try:
             collection = catalog.get(name)
@@ -549,7 +682,7 @@ def ingest_collection(
                     store.apply_preset(storage)
             _ingest(
                 cfg, catalog, store, keywords, name, collection.dim, model, folders, collection.recursive,
-                result, progress, should_stop, embedding_client,
+                result, progress, should_stop, embedding_client, slots, instance,
                 exclude_keywords=collection.exclude_keywords, include_keywords=collection.include_keywords,
             )
         finally:
@@ -557,7 +690,9 @@ def ingest_collection(
             keywords.close()
             store.close()
         catalog.mark_ingested(name)
-    logger.info("vector_db ingest: collection=%s %s", name, result.to_dict())
+    summary = result.to_dict()
+    summary["failed"] = len(summary["failed"])
+    logger.info("vector_db ingest: finished instance=%s collection=%s in %.1fs %s", instance or "-", name, time.monotonic() - started, summary)
     return result
 
 
@@ -890,6 +1025,7 @@ class _Writer:
         path, record, mode = prepared.path, prepared.record, prepared.mode
         source = str(path)
         if prepared.kind == "failed":
+            logger.warning("vector_db ingest: collection=%s failed to ingest %s: %s", name, source, prepared.reason)
             result.failed.append((source, prepared.reason))
             if prepared.too_large:
                 result.too_large += 1
@@ -1008,16 +1144,22 @@ class _Pipeline:
 
     子プロセス（ingest_processes）が異常終了した（PDFium が壊れたファイルで落ちた等）ときは、そのとき準備中だった
     ファイルを1つずつ準備し直し、1つだけでも落ちるファイルを失敗一覧に載せて続ける（_pool_broken）。
+
+    準備・埋め込みは、始める前に IngestSlots の枠を1つ取り、終わったら返す（ほかの取り込みと共有するとき、
+    並列数を合計で守るため）。枠が空いていなければ、空くまで待つ（_SlotUser.wakeup）。
     """
 
     def __init__(
-        self, cfg: Config, folders: list[Path], known: dict[str, FileRecord], writer: _Writer, embedding_client, should_stop, progress
+        self, cfg: Config, folders: list[Path], known: dict[str, FileRecord], writer: _Writer, embedding_client, should_stop, progress,
+        slots: IngestSlots, instance: str = "",
     ):
         self.cfg, self.folders, self.known, self.writer = cfg, folders, known, writer
         self.embedding_client, self.should_stop, self.progress = embedding_client, should_stop, progress
         self.options = _LoadOptions.from_config(cfg)
-        self.workers = cfg.vector_db_ingest_workers
-        self.processes = cfg.vector_db_ingest_processes
+        self.slots = slots
+        self.slot_user: _SlotUser | None = None
+        self.workers = slots.workers
+        self.processes = slots.processes
         self.batch_size = cfg.vector_db_embedding_batch_size
         self.load_limit = self.processes or self.workers
         self._max_waiting = max(self.batch_size, 2 * max(self.workers, self.load_limit))
@@ -1032,6 +1174,16 @@ class _Pipeline:
         self.completed = 0
         self.stopped = False
         self.load_pool = None
+        self.instance = instance
+        # 準備の枠が空かずに始められなかった次のファイル（次の回にこれから始める）。
+        self._held_item: tuple[Path, os.stat_result] | None = None
+
+    def _acquire(self, kind: str, detail: str) -> int | None:
+        return self.slots.try_acquire(self.slot_user, kind, detail)
+
+    def _track(self, future: Future, kind: str, index: int) -> None:
+        # 完了（キャンセル・例外を含む）したら枠を返す。ほかの取り込みがすぐ使えるよう、ワーカースレッドで返す。
+        future.add_done_callback(lambda _f: self.slots.release(kind, index))
 
     def _new_load_pool(self):
         if self.processes:
@@ -1050,20 +1202,29 @@ class _Pipeline:
         self.options = replace(self.options, pages_dir=pages_root)
         self.load_pool = self._new_load_pool()
         embed_pool = ThreadPoolExecutor(max_workers=self.workers, thread_name_prefix="vector_db_embed")
+        self.slot_user = self.slots.join(self.instance, self.writer.name)
         try:
             while True:
                 if not self.stopped and self.should_stop is not None and self.should_stop():
                     # 全ファイルの準備を始めた後でも、残りの埋め込みを始めずに止める。
                     self.stopped = True
+                self.slots.begin_round(self.slot_user)
                 self._start_loads(self.load_pool)
                 self._start_embeds(embed_pool)
+                self.slots.end_round(self.slot_user)
+                hungry = bool(self.slot_user.failed)
                 if not self.loads and not self.embeds:
-                    if self.stopped or (self.exhausted and not self.isolate):
+                    if self.stopped or (self.exhausted and not self.isolate and self._held_item is None and not self.waiting):
                         break
-                    continue
-                # コミットの期限までしか待たない（_Writer.seconds_until_commit 参照）。
+                    if not hungry:
+                        continue
+                # コミットの期限までしか待たない（_Writer.seconds_until_commit 参照）。枠が空くのを待っている間は、
+                # 停止の求めに気づけるよう長くても _SLOT_POLL_SECONDS 秒ごとに見直す。
+                timeout = self.writer.seconds_until_commit()
+                if hungry:
+                    timeout = min(timeout, _SLOT_POLL_SECONDS) if timeout is not None else _SLOT_POLL_SECONDS
                 done, _ = wait(
-                    list(self.loads) + list(self.embeds), timeout=self.writer.seconds_until_commit(), return_when=FIRST_COMPLETED
+                    list(self.loads) + list(self.embeds) + [self.slot_user.wakeup], timeout=timeout, return_when=FIRST_COMPLETED
                 )
                 for future in done:
                     if future in self.loads:
@@ -1088,6 +1249,7 @@ class _Pipeline:
             if not self.processes and self.cfg.vector_db_image_input:
                 _close_office_in_threads(self.load_pool, self.workers)
             self.load_pool.shutdown(wait=True, cancel_futures=True)
+            self.slots.leave(self.slot_user)
             # 書き込まずに終えたファイル（停止・エラー）のページ画像もここで消す。
             _remove_dir(Path(pages_root))
 
@@ -1110,15 +1272,28 @@ class _Pipeline:
         self.load_pool.shutdown(wait=False, cancel_futures=True)
         self.load_pool = self._new_load_pool()
 
+    def _submit_load(self, pool, func, args: tuple, isolated: bool) -> bool:
+        """枠を取れたら _load を始める（取れなければ False）。"""
+        index = self._acquire("load", str(args[2]))
+        if index is None:
+            return False
+        try:
+            future = pool.submit(func, *args)
+        except BaseException:
+            self.slots.release("load", index)
+            raise
+        self._track(future, "load", index)
+        self.loads[future] = (args, isolated)
+        return True
+
     def _start_loads(self, pool) -> None:
         if self.isolate:
             # 異常終了に巻き込まれたファイルは、他のファイルと同時に準備せず1つずつ準備し直す。
-            if not self.loads and not self.stopped:
-                args = self.isolate.popleft()
-                self.loads[pool.submit(_load, *args)] = (args, True)
+            if not self.loads and not self.stopped and self._submit_load(pool, _load, self.isolate[0], True):
+                self.isolate.popleft()
             return
         while not self.stopped and not self.exhausted and len(self.loads) < self.load_limit and self.waiting < self._max_waiting:
-            item = next(self.pending, None)
+            item, self._held_item = self._held_item or next(self.pending, None), None
             if item is None:
                 self.exhausted = True
                 return
@@ -1127,19 +1302,22 @@ class _Pipeline:
                 return
             path, st = item
             source = str(path)
-            if self.progress is not None:
-                self.progress(self.completed, self.total, source)
             record = self.known.get(source)
             needs_keywords = source not in self.writer.keyword_sources
             if not needs_keywords and _is_unchanged(record, _file_mode(self.options, path), st):
                 # 変わっていないファイルは読まないため、スレッド・子プロセスに渡さずにここで済ませる。
+                if self.progress is not None:
+                    self.progress(self.completed, self.total, source)
                 mode = _file_mode(self.options, path)
                 path_text = relative_path_text(source_root(self.folders, path), path)
                 self._loaded(_Prepared(path, record, mode, "unchanged", path_text=path_text))
                 continue
             args = (self.options, source_root(self.folders, path), path, st, record, needs_keywords)
-            future = pool.submit(_load, *args) if self.processes else pool.submit(_load_in_thread, *args)
-            self.loads[future] = (args, False)
+            if not self._submit_load(pool, _load if self.processes else _load_in_thread, args, False):
+                self._held_item = item
+                return
+            if self.progress is not None:
+                self.progress(self.completed, self.total, source)
 
     def _loaded(self, prepared: _Prepared) -> None:
         job = _Job(prepared)
@@ -1153,27 +1331,51 @@ class _Pipeline:
     def _start_embeds(self, pool) -> None:
         while not self.stopped and len(self.embeds) < self.workers:
             if len(self.text_queue) >= self.batch_size:
-                self._submit_texts(pool, self.batch_size)
+                started = self._submit_texts(pool, self.batch_size)
             elif self.image_queue:
-                job, index = item = self.image_queue.popleft()
-                future = pool.submit(_embed_page, self.cfg, job.prepared.pages[index], self.embedding_client, self.should_stop)
-                self.embeds[future] = ("image", [item])
+                started = self._submit_image(pool)
             elif self.text_queue and (not self.embeds or not self.loads):
-                self._submit_texts(pool, len(self.text_queue))
+                started = self._submit_texts(pool, len(self.text_queue))
             else:
                 return
+            if not started:
+                return
 
-    def _submit_texts(self, pool, count: int) -> None:
-        items = [self.text_queue.popleft() for _ in range(count)]
-        future = pool.submit(
-            embed_texts,
-            self.cfg,
-            [job.texts[i] for job, i in items],
-            kind="document",
-            client=self.embedding_client,
-            should_stop=self.should_stop,
-        )
-        self.embeds[future] = ("text", items)
+    def _submit_embed(self, pool, kind: str, items: list[tuple[_Job, int]], detail: str, func, /, *args, **kwargs) -> bool:
+        index = self._acquire("embed", detail)
+        if index is None:
+            return False
+        try:
+            future = pool.submit(func, *args, **kwargs)
+        except BaseException:
+            self.slots.release("embed", index)
+            raise
+        self._track(future, "embed", index)
+        self.embeds[future] = (kind, items)
+        return True
+
+    def _submit_image(self, pool) -> bool:
+        job, index = item = self.image_queue[0]
+        page = job.prepared.pages[index]
+        detail = f"{job.prepared.path} ({page.locator})"
+        if not self._submit_embed(pool, "image", [item], detail, _embed_page, self.cfg, page, self.embedding_client, self.should_stop):
+            return False
+        self.image_queue.popleft()
+        return True
+
+    def _submit_texts(self, pool, count: int) -> bool:
+        items = list(itertools.islice(self.text_queue, count))
+        files = list(dict.fromkeys(str(job.prepared.path) for job, _ in items))
+        detail = files[0] if len(files) == 1 else f"{files[0]} (+{len(files) - 1})"
+        texts = [job.texts[i] for job, i in items]
+        if not self._submit_embed(
+            pool, "text", items, detail,
+            embed_texts, self.cfg, texts, kind="document", client=self.embedding_client, should_stop=self.should_stop,
+        ):
+            return False
+        for _ in range(count):
+            self.text_queue.popleft()
+        return True
 
     def _embedded(self, future: Future, kind: str, items: list[tuple[_Job, int]]) -> None:
         try:
@@ -1203,7 +1405,7 @@ def _embed_page(cfg: Config, page: PageImage, client, should_stop) -> list[list[
 
 def _ingest(
     cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folders, recursive, result, progress, should_stop, embedding_client,
-    *, exclude_keywords: Sequence[str] = (), include_keywords: Sequence[str] = (),
+    slots: IngestSlots, instance: str, *, exclude_keywords: Sequence[str] = (), include_keywords: Sequence[str] = (),
 ) -> None:
     """取り込み元のファイルを _Pipeline で処理し、フォルダから消えたファイル（除外・対象キーワードで外れたものも）を消す。
 
@@ -1218,12 +1420,15 @@ def _ingest(
     )
     files = scan.files
     result.found_files, result.max_files, result.over_limit = scan.total, max_files, scan.over_limit
+    logger.info(
+        "vector_db ingest: collection=%s found %d files (%d to process, %d already recorded)", name, scan.total, len(files), len(known)
+    )
     if scan.over_limit:
         logger.warning("vector_db ingest: collection=%s %s", name, _over_limit_hint(result))
     writer = _Writer(cfg, catalog, store, keywords, name, dim, model, result)
     writer.begin()
     try:
-        pipeline = _Pipeline(cfg, folders, known, writer, embedding_client, should_stop, progress)
+        pipeline = _Pipeline(cfg, folders, known, writer, embedding_client, should_stop, progress, slots, instance)
         pipeline.run(files)
         if not pipeline.stopped:
             # 停止したときは、未処理のファイルを「消えた」と誤って削除しないよう消さない。

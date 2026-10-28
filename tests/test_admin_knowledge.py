@@ -37,6 +37,7 @@ def env(tmp_path):
         client_ip=lambda _r: "127.0.0.1",
         config_loader=lambda name: configs[name],
         ingest_kwargs={"embedding_transport": embed.transport, "store_transport": qdrant.transport},
+        ingest_limits=lambda: (1, 0),
     )
     app.include_router(router)
     # スケジューラーのスレッドは起動せず、テストから tick() を直接呼ぶ
@@ -367,3 +368,81 @@ def test_references_between_instances(multi):
     assert client.delete("/api/instances/org_b/knowledge/references/a_docs").json() == {"ok": True}
     assert client.delete("/api/instances/org_b/knowledge/references/a_docs").status_code == 404
     assert client.get("/api/instances/org_b/knowledge").json()["references"] == []
+
+
+# --- 削除の順番待ちと、取り込みの枠の共有 ---
+
+
+def test_delete_waits_for_other_ingestion_in_the_instance(env):
+    """同じインスタンスで別のコレクションを取り込み中なら、削除は順番待ちにして、終わってから消す
+    （共有のキーワード索引等への書き込みとぶつかって database is locked にならないように）。"""
+    client, docs, jobs = env["client"], env["docs"], env["router"].ingest_jobs
+    base = "/api/instances/org_a/knowledge/collections"
+    for name in ("docs", "other"):
+        client.post(base, json={"name": name, "source_folder": str(docs)})
+    busy = knowledge.IngestJob(collection="other", rebuild=False, actor="admin")
+    assert jobs.start("org_a", busy) and busy.state == "running"
+
+    res = client.delete(f"{base}/docs")
+    assert res.status_code == 200 and res.json()["queued"] and res.json()["job"]["state"] == "queued"
+    # 削除待ちの間は、そのコレクションの取り込みはできず、後から来た別のコレクションの取り込みは削除の後に回る。
+    blocked = client.post(f"{base}/docs/ingest", json={})
+    assert blocked.status_code == 409 and "削除" in blocked.json()["detail"]
+    later = knowledge.IngestJob(collection="third", rebuild=False, actor="admin")
+    assert jobs.start("org_a", later) and later.state == "queued"
+    assert [c["name"] for c in client.get("/api/instances/org_a/knowledge").json()["collections"]] == ["docs", "other"]
+
+    busy.state = "done"
+    jobs.notify()
+    for _ in range(100):
+        if client.get(f"{base}/docs/job").json()["job"] is None:
+            break
+        time.sleep(0.05)
+    assert [c["name"] for c in client.get("/api/instances/org_a/knowledge").json()["collections"]] == ["other"]
+    assert jobs.wait_turn("org_a", later) and later.state == "running"
+
+
+def test_queued_delete_can_be_cancelled(env):
+    client, docs, jobs = env["client"], env["docs"], env["router"].ingest_jobs
+    base = "/api/instances/org_a/knowledge/collections"
+    for name in ("docs", "other"):
+        client.post(base, json={"name": name, "source_folder": str(docs)})
+    assert jobs.start("org_a", knowledge.IngestJob(collection="other", rebuild=False, actor="admin"))
+    assert client.delete(f"{base}/docs").json()["queued"]
+    assert client.post(f"{base}/docs/stop").status_code == 200
+    for _ in range(100):
+        job = client.get(f"{base}/docs/job").json()["job"]
+        if job["state"] != "queued":
+            break
+        time.sleep(0.05)
+    assert job["state"] == "stopped"
+    assert [c["name"] for c in client.get("/api/instances/org_a/knowledge").json()["collections"]] == ["docs", "other"]
+
+
+def test_ingestions_share_the_parallelism_of_config_ini(env):
+    """取り込みの並列数は config.ini の値を全インスタンス共通の枠にし、画面にも枠の状態を返す。"""
+    client, docs = env["client"], env["docs"]
+    router = env["router"]
+    assert (router.ingest_slots.workers, router.ingest_slots.processes) == (1, 0)
+    workers = client.get("/api/knowledge/workers").json()
+    assert (workers["workers"], workers["load"], workers["embed"], workers["waiting"]) == (1, [None], [None], [])
+    client.post("/api/instances/org_a/knowledge/collections", json={"name": "docs", "source_folder": str(docs)})
+    client.post("/api/instances/org_a/knowledge/collections/docs/ingest", json={})
+    assert _wait_job(client, "docs")["state"] == "done"
+    assert client.get("/api/instances/org_a/knowledge").json()["workers"]["embed"] == [None]
+
+    snapshot = {
+        "load": [{"instance": "org_a", "collection": "docs", "detail": "a.pdf"}, None],
+        "embed": [{"instance": "org_b", "collection": "docs", "detail": "b.pdf"}],
+        "waiting": [{"instance": "org_a", "collection": "x"}],
+    }
+    assert knowledge.job_workers(snapshot, "org_a", "docs") == {"load": ["a.pdf"], "embed": [], "waiting": False}
+    assert knowledge.job_workers(snapshot, "org_a", "x") == {"load": [], "embed": [], "waiting": True}
+
+
+def test_overrides_reject_shared_ingestion_parallelism():
+    from admin import overrides
+    from admin.ini_catalog import IniCatalog
+
+    with pytest.raises(overrides.ValidationError, match="ingest_workers"):
+        overrides._build_new_data({}, {("vector_db", "ingest_workers"): "4"}, [], IniCatalog(keys=(), mtime=0.0))

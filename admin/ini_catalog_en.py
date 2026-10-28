@@ -22,6 +22,7 @@ HEADINGS: dict[str, str] = {
     '入力欄（Composer）の貼り付け・文字数上限': 'Pasting and character limit of the input box (Composer)',
     'トークン使用量カードの強調表示': 'Highlighting of the token usage card',
     '管理アシスタント（ダッシュボードの「AIに相談」）': 'Admin assistant ("Ask AI" on the dashboard)',
+    'データのバックアップ（設定ダッシュボードの「データバックアップ」画面）': 'Data backup (the "Data backup" screen of the settings dashboard)',
 }
 
 # キーの説明の英訳。キーは "section.key"。
@@ -594,6 +595,7 @@ DESCRIPTIONS: dict[str, str] = {
         "Common base directory for the various data storage paths. Writing ${common_data_dir} in the values of checkpoint_db/memory_dir/plans_dir under [paths], and of the dir keys of other sections ([log]/[default_workdir]/[path_memory]/[chat_log]), replaces it with the value given here (not configparser's standard interpolation but a custom string replacement done by load_config() in src/config.py at startup; a mechanism that works across sections). To change the storage root all at once, change only this.\n"
         '${instance} is replaced with the name of the running instance (the instance name when started from the admin tool, default when started directly with app.bat; can be specified with the environment variable LOCOHANE_INSTANCE). With the default ./data/${instance}, data (threads, logs, persistent memory, etc.) is automatically separated per instance into data/<instance name>/. ${instance} can be used in common_data_dir itself and in each of the keys above that accept ${common_data_dir}.\n'
         "Can be overridden with the corresponding environment variable COMMON_DATA_DIR (the environment variable's value is not subject to expansion of the ${common_data_dir} placeholder; give a plain path directly. ${instance} is expanded)."
+        ' Local disk only (UNC paths and network drives are rejected at startup and when saving on the dashboard, because SQLite fails with "database is locked" on a network share). Back up to a file share with [data_backup] instead.'
     ),
     'paths.skills_dir': (
         'Skill definitions folder (the SKILL.md of each subfolder under it is scanned at startup).'
@@ -629,6 +631,7 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'paths.checkpoint_db': (
         "SQLite file that stores LangGraph's conversation state (checkpoints)."
+        ' Local disk only (UNC paths and network drives are rejected at startup and when saving on the dashboard, because SQLite fails with "database is locked" on a network share). Back up to a file share with [data_backup] instead.'
     ),
     'paths.memory_dir': (
         'Storage location of persistent memory (has the user/feedback/project/reference subfolders and the MEMORY.md index).'
@@ -822,6 +825,7 @@ DESCRIPTIONS: dict[str, str] = {
     'vector_db.dir': (
         'Directory where collection definitions and records of ingested files (catalog.sqlite), and with backend=sqlite_vec the vectors (vectors.sqlite), are stored.\n'
         'catalog.sqlite is placed here even with backend=qdrant.'
+        ' Local disk only (UNC paths and network drives are rejected at startup and when saving on the dashboard, because SQLite fails with "database is locked" on a network share). Back up to a file share with [data_backup] instead.'
     ),
     'vector_db.qdrant_url': (
         'URL of the Qdrant server with backend=qdrant (e.g. http://localhost:6333). If an API key is needed, write it in QDRANT_API_KEY in .env.\n'
@@ -1004,7 +1008,10 @@ DESCRIPTIONS: dict[str, str] = {
         '(for llama-server, start it with --parallel (-np) at or above this value; otherwise requests just queue up and it does not get faster).\n'
         'With 2 or more, larger files are started first (to avoid one large file being left at the end while everything else waits).\n'
         'For Office files with image_input = true, each worker starts one Word / PowerPoint / Excel and reuses it during ingestion,\n'
-        'so increase it only within the memory you have to spare.'
+        'so increase it only within the memory you have to spare.\n'
+        'Shared by all instances (cannot be changed per instance; the same goes for ingest_processes). Ingestion from the settings dashboard runs\n'
+        'at most this many in total across all instances and collections, and the rest waits for a free worker (earlier ingestions take priority).\n'
+        'Changes take effect from the next ingestion started (no need to restart the admin tool).'
     ),
     'vector_db.ingest_processes': (
         'Number of child processes that extract text and render pages as images (0 or more). 0 (default) uses no child processes, doing it in the ingest_workers threads.\n'
@@ -1012,7 +1019,8 @@ DESCRIPTIONS: dict[str, str] = {
         'cores to spare, setting it to 2 or more, using the number of cores as a guide, makes it faster (PDF processing (pypdfium2) is also parallelized per process).\n'
         'Starting child processes takes a few seconds and each process uses memory, so 0 is fine when there are few files.\n'
         'When a child process crashes (PDFium fell over on a broken PDF, etc.), only that file is listed in the failure list and ingestion continues\n'
-        '(with 0 the whole admin tool goes down, so for sources with many files of unknown origin, 1 or more is safer).'
+        '(with 0 the whole admin tool goes down, so for sources with many files of unknown origin, 1 or more is safer).\n'
+        'With 1 or more, this is also the number of files prepared at the same time (in total across all instances and collections).'
     ),
     'vector_db.scan_workers': (
         'Number of folders read at the same time when scanning the source folder (threads, 1 or more). Each differential ingestion reads all folders of the source\n'
@@ -1106,6 +1114,7 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'thread_store.db': (
         "SQLite file where the thread list and step history are saved. A separate file from data/checkpoints.sqlite (LangGraph's conversation state itself). A lightweight store holding only the metadata needed for listing and resuming."
+        ' Local disk only (UNC paths and network drives are rejected at startup and when saving on the dashboard, because SQLite fails with "database is locked" on a network share). Back up to a file share with [data_backup] instead.'
     ),
     'thread_store.retention_days': (
         'Retention in days of the thread list. Threads not updated for this many days are deleted automatically.\n'
@@ -1251,6 +1260,7 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'admin.instances_dir': (
         'Root of the per-instance directories (instance.json, config_overrides.json, .env, settings/, backups/, app_stdout.log, and admin_changes.log). Relative paths are relative to the project root. Used not only by the admin tool but also as the location from which the .env and config_overrides.json of the default instance are read when started directly with app.bat. Can be overridden with the environment variable INSTANCES_DIR. If you change it, move the contents of the existing instances/ by hand (there is no automatic migration).'
+        ' Local disk only (UNC paths and network drives are rejected at startup and when saving on the dashboard, because SQLite fails with "database is locked" on a network share). Back up to a file share with [data_backup] instead.'
     ),
     'admin.assistant_enabled': (
         'Whether to enable "Ask AI" at the top right of the dashboard. For an administrator\'s problem, the AI advises which screen and which config keys to change (the AI only reads settings and never changes, saves, starts or stops anything; people do the operations). false hides the button, and the API also returns 404. Can be overridden with the environment variable ADMIN_ASSISTANT_ENABLED.'
@@ -1272,5 +1282,33 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'admin.assistant_max_history_messages': (
         "Maximum number of recent conversation messages passed to the AI (the asker's messages and the AI's answers each count as one; 1 or more). The oldest are dropped first. The conversation history exists only in the browser and is not saved on the server. Can be overridden with the environment variable ADMIN_ASSISTANT_MAX_HISTORY_MESSAGES."
+    ),
+    'data_backup.enabled': (
+        'Backs up [admin] instances_dir and the [paths] common_data_dir of all instances into a dated zip in dest_dir (runs only while the admin tool is running).\n'
+        'Shared by all instances (cannot be overridden per instance). Values saved on the dashboard are kept in <instances_dir>/data_backup.json and take precedence over the values here (these are the defaults).\n'
+        'SQLite databases (conversation history, thread list, knowledge, etc.) are copied with the SQLite backup feature so they stay consistent even while in use. Qdrant data (on the Qdrant server) is not included.\n'
+        'Whether to run the scheduled backup. Even if false, "Back up now" on the screen can be used.'
+    ),
+    'data_backup.dest_dir': (
+        'Destination folder (absolute path). A file share (UNC path \\\\server\\share\\...) can also be specified (the intended use is to keep the data on a local disk and save it here).\n'
+        'It cannot be inside the backup sources (instances_dir or any common_data_dir). If empty, no backup is made.'
+    ),
+    'data_backup.times': (
+        'Times of the scheduled backup (24-hour HH:MM; separate several with commas, e.g. 02:00, 14:00).'
+    ),
+    'data_backup.weekdays': (
+        'Days of the scheduled backup (0=Mon to 6=Sun, comma separated). Empty means every day.'
+    ),
+    'data_backup.keep': (
+        'Number of generations to keep (1 or more). The excess zips are deleted oldest first.'
+    ),
+    'data_backup.exclude_workdir': (
+        "Do not back up the working folder ([default_workdir] dir; it tends to grow with users' working files)."
+    ),
+    'data_backup.exclude_logs': (
+        "Do not back up logs ([log] dir, [chat_log] dir, the admin tool's log instances/_admin_logs, app_stdout.log)."
+    ),
+    'data_backup.exclude': (
+        'Additional exclusion patterns (globs matched against the path relative to the backup source folder; comma separated, e.g. */skill_drafts_archive/*, *.tmp).'
     ),
 }

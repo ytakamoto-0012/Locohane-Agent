@@ -346,3 +346,69 @@ def test_ingest_over_limit_takes_files_within_limit_and_keeps_the_rest(env):
     # 上限を上げれば残りも取り込む
     raised = _config(env, vector_db_max_files_per_collection=100)
     assert ingest.ingest_collection(raised, "docs", **env["kwargs"]).added == 1
+
+
+# --- 並列数の枠の共有（IngestSlots） -------------------------------------------------------
+
+
+def test_shared_slots_limit_concurrency_across_collections(env):
+    """同じ IngestSlots を渡した取り込み同士は、埋め込みのリクエストを合計で並列数までしか送らない。"""
+    other = env["docs"].parent / "docs2"
+    other.mkdir()
+    with vcat.open_catalog(env["cfg"].vector_db_dir) as catalog:
+        catalog.create("docs2", str(other))
+    for folder in (env["docs"], other):
+        text = "\n\n".join(f"第{i}条 項目{i}の基準は{i}mmとする。" + "あ" * 150 for i in range(20))
+        (folder / "big.md").write_text(text, encoding="utf-8")
+    transport, state = _slow(env["embed"])
+    # コレクションごとの設定（ingest_workers=3）ではなく、共有の枠（2）に従う。
+    cfg = _config(env, vector_db_ingest_workers=3, vector_db_embedding_batch_size=4)
+    slots = ingest.IngestSlots(2)
+    results = {}
+
+    def run(name):
+        results[name] = ingest.ingest_collection(
+            cfg, name, slots=slots, instance="inst1", **{**env["kwargs"], "embedding_transport": transport}
+        )
+
+    threads = [threading.Thread(target=run, args=(name,)) for name in ("docs", "docs2")]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=60)
+    assert results["docs"].added == 1 and results["docs2"].added == 1
+    assert 1 < state["peak"] <= 2
+    snapshot = slots.snapshot()
+    assert snapshot["load"] == [None, None] and snapshot["embed"] == [None, None] and snapshot["waiting"] == []
+
+
+def test_slots_prefer_the_earlier_ingestion():
+    """枠が空いたら、先に始めた取り込みが空きを待っている間は後の取り込みに渡さない。"""
+    slots = ingest.IngestSlots(1)
+    first, second = slots.join("inst1", "a"), slots.join("inst1", "b")
+
+    def attempt(user, detail):
+        slots.begin_round(user)
+        index = slots.try_acquire(user, "embed", detail)
+        slots.end_round(user)
+        return index
+
+    held = attempt(first, "a1")
+    assert held == 0
+    assert attempt(first, "a2") is None and first.hungry["embed"]
+    assert attempt(second, "b1") is None
+    assert slots.snapshot()["embed"] == [{"instance": "inst1", "collection": "a", "detail": "a1"}]
+    assert slots.snapshot()["waiting"] == [{"instance": "inst1", "collection": "b"}]
+    slots.release("embed", held)
+    assert first.wakeup.done() and second.wakeup.done()
+    # 後の取り込みが先に試しても、先の取り込みが空きを待っているので取れない。
+    assert attempt(second, "b1") is None
+    assert attempt(first, "a2") == 0
+    # 先の取り込みが空きを待たなくなれば（終わる等）、後の取り込みが使える。
+    slots.release("embed", 0)
+    slots.leave(first)
+    assert attempt(second, "b1") == 0
+    # 並列数を増やすと、空きを待っていた取り込みを起こす。
+    assert attempt(second, "b2") is None
+    slots.resize(2, 0)
+    assert second.wakeup.done() and attempt(second, "b2") == 1
