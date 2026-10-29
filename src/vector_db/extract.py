@@ -308,6 +308,9 @@ def _extract_xlsx(source) -> list[Segment]:
     差し込む（例: "[Shape C5] 承認欄"）。近くのセルと同じチャンクに入り、検索結果でも位置が分かるようにするため。
     セルではなく位置で置いた図形はシートの末尾に付ける。グラフシートはグラフのタイトルだけの区切りにする。
 
+    表の中に縦に並ぶ数値のセル（月別の数量・金額等）は検索の手がかりにならず、チャンクを増やすだけのため取り込まない
+    （_without_table_numbers）。
+
     セルの値は python-calamine（Rust の実装で、openpyxl より大幅に速い）で読む。値の入った範囲が大きすぎるシートが
     あるブック（_fits_calamine）と、calamine で読めなかったブックは openpyxl で読む。
     """
@@ -330,7 +333,7 @@ def _xlsx_segments(sheets, extras: dict[str, dict[int, list[str]]]) -> list[Segm
     for name, rows in sheets:
         notes = dict(extras.get(name, {}))
         lines = []
-        for row_number, row in enumerate(rows, start=1):
+        for row_number, row in enumerate(_without_table_numbers(rows), start=1):
             if text := _row_text(row):
                 lines.append(text)
             lines.extend(notes.pop(row_number, []))
@@ -339,6 +342,57 @@ def _xlsx_segments(sheets, extras: dict[str, dict[int, list[str]]]) -> list[Segm
             lines.extend(notes[row_number])
         segments.append(Segment(f"Sheet: {name}", "\n".join(lines)))
     return segments
+
+
+# 数値だけの文字列（"1,234"・"-12.5"・"50%"・"¥1,000"・"100円"）。先頭が 0 の整数（"007"）は ID として扱い、含めない。
+_NUMBER_TEXT = re.compile(r"[+\-−]?[¥￥$]?(?:\d{1,3}(?:,\d{3})+|0|[1-9]\d*)(?:\.\d+)?(?:%|円)?")
+# 数値でも残す列の見出し（No・ID・社員ID・品番・番号・図番・コード 等）。英字は前後が英字でないものだけ（"Note" は含めない）。
+_ID_HEADER = re.compile(r"(?<![A-Za-z])(?:id|no|code|key)(?![A-Za-z])|#|番|コード|キー|識別|ＩＤ|Ｎｏ", re.IGNORECASE)
+
+
+def _is_number(value) -> bool:
+    """数値のセルか（bool・日付・時刻は含めない）。"""
+    if isinstance(value, str):
+        return _NUMBER_TEXT.fullmatch(value.strip()) is not None
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _numeric_columns(values) -> tuple[int, list[bool]]:
+    """1行の (末尾の空のセルを除いた列数, 各列が数値か)。"""
+    end = len(values)
+    while end and values[end - 1] in (None, ""):
+        end -= 1
+    return end, [_is_number(v) for v in values[:end]]
+
+
+def _without_table_numbers(rows):
+    """表の中の数値のセル（同じ列の真上か真下のセルも数値）を None にした行を、行の数を変えずに返す。
+
+    1行だけの「項目名＋値」（"品番 | 10"）は表ではないため残す。列の見出し（その列で直前に出てきた、数値ではない
+    文字のセル）が ID らしい列（_ID_HEADER）の数値も、検索の手がかりになるため残す。日付・時刻は数値として扱わない。
+    """
+    headers: dict[int, str] = {}
+    above: list[bool] = []
+    rows = iter(rows)
+    row = next(rows, None)
+    current = _numeric_columns(row) if row is not None else (0, [])
+    while row is not None:
+        below_row = next(rows, None)
+        below = _numeric_columns(below_row) if below_row is not None else (0, [])
+        end, numeric = current
+        kept = None
+        for col in range(end):
+            if not numeric[col]:
+                if isinstance(row[col], str) and row[col].strip():
+                    headers[col] = row[col]
+                continue
+            in_table = (col < len(above) and above[col]) or (col < below[0] and below[1][col])
+            if in_table and not _ID_HEADER.search(headers.get(col, "")):
+                if kept is None:
+                    kept = list(row)
+                kept[col] = None
+        yield row if kept is None else kept
+        above, row, current = numeric, below_row, below
 
 
 def _row_text(values) -> str:

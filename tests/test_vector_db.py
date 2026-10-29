@@ -131,7 +131,7 @@ def test_extract_xlsx_inserts_shapes_and_comments_at_their_rows(tmp_path):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "集計"
-    for row in (["品番", 10], ["型式", 20], ["数量", 30]):
+    for row in (["品番", "P-10"], ["型式", "M8"], ["数量", "30個"]):
         ws.append(row)
     ws["B2"].comment = Comment("前年比で確認", "yt")
     path = tmp_path / "a.xlsx"
@@ -171,13 +171,13 @@ def test_extract_xlsx_inserts_shapes_and_comments_at_their_rows(tmp_path):
     [segment] = extract_segments(rebuilt)
     # 図形・コメントはその行の後ろ（同じ行なら列の順）、データより下の図形は末尾、位置で置いた図形は最後。
     assert segment.text.split("\n") == [
-        "品番\t10",
+        "品番\tP-10",
         "[Shape C1] 承認欄",
-        "型式\t20",
+        "型式\tM8",
         "[Shape A2] 段取り手順",
         "[Shape A2] 注意",
         "[Comment B2] 前年比で確認",
-        "数量\t30",
+        "数量\t30個",
         "[Shape A3] 月別の出荷数",
         "[Shape A10] 欄外のメモ",
         "[Shape] ロゴ",
@@ -344,7 +344,8 @@ def test_extract_xlsx_reads_chart_titles_on_chartsheets(tmp_path):
     wb.create_chartsheet("空のグラフ")  # グラフを置いていないグラフシート（関係のパーツが無く、openpyxl がそのままでは開けない）
     wb.save(tmp_path / "a.xlsx")
     segments = extract_segments(tmp_path / "a.xlsx")
-    assert [(s.locator, s.text) for s in segments] == [("Sheet: Sheet", "a\t1\nb\t2"), ("Sheet: グラフ", "[Shape] 月別の出荷数")]
+    # 縦に並ぶ数値（1・2）は表の中の数値として取り込まない。
+    assert [(s.locator, s.text) for s in segments] == [("Sheet: Sheet", "a\nb"), ("Sheet: グラフ", "[Shape] 月別の出荷数")]
 
 
 def test_extract_xlsx_ignores_dimension_spanning_the_whole_sheet(tmp_path):
@@ -388,6 +389,36 @@ def test_extract_xlsx_formats_values_and_drops_blank_cells(tmp_path):
         "1\t1.5\t123456789012\t1e+20\tTrue",
         "2024-01-02\t2024-01-02 03:04:05\t09:30:00",
         "\t\t飛び",
+    ]
+
+
+@pytest.mark.parametrize("reader", ["calamine", "openpyxl"])
+def test_extract_xlsx_drops_numbers_inside_tables(tmp_path, monkeypatch, reader):
+    """表の中に縦に並ぶ数値は除き、見出し・品名・ID らしい列の数値・1行だけの項目名＋値・日付は残す。"""
+    import datetime
+
+    import openpyxl
+
+    from src.vector_db import extract
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(["担当", "山田", None, "数量", 10])  # 1行だけの項目名＋値
+    ws.append([])
+    ws.append(["No", "品番", "品名", "4月", "5月", "納期", "金額"])
+    ws.append([1, "A-001", "ボルト M8", 120, 135, datetime.datetime(2024, 4, 1, 9, 30), "1,234"])
+    ws.append([2, "007", "ナット M8", 300, 280, datetime.datetime(2024, 5, 1, 9, 30), "¥5,000"])
+    ws.append([None, None, None, 420, 415])  # 数値だけの合計行は行ごと無くなる
+    ws["D4"].comment = openpyxl.comments.Comment("暫定の値", "作成者")
+    wb.save(tmp_path / "a.xlsx")
+    if reader == "openpyxl":
+        monkeypatch.setattr(extract, "_calamine_sheets", lambda source: (_ for _ in ()).throw(RuntimeError("calamine failed")))
+    assert extract_segments(tmp_path / "a.xlsx")[0].text.split("\n") == [
+        "担当\t山田\t\t数量\t10",
+        "No\t品番\t品名\t4月\t5月\t納期\t金額",
+        "1\tA-001\tボルト M8\t\t\t2024-04-01 09:30:00",
+        "[Comment D4] 暫定の値",
+        "2\t007\tナット M8\t\t\t2024-05-01 09:30:00",
     ]
 
 

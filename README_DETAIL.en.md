@@ -1114,6 +1114,9 @@ when looking for facts, figures or document contents (when disabled or nothing i
     Shapes are inserted after the row of their anchor (the cell their top-left corner sits on) and comments after the row of their cell, as `[Shape C5] …` and
     `[Comment B3] …`, so that they land in the same chunk as nearby cells (shapes placed by position rather than by cell, or whose position cannot be read,
     go at the end of the sheet). Chart sheets are ingested as a sheet segment holding their chart titles. Legacy form buttons (VML) are not read.
+    Numeric cells stacked inside tables (cells whose neighbor directly above or below in the same column is also numeric, such as monthly quantities or amounts)
+    are not ingested, since they do not help search and only add chunks. Text such as headers and item names, numbers in columns whose header looks like
+    an ID (No, ID, 番号, 品番, コード, etc.), single-row "label + value" pairs, and dates/times are still ingested.
   - `.pptx`: text inside grouped shapes (including nested groups) and chart titles.
   The text is split into chunks of at most `chunk_size` characters (preferring paragraph and line breaks, overlapping neighbors by `chunk_overlap` characters),
   and the embedding of each chunk is saved. From the second time on, **only the differences** are processed (files with the same size and modification time are not reread,
