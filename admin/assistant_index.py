@@ -129,7 +129,9 @@ def provider_from_config(cfg: Config, instance: str) -> EmbeddingProvider | None
         sort_keys=True,
     )
     return EmbeddingProvider(
-        embed=lambda texts, kind: embed_texts(cfg, texts, kind=kind),
+        # 相談の回答を待たせ、止める手段も無いため、埋め込みサーバーが埋まっていても空きを待たずに送る
+        # （段落の埋め込みは kind="document" でも、取り込みと違って待たない）。
+        embed=lambda texts, kind: embed_texts(cfg, texts, kind=kind, wait_when_busy=False),
         cache_id=cache_id,
         label=f"[vector_db] embedding_url of instance {instance}",
     )

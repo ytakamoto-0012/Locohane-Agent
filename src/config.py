@@ -618,7 +618,7 @@ class Config:
             選び方（LLM_ROUTING_STRATEGIES のいずれか。src/vector_db/embeddings.py の
             _endpoint_order()・_choose_order() 参照。round_robin/priority_failover は llama_cpp・vllm の
             接続先の空きを確かめ、round_robin_slots_probe_timeout_seconds・round_robin_busy_poll_interval_seconds
-            も使う）。どの戦略でも、エラーが返った接続先の次の接続先で試し直す。
+            （最大 0.5 秒）も使う）。どの戦略でも、エラーが返った接続先の次の接続先で試し直す。
         vector_db_embedding_max_retries: すべての接続先でエラーになったとき、
             vector_db_embedding_retry_interval_seconds 秒待ってから全接続先を試し直す回数。
             0 なら成功するまで無制限に繰り返す。検索語の埋め込み（search_documents）には使わない。

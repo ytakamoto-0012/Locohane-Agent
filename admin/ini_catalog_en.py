@@ -902,7 +902,8 @@ DESCRIPTIONS: dict[str, str] = {
         '  provider = "llama_cpp" : counts the free slots with GET /slots (requests this process is sending also count as busy).\n'
         '  provider = "vllm"      : treated as full if vllm:num_requests_waiting (the queue) of GET /metrics is 1 or more.\n'
         '  Other providers, and cases where it cannot be checked, are treated as free.\n'
-        'When all endpoints are full, ingestion waits until one is free, checking every [llm] round_robin_busy_poll_interval_seconds seconds (it can be stopped with "Stop").\n'
+        'When all endpoints are full, ingestion waits until one is free (it can be stopped with "Stop"). Waiting requests use free slots in the order they started waiting,\n'
+        'and are rechecked as soon as a request of this process returns, otherwise every [llm] round_robin_busy_poll_interval_seconds seconds (at most 0.5 seconds because an embedding is short).\n'
         'Search sends to the first in the order without waiting. The timeout of the check is [llm] round_robin_slots_probe_timeout_seconds. random does not check.\n'
         'Whichever you choose, when an error is returned the same request is resent to the next endpoint.'
     ),

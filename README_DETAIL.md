@@ -1210,7 +1210,8 @@ embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not
 `round_robin`（既定）・`random`・`priority_failover`）で決める。`round_robin`・`priority_failover` では、送る前に接続先の空きを確かめ、
 埋まっていれば次の接続先へ回す（`provider = "llama_cpp"` は GET /slots の空きスロット数（このプロセスから送信中の分を差し引く）、
 `provider = "vllm"` は GET /metrics の `vllm:num_requests_waiting` が 0 かで判断し、その他の provider・確かめられない場合は空きとみなす）。
-全接続先が埋まっていれば、取り込みは `[llm] round_robin_busy_poll_interval_seconds` 秒ごとに空きが出るまで待ち（「停止」で止められる）、
+全接続先が埋まっていれば、取り込みは空きが出るまで待ち（「停止」で止められる。待ち始めた順に空きを使い、このプロセスの送信が返ったらすぐ、
+それ以外は `[llm] round_robin_busy_poll_interval_seconds` 秒（埋め込みは1回が短いため最大0.5秒）ごとに確かめ直す）、
 検索は待たずに並び順の先頭へ送る。確かめのタイムアウトは `[llm] round_robin_slots_probe_timeout_seconds`。どの戦略でも、接続できない・
 HTTP 200 以外が返ったときは同じリクエストを次の接続先へ送り直し、`priority_failover` ではエラーが返った接続先を60秒間後回しにする。
 すべての接続先でエラーになったら `embedding_retry_interval_seconds`（既定10）秒待って全接続先を試し直し、これを

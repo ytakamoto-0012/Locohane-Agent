@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from array import array
 import base64
+from collections import deque
 from contextlib import contextmanager
 import logging
 import random
@@ -38,6 +39,14 @@ _FAILOVER_COOLDOWN_SECONDS = 60.0
 # このプロセスから送信中（空きを確かめて選んでから応答が返るまで）のリクエスト数（サーバーのルート → 件数）。
 # 複数の取り込みスレッドが同時に GET /slots で同じ空きを見て、全員がそこへ送るのを防ぐ（_has_room 参照）。
 _inflight: dict[str, int] = {}
+# _release() の通知（_routing_lock を使う）と、その回数（空きを確かめている間に送信が返ったかの判定に使う）。
+_routing_cond = threading.Condition(_routing_lock)
+_releases = 0
+# 空きを待っている埋め込みの待ち行列（接続先の base_url の並び → 待ち始めた順の目印）。_choose_order 参照。
+_waiters: dict[tuple[str, ...], deque[object]] = {}
+# 全接続先が埋まっているときに確かめ直す間隔の上限（秒）。[llm].round_robin_busy_poll_interval_seconds は
+# チャットの長い生成に合わせた値のため、1回が短い埋め込みではこれより長く待たない。
+_BUSY_POLL_MAX_SECONDS = 0.5
 # encoding_format = base64 に対応していない（400・422 を返した）接続先の base_url。以後は float で受け取る。
 _float_only: set[str] = set()
 # 再試行を待つ間に should_stop() を確かめる間隔（秒）。
@@ -104,6 +113,7 @@ def embed_texts(
     transport: httpx.BaseTransport | None = None,
     client: httpx.Client | None = None,
     should_stop: Callable[[], bool] | None = None,
+    wait_when_busy: bool | None = None,
 ) -> list[list[float]]:
     """texts の埋め込みベクターを入力と同じ順で返す。
 
@@ -119,6 +129,9 @@ def embed_texts(
         transport: テスト用に差し替える httpx のトランスポート（client を渡したときは使わない）。
         client: open_client() で作ったクライアント。省略時はこの呼び出しの間だけのものを作る。
         should_stop: 再試行を待つ間に確かめ、True を返したら EmbeddingStopped を投げてやめる。
+        wait_when_busy: 全接続先が埋まっているときに空きを待つか（_choose_order）。省略時は kind="document"
+            （取り込み）なら待ち、"query"（検索）なら待たない。止める手段の無い呼び出し（管理アシスタントの索引等）は
+            False を渡すこと。
 
     Raises:
         EmbeddingError: どの接続先からも埋め込みを得られなかった場合
@@ -134,7 +147,8 @@ def embed_texts(
     # 検索は止める手段が無いため、無制限（embedding_max_retries = 0）にはしない。
     max_retries = cfg.vector_db_search_embedding_max_retries if kind == "query" else (cfg.vector_db_embedding_max_retries or None)
     # 検索は AI の応答を待たせるため、接続先が埋まっていても空きを待たずに送る。
-    wait_when_busy = kind == "document"
+    if wait_when_busy is None:
+        wait_when_busy = kind == "document"
     with _client_scope(cfg, client, transport) as http:
         for start in range(0, len(inputs), batch_size):
             vectors.extend(_embed_batch(cfg, http, endpoints, inputs[start : start + batch_size], max_retries, should_stop, wait_when_busy))
@@ -264,9 +278,46 @@ def _claim(key: str | None) -> None:
 
 
 def _release(key: str | None) -> None:
+    """送信中の数を減らし、空きを待っている埋め込み（_choose_order）にすぐ確かめ直させる。"""
+    global _releases
     if key is not None:
         with _routing_lock:
             _inflight[key] = max(0, _inflight.get(key, 0) - 1)
+            _releases += 1
+            _routing_cond.notify_all()
+
+
+def _cond_wait(seconds: float) -> None:
+    """_routing_lock を持った状態で、_release()・待ち行列の変化の知らせを最大 seconds 秒待つ（テストで差し替える）。"""
+    _routing_cond.wait(seconds)
+
+
+def _try_choose(
+    cfg: Config, client: httpx.Client, endpoints: tuple[LLMEndpoint, ...]
+) -> tuple[list[LLMEndpoint], bool] | None:
+    """_endpoint_order() の順に空きを確かめ（_probe_load）、空きのある最初の接続先を先頭にした順を返す
+    （確かめられない接続先・その他の provider は確かめずに選ぶ）。全接続先が埋まっていれば None。
+
+    2つ目の戻り値は、先頭の接続先を送信中として数え済み（_claim）か。
+    """
+    order = _endpoint_order(cfg, endpoints)
+    for i, endpoint in enumerate(order):
+        key = _server_key(endpoint.base_url)
+        load = _probe_load(cfg, client, endpoint)
+        with _routing_lock:
+            inflight = _inflight.get(key, 0) if key is not None else 0
+            chosen = load is None or _has_room(load, inflight)
+            if chosen and key is not None:
+                _inflight[key] = inflight + 1
+        if chosen:
+            return [endpoint] + order[:i] + order[i + 1 :], key is not None
+        logger.debug(
+            "embeddings: %s has no free slot (%s, sending from this process=%d), trying the next endpoint",
+            endpoint.base_url,
+            load,
+            inflight,
+        )
+    return None
 
 
 def _choose_order(
@@ -278,43 +329,59 @@ def _choose_order(
 ) -> tuple[list[LLMEndpoint], bool]:
     """1回のリクエストで試す接続先の順を決める（src/llm/routing.py の _select_endpoint_with_slots_probe と同じ考え方）。
 
-    round_robin / priority_failover では、_endpoint_order() の順に provider="llama_cpp"・"vllm" の
-    接続先の空きを確かめ（_probe_load）、空きが無ければ次点へ回す。確かめられない接続先・
-    その他の provider は確かめずに選ぶ。全接続先が埋まっていれば、wait_when_busy なら
-    [llm].round_robin_busy_poll_interval_seconds 秒ごとに空きが出るまで確かめ直し（should_stop() が
-    True なら EmbeddingStopped）、そうでなければ待たずに並び順の先頭を使う。random は確かめない。
+    round_robin / priority_failover では、_try_choose() で空きのある接続先を選ぶ。全接続先が埋まっていれば、
+    wait_when_busy なら空きが出るまで待ち（should_stop() が True なら EmbeddingStopped）、そうでなければ
+    待たずに並び順の先頭を使う。random は確かめない。
+
+    空きを待つ埋め込みは、同じ接続先の組み合わせごとに待ち始めた順に並べ（_waiters）、先頭だけが空きを確かめる
+    （後から来たリクエストが、先に待っていたものを追い越して空きを取り続けないため。追い越されたファイルは、
+    設定ダッシュボードで「進んでいない」と表示されていた）。先頭は、このプロセスの送信が返ったら（_release）すぐに、
+    ほかのプロセスの負荷で埋まっている間は [llm].round_robin_busy_poll_interval_seconds 秒（最大
+    _BUSY_POLL_MAX_SECONDS 秒。埋め込みは1回が短いため）ごとに確かめ直す。
 
     選んだ接続先を先頭に、残りをエラー時の切り替え先として並べて返す。2つ目の戻り値は、
     先頭の接続先を送信中として数え済み（_claim）か。
     """
-    strategy = cfg.vector_db_embedding_routing_strategy
-    attempt = 0
-    while True:
-        order = _endpoint_order(cfg, endpoints)
-        if strategy == "random":
-            return order, False
-        for i, endpoint in enumerate(order):
-            key = _server_key(endpoint.base_url)
-            load = _probe_load(cfg, client, endpoint)
+    if cfg.vector_db_embedding_routing_strategy == "random":
+        return _endpoint_order(cfg, endpoints), False
+    if not wait_when_busy:
+        chosen = _try_choose(cfg, client, endpoints)
+        return chosen if chosen is not None else (_endpoint_order(cfg, endpoints), False)
+    queue_key = tuple(e.base_url for e in endpoints)
+    ticket = object()
+    with _routing_lock:
+        queue = _waiters.setdefault(queue_key, deque())
+        queue.append(ticket)
+    interval = min(cfg.round_robin_busy_poll_interval_seconds, _BUSY_POLL_MAX_SECONDS)
+    waited = False
+    try:
+        while True:
+            if should_stop is not None and should_stop():
+                raise EmbeddingStopped("Stopped waiting for a free slot of the embedding server because a stop was requested.")
             with _routing_lock:
-                inflight = _inflight.get(key, 0) if key is not None else 0
-                chosen = load is None or _has_room(load, inflight)
-                if chosen and key is not None:
-                    _inflight[key] = inflight + 1
-            if chosen:
-                return [endpoint] + order[:i] + order[i + 1 :], key is not None
-            logger.debug(
-                "embeddings: %s has no free slot (%s, sending from this process=%d), trying the next endpoint",
-                endpoint.base_url,
-                load,
-                inflight,
-            )
-        if not wait_when_busy:
-            return order, False
-        attempt += 1
-        interval = cfg.round_robin_busy_poll_interval_seconds
-        logger.info("embeddings: no free slot on any endpoint, checking again in %g seconds (attempt %d)", interval, attempt)
-        _wait_retry(interval, should_stop)
+                if queue[0] is not ticket:
+                    # 先に待っているものが空きを取るまで待つ（取ったら、または止めたら知らせが来る）。
+                    _cond_wait(_STOP_POLL_SECONDS)
+                    continue
+                releases = _releases
+            chosen = _try_choose(cfg, client, endpoints)
+            if chosen is not None:
+                if waited:
+                    logger.debug("embeddings: got a free slot after waiting")
+                return chosen
+            if not waited:
+                logger.info("embeddings: no free slot on any endpoint, waiting for one (checking every %g seconds)", interval)
+                waited = True
+            with _routing_lock:
+                # 確かめている間に送信が返っていれば、待たずにすぐ確かめ直す。
+                if releases == _releases:
+                    _cond_wait(interval)
+    finally:
+        with _routing_lock:
+            queue.remove(ticket)
+            if not queue and _waiters.get(queue_key) is queue:
+                del _waiters[queue_key]
+            _routing_cond.notify_all()
 
 
 def _mark_failed(endpoint: LLMEndpoint) -> None:

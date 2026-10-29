@@ -282,19 +282,22 @@ async function renderKnowledgePanel(container, name) {
 
   // 取り込み・コピー・削除中（順番待ちを含む）のジョブか、ほかのインスタンスの取り込みが枠を使っている間（と、
   // 終わった直後の1回）だけ表示を更新する（編集中の追加フォームを描き直さないよう、一覧の表と枠の表示だけを差し替える）。
-  // ポーリングはジョブと枠の状態だけを返す軽い API で行い、ジョブが始まった・終わったときだけ一覧（ファイル数の集計・
-  // ほかのインスタンスの参照を読むため重い）を取り直す。状態が前回と同じなら描き直さない。
+  // ポーリングはジョブと枠の状態だけを返す軽い API で行い、ジョブが始まった・終わったときと KNOWLEDGE_FULL_REFRESH_MS ごとに
+  // だけ一覧（ファイル数の集計・ほかのインスタンスの参照を読むため重い）を取り直す。状態が前回と同じなら描き直さない。
   const hasRunning = (d) =>
     d.collections.some((c) => knowledgeJobActive(c.job)) || (d.copy_jobs || []).some(knowledgeJobActive) || knowledgeWorkersBusy(d.workers);
   let wasRunning = hasRunning(data);
   let activeKey = knowledgeActiveJobsKey(knowledgeDataJobs(data));
   let lastStatus = "";
+  let lastFull = Date.now();
   startMonitorPolling(container, async () => {
     if (!wasRunning) return;
     const status = await api(knowledgePath(name, "/jobs"));
     let latest;
-    if (knowledgeActiveJobsKey(Object.values(status.jobs)) !== activeKey) {
+    // 取り込み中も、文書の件数（記録まで終わったファイル）が進み具合とずれ続けないよう、一覧を間隔を空けて取り直す。
+    if (knowledgeActiveJobsKey(Object.values(status.jobs)) !== activeKey || Date.now() - lastFull >= KNOWLEDGE_FULL_REFRESH_MS) {
       latest = await api(knowledgePath(name));
+      lastFull = Date.now();
       lastStatus = "";
     } else {
       const sig = JSON.stringify(status);
@@ -307,6 +310,9 @@ async function renderKnowledgePanel(container, name) {
     draw(latest);
   });
 }
+
+// 取り込み中に一覧（ファイル数の集計を含む重い API）を取り直す間隔（ミリ秒）。間のポーリングはジョブと枠の状態だけを取る。
+const KNOWLEDGE_FULL_REFRESH_MS = 10000;
 
 // 一覧（GET /api/instances/{name}/knowledge）に含まれるジョブ。
 function knowledgeDataJobs(d) {

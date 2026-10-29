@@ -1250,8 +1250,9 @@ class _Job:
     """埋め込みを待っている1ファイル。texts_to_embed()・pages の各埋め込みが返るたびに埋め、全部そろったら書き込む。
 
     requests: このファイルの分を含む、送信中の埋め込みのリクエストの数。
-    changed_at: 最後に進んだ（埋め込みを待ち始めた・リクエストが返った）時刻（time.monotonic()）。
-        送信中なのに長く進まないファイルを、設定ダッシュボードで詰まっているものとして見せるため。
+    changed_at: 最後に進んだ（送信中のリクエストが無い状態から送り始めた・リクエストが返った）時刻（time.monotonic()）。
+        送信中なのに長く進まないファイルを、設定ダッシュボードで詰まっているものとして見せるため。送る順番を待っていた
+        時間は含めない（含めると、順番待ちの長かったファイルが送った直後から詰まっているように見える）。
     stream: 本文のチャンクが _STREAM_MIN_CHUNKS 件を超えるファイル。本文のベクターは全部そろうのを待たず、
         番号順にそろった分から保存先へ書き込み（_Writer.append_chunks）、メモリーにはためない
         （業務データの数十万チャンクの1ファイルでも、ベクターでメモリーを使い切らないため）。
@@ -1598,7 +1599,11 @@ class _Pipeline:
         self._track(future, "embed", index)
         self.embeds[future] = (kind, items)
         with self._jobs_lock:
+            now = time.monotonic()
             for job in _jobs_of(items):
+                if not job.requests:
+                    # 送る順番を待っていた時間は「進んでいない」に数えない（_Job.changed_at 参照）。
+                    job.changed_at = now
                 job.requests += 1
         return True
 

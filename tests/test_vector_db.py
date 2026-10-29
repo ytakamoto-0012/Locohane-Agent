@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import deque
 import os
+import threading
 
 import httpx
 import pytest
@@ -583,9 +585,13 @@ def _no_embedding_retry_wait(monkeypatch):
     """埋め込みの再試行の待ちを実際には眠らずに記録し、接続先の選び方の状態をテストごとに初期化する。"""
     sleeps: list[float] = []
     monkeypatch.setattr(embeddings, "_sleep", sleeps.append)
+    # 空きを待つ間の通知待ち（_routing_lock を持ったまま呼ばれる）も眠らずに記録する。
+    monkeypatch.setattr(embeddings, "_cond_wait", sleeps.append)
     monkeypatch.setattr(embeddings, "_round_robin_counters", {})
     monkeypatch.setattr(embeddings, "_failed_until", {})
     monkeypatch.setattr(embeddings, "_inflight", {})
+    monkeypatch.setattr(embeddings, "_waiters", {})
+    monkeypatch.setattr(embeddings, "_releases", 0)
     return sleeps
 
 
@@ -790,12 +796,63 @@ def test_embed_document_waits_for_free_slot_but_query_does_not(tmp_path, _no_emb
     )
     transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [0, 0, 1], "b": [0]})
     embed_texts(cfg, ["x"], kind="document", transport=transport)
-    assert calls == ["a"] and sum(_no_embedding_retry_wait) == pytest.approx(3.0)
+    # 埋め込みは1回が短いため、確かめ直す間隔は round_robin_busy_poll_interval_seconds によらず最大 0.5 秒。
+    assert calls == ["a"] and _no_embedding_retry_wait == [embeddings._BUSY_POLL_MAX_SECONDS] * 2
+    assert embeddings._waiters == {}
 
     _no_embedding_retry_wait.clear()
     transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [0], "b": [0]})
     embed_texts(cfg, ["x"], kind="query", transport=transport)
     assert calls == ["a"] and _no_embedding_retry_wait == []
+
+    # 管理アシスタントの索引のように止める手段の無い呼び出しは、document でも待たない。
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [0], "b": [0]})
+    embed_texts(cfg, ["x"], kind="document", transport=transport, wait_when_busy=False)
+    assert calls == ["a"] and _no_embedding_retry_wait == []
+
+
+def test_embed_busy_wait_rechecks_at_once_when_own_request_returns(tmp_path, _no_embedding_retry_wait):
+    """空きを確かめている間にこのプロセスの送信が返っていれば、間隔を空けずに確かめ直す。"""
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_provider_endpoints("llama_cpp", "a"))
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [0, 1]})
+    probe = transport.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET" and embeddings._releases == 0:
+            embeddings._release("http://other")  # 別のスレッドの送信が返った
+        return probe(request)
+
+    embed_texts(cfg, ["x"], kind="document", transport=httpx.MockTransport(handler))
+    assert calls == ["a"] and _no_embedding_retry_wait == []
+
+
+def test_embed_busy_wait_is_first_come_first_served(tmp_path, _no_embedding_retry_wait):
+    """先に空きを待っているものがあれば、後から来た取り込みの埋め込みは空きを確かめずにその後ろで待つ。"""
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_provider_endpoints("llama_cpp", "a"))
+    probes: list[str] = []
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [1]})
+    inner = transport.handler
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            probes.append(request.url.host)
+        return inner(request)
+
+    earlier = object()
+    embeddings._waiters[("http://a/v1",)] = deque([earlier])
+    checks = 0
+
+    def should_stop() -> bool:
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            assert probes == []  # 先頭でない間は確かめない
+            embeddings._waiters[("http://a/v1",)].remove(earlier)  # 先のものが空きを取った
+        return False
+
+    embed_texts(cfg, ["x"], kind="document", transport=httpx.MockTransport(handler), should_stop=should_stop)
+    assert probes == ["a"] and calls == ["a"]
+    assert _no_embedding_retry_wait == [embeddings._STOP_POLL_SECONDS] * 2 and embeddings._waiters == {}
 
 
 def test_embed_busy_wait_stops_when_requested(tmp_path, _no_embedding_retry_wait):
@@ -1495,3 +1552,21 @@ def test_list_source_files_skips_hidden_files_and_folders(tmp_path):
     (tmp_path / "sub" / "d.md").write_text("d", encoding="utf-8")
     files = ingest.list_source_files(tmp_path, True, (".md",))
     assert [p.relative_to(tmp_path).as_posix() for p in files] == ["a.md", "sub/d.md"]
+
+
+def test_embedding_files_do_not_count_time_waiting_to_be_sent_as_stalled(tmp_path):
+    """送る順番を長く待っていたファイルも、送った直後は「進んでいない」（idle_seconds が大きい）にしない。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from pathlib import Path
+
+    slots = ingest.IngestSlots(1, 0, 1)
+    pipeline = ingest._Pipeline.__new__(ingest._Pipeline)
+    pipeline.slots, pipeline.slot_user = slots, slots.join("i", "c")
+    pipeline.embeds, pipeline._jobs, pipeline._jobs_lock = {}, {}, threading.Lock()
+    job = ingest._Job(ingest._Prepared(Path("a.txt"), None, "text", "path_only", path_text="a.txt"))
+    job.changed_at -= 300  # 準備が終わってから 300 秒、送る順番を待っていた
+    pipeline._jobs[id(job)] = job
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        assert pipeline._submit_embed(pool, "text", [(job, 0)], "a.txt", lambda: [[0.0]])
+    (state,) = pipeline.embedding_files()
+    assert state["requests"] == 1 and state["idle_seconds"] < 5

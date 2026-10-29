@@ -1195,7 +1195,7 @@ embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not
 `round_robin` (default), `random` and `priority_failover` as `[llm] main_routing_strategy`). With `round_robin` and `priority_failover`, it checks whether an endpoint is free before sending,
 and moves on to the next endpoint if it is full (`provider = "llama_cpp"` counts the free slots with GET /slots, subtracting the requests this process is sending;
 `provider = "vllm"` checks whether `vllm:num_requests_waiting` of GET /metrics is 0; other providers, and cases where it cannot be checked, are treated as free).
-When all endpoints are full, ingestion waits until one is free, checking every `[llm] round_robin_busy_poll_interval_seconds` seconds (it can be stopped with "Stop"),
+When all endpoints are full, ingestion waits until one is free (it can be stopped with "Stop"; waiting requests use free slots in the order they started waiting, and are rechecked as soon as a request of this process returns, otherwise every `[llm] round_robin_busy_poll_interval_seconds` seconds, at most 0.5 seconds because an embedding is short),
 and search sends to the first in the order without waiting. The timeout of the check is `[llm] round_robin_slots_probe_timeout_seconds`. With any strategy, when it cannot connect or
 a non-200 HTTP is returned, the same request is resent to the next endpoint, and with `priority_failover` an endpoint that returned an error is put at the back for 60 seconds.
 When all endpoints error, it waits `embedding_retry_interval_seconds` (default 10) seconds and tries all endpoints again, repeating this

@@ -855,7 +855,8 @@ def build_router(
         """name のジョブ（コレクション名 → IngestJob.to_dict()）と取り込みの枠の状態だけを返す（取り込み中の画面のポーリング用）。
 
         GET /api/instances/{name}/knowledge と違い、設定・カタログ（ファイル数の集計）・ほかのインスタンスの参照を読まない
-        （大量の取り込みを同時に動かしている間も軽く返すため）。件数等は、ジョブが始まった・終わったときに画面が一覧を取り直す。
+        （大量の取り込みを同時に動かしている間も軽く返すため）。件数等は、ジョブが始まった・終わったときと、取り込み中は
+        10 秒ごと（admin/static/knowledge.js の KNOWLEDGE_FULL_REFRESH_MS）に画面が一覧を取り直す。
         """
         _check_app_instance(name)
         return {"jobs": {c: j.to_dict() for c, j in jobs.for_instance(name).items()}, "workers": slots.snapshot()}
