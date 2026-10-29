@@ -48,6 +48,8 @@ async function renderAdminSettings(notice = "") {
 
   // --- ナレッジの取り込み ---
   const number = (name, min) => el("input", { type: "number", min: String(min), value: byKey[name].value });
+  // 0 より大きい小数（秒・MB）。下限の確認はサーバー側（admin/admin_settings.py の positive_float）。
+  const decimal = (name) => el("input", { type: "number", min: "0", step: "any", value: byKey[name].value });
   container.append(el("h3", { text: _t("ナレッジの取り込み") }));
   container.append(
     field("vector_db.ingest_workers", _t("取り込みの並列数"), number("vector_db.ingest_workers", 1), [
@@ -67,9 +69,34 @@ async function renderAdminSettings(notice = "") {
     ])
   );
   container.append(
+    field("vector_db.scan_workers", _t("取り込み元フォルダの走査の並列数"), number("vector_db.scan_workers", 1), [
+      _t("取り込み元フォルダを走査するときに、同時に読むフォルダの数です。ファイルサーバー（ネットワーク共有）上のフォルダは並列に読むと速くなります（ローカルのディスクでは効果は小さい）。"),
+    ])
+  );
+  container.append(
+    field("vector_db.max_files_per_collection", _t("1コレクションの最大ファイル数"), number("vector_db.max_files_per_collection", 1), [
+      _t("取り込み元にこれより多くのファイルがあると、上限までのファイルだけを取り込み、ナレッジ画面に警告を出します。取り込みでは対象のファイルをメモリーに持つため（100万件で数 GB 程度）、管理ツールのメモリーを使いすぎないための上限です。"),
+    ])
+  );
+  container.append(
+    field("vector_db.max_file_mb", _t("1ファイルの上限サイズ（MB）"), decimal("vector_db.max_file_mb"), [
+      _t("これより大きいファイルは取り込まず、失敗一覧に理由を載せます。"),
+    ])
+  );
+  container.append(
+    field("vector_db.office_timeout_seconds", _t("Office の PDF 書き出しの上限秒数"), decimal("vector_db.office_timeout_seconds"), [
+      _t("[vector_db] image_input = true で Office ファイルを PDF に書き出す1回の上限秒数です。超えたら見えない確認画面で止まったものとして Office のプロセスを終了し、そのファイルを失敗一覧に載せます。数百ページの文書で足りなければ大きくしてください。"),
+    ])
+  );
+  container.append(
     field("vector_db.qdrant_max_retries", _t("Qdrant への送り直しの回数"), number("vector_db.qdrant_max_retries", -1), [
       _t("[vector_db] backend = qdrant のとき、Qdrant へ接続できない・接続を切られた・タイムアウトした・一時的なエラー（5xx・408・429）が返ったときに、[vector_db] qdrant_retry_interval_seconds 秒待って同じリクエストを送り直す回数です。-1 なら成功するまで無制限に送り直し（取り込み・コピーはナレッジ画面の「停止」で止められます）、0 なら送り直しません。"),
       _t("検索（AI が文書を探すとき）は止める手段が無いため、この値によらず最大1回だけ送り直します。"),
+    ])
+  );
+  container.append(
+    field("vector_db.qdrant_retry_interval_seconds", _t("Qdrant への送り直しの間隔（秒）"), decimal("vector_db.qdrant_retry_interval_seconds"), [
+      _t("上の送り直しで、次に送るまで待つ秒数です（0 より大きい数）。検索の送り直しは、この値によらず最大1秒です。"),
     ])
   );
 

@@ -53,6 +53,11 @@ ADMIN_SETTING_KEYS = frozenset(
         ("vector_db", "ingest_processes"),
         ("vector_db", "ingest_embed_requests"),
         ("vector_db", "qdrant_max_retries"),
+        ("vector_db", "qdrant_retry_interval_seconds"),
+        ("vector_db", "scan_workers"),
+        ("vector_db", "max_files_per_collection"),
+        ("vector_db", "office_timeout_seconds"),
+        ("vector_db", "max_file_mb"),
         ("admin", "assistant_llm_instance"),
         ("admin", "assistant_embedding_instance"),
     }
@@ -506,7 +511,7 @@ class Config:
             vector_db_qdrant_retry_interval_seconds 秒待って同じリクエストを送り直す回数。-1 なら成功するまで無制限
             （取り込みは「停止」で止められる）。0 なら送り直さない。管理者設定（全インスタンス共通）。
             検索は止める手段が無いため、この値によらず最大1回だけ送り直す（qdrant_store.SEARCH_MAX_RETRIES）。
-        vector_db_qdrant_retry_interval_seconds: 上記の送り直しの間隔（秒）。
+        vector_db_qdrant_retry_interval_seconds: 上記の送り直しの間隔（秒）。管理者設定（全インスタンス共通）。
         vector_db_qdrant_preset: Qdrant のコレクションの規模別の設定（VECTOR_DB_QDRANT_PRESETS
             のいずれか。none は Qdrant の既定のまま）。
         vector_db_distance: コレクションを作るときの距離関数（VECTOR_DB_DISTANCES の
@@ -533,7 +538,7 @@ class Config:
             隣り合うチャンクの重複文字数。
         vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。画像ファイルは
             vector_db_image_input が False ならファイルパスだけを登録する。
-        vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。
+        vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。管理者設定（全インスタンス共通）。
         vector_db_image_input: True なら image_input_extensions の文書をページごとの画像にし、それ以外の Office ファイルは
             中の画像を取り出して（embedded_images）、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
             （マルチモーダルの埋め込みモデルが必要）。
@@ -545,14 +550,14 @@ class Config:
             0 なら大きさで除かない。
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
         vector_db_office_timeout_seconds: image_input で Office ファイルを PDF に書き出す1回の上限秒数。
-            超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。
+            超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。管理者設定（全インスタンス共通）。
         vector_db_ingest_workers: 取り込みで並列に準備するファイル数（ingest_processes が 1 以上ならその数）。
         vector_db_ingest_processes: 取り込みで本文の抽出・ページの画像化を行う子プロセスの数。
             0 なら子プロセスを使わず、ワーカースレッドで行う。
         vector_db_ingest_embed_requests: 取り込みで同時に送る埋め込みのリクエスト数。0 なら ingest_workers と同じ。
-        vector_db_scan_workers: 取り込み元フォルダを走査するときに、同時に読むフォルダの数（スレッド数）。
+        vector_db_scan_workers: 取り込み元フォルダを走査するときに、同時に読むフォルダの数（スレッド数）。管理者設定（全インスタンス共通）。
         vector_db_max_files_per_collection: 1コレクションで取り込む最大ファイル数。超えた分は取り込まず、
-            ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ）。
+            ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ）。管理者設定（全インスタンス共通）。
         vector_db_top_k: search_documents の既定の返却件数。
         vector_db_max_result_chars: search_documents の結果全体の最大文字数。
         vector_db_min_score: search_documents の結果に出す類似度の下限（本文のチャンク）。
@@ -3322,7 +3327,7 @@ def load_config(
             "[vector_db].embedding_timeout_seconds",
         ),
         vector_db_embedding_routing_strategy=_as_routing_strategy(
-            os.getenv("VECTOR_DB_EMBEDDING_ROUTING_STRATEGY", vector_db.get("embedding_routing_strategy", "priority_failover")),
+            os.getenv("VECTOR_DB_EMBEDDING_ROUTING_STRATEGY", vector_db.get("embedding_routing_strategy", "round_robin")),
             "embedding_routing_strategy",
             section="vector_db",
         ),
@@ -3358,7 +3363,7 @@ def load_config(
         ),
         vector_db_embedded_images=_as_bool(os.getenv("VECTOR_DB_EMBEDDED_IMAGES", vector_db.get("embedded_images", True))),
         vector_db_embedded_image_min_px=_non_negative_int(
-            os.getenv("VECTOR_DB_EMBEDDED_IMAGE_MIN_PX", vector_db.get("embedded_image_min_px", 64)), "[vector_db].embedded_image_min_px"
+            os.getenv("VECTOR_DB_EMBEDDED_IMAGE_MIN_PX", vector_db.get("embedded_image_min_px", 128)), "[vector_db].embedded_image_min_px"
         ),
         vector_db_image_dpi=_positive_int(os.getenv("VECTOR_DB_IMAGE_DPI", vector_db.get("image_dpi", 100)), "[vector_db].image_dpi"),
         vector_db_office_timeout_seconds=_positive_float(

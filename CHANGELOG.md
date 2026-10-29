@@ -18,11 +18,18 @@
   （コレクション名・取り込み元フォルダ・文書数・埋め込みモデル・最終取り込み・次回の自動取り込み・状態。選んだ並びはブラウザに保存）。
 - Qdrant へ接続できない・接続を切られた・タイムアウトした・一時的なエラー（5xx・408・429）が返ったときに、時間を置いて
   送り直すようにしました。回数は「管理者設定」の「Qdrant への送り直しの回数」（`[vector_db] qdrant_max_retries`、既定5。
-  `-1` で無制限、`0` で送り直さない）、間隔は `[vector_db] qdrant_retry_interval_seconds`（既定10秒）で変えられます。
+  `-1` で無制限、`0` で送り直さない）、間隔は「Qdrant への送り直しの間隔」（`[vector_db] qdrant_retry_interval_seconds`、既定10秒）で変えられます。
   取り込み・コピーは送り直しを待つ間も「停止」で止められます。検索は応答が返らなくならないよう、最大1回だけ送り直します。
 
 ### 変更
 
+- `[vector_db] scan_workers`・`max_files_per_collection`・`max_file_mb`・`office_timeout_seconds`・`qdrant_retry_interval_seconds` を
+  全インスタンス共通の設定にし、設定ダッシュボードの「管理者設定」で変えるようにしました（インスタンスごとの config.ini タブには
+  出ず、インスタンス別の `config_overrides.json` に書いた値は使われません）。
+- `[vector_db] embedding_routing_strategy` の既定値を `priority_failover` から `round_robin` にしました（`embedding_url` を
+  複数書いたとき、既定で接続先へ負荷を分けるため）。
+- `[vector_db] embedded_image_min_px` の既定値を 64 から 128 にしました（Office ファイルの中の小さなアイコン・飾りの画像を
+  埋め込まないため。取り込み済みのファイルへ反映するには「再構築」します）。
 - `[vector_db] qdrant_timeout_seconds` の既定値を 30 秒から 120 秒にしました（取り込みは書き込みの反映を待つため、
   大きなコレクションや索引の作り直し中に 30 秒では足りないことがあるため）。config.ini で値を書き換えている場合はそのままです。
 

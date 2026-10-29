@@ -157,20 +157,20 @@ def test_admin_catalog_offers_qdrant_preset_choices():
 
 def test_embedding_retry_and_routing_defaults_and_validation(tmp_path):
     cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
-    assert cfg.vector_db_embedding_routing_strategy == "priority_failover"
+    assert cfg.vector_db_embedding_routing_strategy == "round_robin"
     assert cfg.vector_db_embedding_max_retries == 3
     assert cfg.vector_db_search_embedding_max_retries == 2
     assert cfg.vector_db_embedding_retry_interval_seconds == 10.0
     cfg = _load(
         tmp_path,
         {
-            "embedding_routing_strategy": "round_robin",
+            "embedding_routing_strategy": "priority_failover",
             "embedding_max_retries": "0",
             "search_embedding_max_retries": "0",
             "embedding_retry_interval_seconds": "2.5",
         },
     )
-    assert cfg.vector_db_embedding_routing_strategy == "round_robin"
+    assert cfg.vector_db_embedding_routing_strategy == "priority_failover"
     assert cfg.vector_db_embedding_max_retries == 0
     assert cfg.vector_db_search_embedding_max_retries == 0
     assert cfg.vector_db_embedding_retry_interval_seconds == 2.5
@@ -213,11 +213,14 @@ def test_qdrant_retries_and_timeout_defaults_and_validation(tmp_path, monkeypatc
     with pytest.raises(ValueError, match="qdrant_max_retries"):
         load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
     monkeypatch.delenv("VECTOR_DB_QDRANT_MAX_RETRIES")
-    # 全インスタンス共通のため、config_overrides.json の値は使わない（送り直しの間隔はインスタンス別に変えられる）。
+    # 全インスタンス共通のため、config_overrides.json の値は使わない（送り直しの間隔も同じ）。
     cfg = _load(tmp_path, {"qdrant_max_retries": "-1", "qdrant_retry_interval_seconds": "3"})
-    assert (cfg.vector_db_qdrant_max_retries, cfg.vector_db_qdrant_retry_interval_seconds) == (5, 3)
+    assert (cfg.vector_db_qdrant_max_retries, cfg.vector_db_qdrant_retry_interval_seconds) == (5, 10)
+    monkeypatch.setenv("VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS", "3")
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_qdrant_retry_interval_seconds == 3
+    monkeypatch.setenv("VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS", "0")
     with pytest.raises(ValueError, match="qdrant_retry_interval_seconds"):
-        _load(tmp_path, {"qdrant_retry_interval_seconds": "0"})
+        load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
 
 
 def test_ingest_parallelism_ignores_instance_overrides(tmp_path):
@@ -241,12 +244,41 @@ def test_embedding_encoding_format_and_ingest_processes(tmp_path, monkeypatch):
         _load(tmp_path, {})
 
 
-def test_scan_workers_and_max_files_per_collection(tmp_path):
+_SHARED_INGEST_ENVS = (
+    "VECTOR_DB_SCAN_WORKERS",
+    "VECTOR_DB_MAX_FILES_PER_COLLECTION",
+    "VECTOR_DB_MAX_FILE_MB",
+    "VECTOR_DB_OFFICE_TIMEOUT_SECONDS",
+)
+
+
+def test_scan_workers_and_file_limits_defaults_and_validation(tmp_path, monkeypatch):
+    for name in _SHARED_INGEST_ENVS:
+        monkeypatch.delenv(name, raising=False)
     cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
-    assert (cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection) == (8, 1000000)
-    cfg = _load(tmp_path, {"scan_workers": "16", "max_files_per_collection": "5000"})
-    assert (cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection) == (16, 5000)
-    with pytest.raises(ValueError, match="scan_workers"):
-        _load(tmp_path, {"scan_workers": "0"})
-    with pytest.raises(ValueError, match="max_files_per_collection"):
-        _load(tmp_path, {"max_files_per_collection": "0"})
+    assert (
+        cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection, cfg.vector_db_max_file_mb, cfg.vector_db_office_timeout_seconds
+    ) == (8, 1000000, 50, 180)
+    for name, value in zip(_SHARED_INGEST_ENVS, ("16", "5000", "2.5", "30")):
+        monkeypatch.setenv(name, value)
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert (
+        cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection, cfg.vector_db_max_file_mb, cfg.vector_db_office_timeout_seconds
+    ) == (16, 5000, 2.5, 30)
+    for name, key in zip(_SHARED_INGEST_ENVS, ("scan_workers", "max_files_per_collection", "max_file_mb", "office_timeout_seconds")):
+        monkeypatch.setenv(name, "0")
+        with pytest.raises(ValueError, match=key):
+            load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+        monkeypatch.delenv(name)
+
+
+def test_scan_workers_and_file_limits_ignore_instance_overrides(tmp_path, monkeypatch):
+    """全インスタンス共通の設定（管理者設定）のため、config_overrides.json の値は使わない。"""
+    for name in _SHARED_INGEST_ENVS:
+        monkeypatch.delenv(name, raising=False)
+    cfg = _load(
+        tmp_path, {"scan_workers": "16", "max_files_per_collection": "5000", "max_file_mb": "2", "office_timeout_seconds": "30"}
+    )
+    assert (
+        cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection, cfg.vector_db_max_file_mb, cfg.vector_db_office_timeout_seconds
+    ) == (8, 1000000, 50, 180)

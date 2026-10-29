@@ -8,7 +8,9 @@ config.ini の後・インスタンス別の上書きの前に重ねる（src/co
 - [vector_db] ingest_workers・ingest_processes・ingest_embed_requests: ナレッジの取り込みの並列数（全インスタンス・全コレクションの合計。
   admin/knowledge.py は取り込みを始めるたびに読み直す）。
 - [vector_db] qdrant_max_retries: Qdrant へ接続できない・接続を切られたときに送り直す回数（-1 は無制限。取り込み・コピー・削除を
-  始めるたびに読み直す。検索は最大1回）。
+  始めるたびに読み直す。検索は最大1回）。qdrant_retry_interval_seconds はその間隔。
+- [vector_db] scan_workers・max_files_per_collection・office_timeout_seconds・max_file_mb: 取り込み元の走査の並列数・
+  1コレクションの最大ファイル数・Office の PDF 書き出しの上限秒数・1ファイルの上限サイズ（取り込みを始めるたびに読み直す）。
 - [admin] assistant_llm_instance・assistant_embedding_instance: 「AIに相談」が回答・検索に使うインスタンス
   （admin/assistant.py は相談のたびに読み直す）。
 """
@@ -18,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -42,7 +45,7 @@ class SettingSpec:
     section: str
     key: str
     env: str
-    kind: str  # positive_int / non_negative_int / retry_count（-1 は無制限）/ instance（空はなし）
+    kind: str  # positive_int / non_negative_int / retry_count（-1 は無制限）/ positive_float（0 より大きい数）/ instance（空はなし）
 
 
 # 整数の項目の下限。
@@ -52,7 +55,12 @@ SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("vector_db", "ingest_workers", "VECTOR_DB_INGEST_WORKERS", "positive_int"),
     SettingSpec("vector_db", "ingest_processes", "VECTOR_DB_INGEST_PROCESSES", "non_negative_int"),
     SettingSpec("vector_db", "ingest_embed_requests", "VECTOR_DB_INGEST_EMBED_REQUESTS", "non_negative_int"),
+    SettingSpec("vector_db", "scan_workers", "VECTOR_DB_SCAN_WORKERS", "positive_int"),
+    SettingSpec("vector_db", "max_files_per_collection", "VECTOR_DB_MAX_FILES_PER_COLLECTION", "positive_int"),
+    SettingSpec("vector_db", "max_file_mb", "VECTOR_DB_MAX_FILE_MB", "positive_float"),
+    SettingSpec("vector_db", "office_timeout_seconds", "VECTOR_DB_OFFICE_TIMEOUT_SECONDS", "positive_float"),
     SettingSpec("vector_db", "qdrant_max_retries", "VECTOR_DB_QDRANT_MAX_RETRIES", "retry_count"),
+    SettingSpec("vector_db", "qdrant_retry_interval_seconds", "VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS", "positive_float"),
     SettingSpec("admin", "assistant_llm_instance", "ADMIN_ASSISTANT_LLM_INSTANCE", "instance"),
     SettingSpec("admin", "assistant_embedding_instance", "ADMIN_ASSISTANT_EMBEDDING_INSTANCE", "instance"),
 )
@@ -91,6 +99,11 @@ def _write(path: Path, data: dict) -> None:
         raise
 
 
+def _format_float(value: float) -> str:
+    """整数なら "10.0" ではなく "10" と書く（config.ini の既定値と同じなら上書きとして持たないため）。"""
+    return str(int(value)) if value.is_integer() else str(value)
+
+
 def validate(values: dict[str, Any], instance_names: list[str]) -> dict[tuple[str, str], str]:
     """画面の値（"<section>.<key>" → 値）を検証して {(section, key): config.ini に書く形の文字列} にする。"""
     result: dict[tuple[str, str], str] = {}
@@ -108,6 +121,14 @@ def validate(values: dict[str, Any], instance_names: list[str]) -> dict[tuple[st
             if number < minimum:
                 raise ValueError(_t("[{0}].{1} は {2} 以上にしてください。", spec.section, spec.key, minimum))
             result[(spec.section, spec.key)] = str(number)
+        elif spec.kind == "positive_float":
+            try:
+                value = float(str(raw).strip())
+            except ValueError as exc:
+                raise ValueError(_t("[{0}].{1} は数値にしてください。", spec.section, spec.key)) from exc
+            if not math.isfinite(value) or value <= 0:
+                raise ValueError(_t("[{0}].{1} は 0 より大きい数にしてください。", spec.section, spec.key))
+            result[(spec.section, spec.key)] = _format_float(value)
         else:
             text = str(raw or "").strip()
             if text and text not in instance_names:
@@ -188,7 +209,12 @@ def build_router(
             ("vector_db", "ingest_workers"): str(effective.vector_db_ingest_workers),
             ("vector_db", "ingest_processes"): str(effective.vector_db_ingest_processes),
             ("vector_db", "ingest_embed_requests"): str(effective.vector_db_ingest_embed_requests),
+            ("vector_db", "scan_workers"): str(effective.vector_db_scan_workers),
+            ("vector_db", "max_files_per_collection"): str(effective.vector_db_max_files_per_collection),
+            ("vector_db", "max_file_mb"): _format_float(effective.vector_db_max_file_mb),
+            ("vector_db", "office_timeout_seconds"): _format_float(effective.vector_db_office_timeout_seconds),
             ("vector_db", "qdrant_max_retries"): str(effective.vector_db_qdrant_max_retries),
+            ("vector_db", "qdrant_retry_interval_seconds"): _format_float(effective.vector_db_qdrant_retry_interval_seconds),
             ("admin", "assistant_llm_instance"): effective.admin_assistant_llm_instance,
             ("admin", "assistant_embedding_instance"): effective.admin_assistant_embedding_instance,
         }

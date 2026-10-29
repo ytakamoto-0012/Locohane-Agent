@@ -442,7 +442,7 @@ function knowledgeJobCell(job, maxFileMb, workers) {
           class: "warn-box",
           text:
             _t(`{0} 件は上限サイズ（[vector_db] max_file_mb = {1}MB。Locohane 側の制限）を超えたため取り込んでいません。`, r.too_large, maxFileMb) +
-            _t("config.ini タブ（「ベクターDB」プリセット）で max_file_mb を大きくしてから「取り込み（差分）」を実行し直すと取り込めます。"),
+            _t("設定ダッシュボードの「管理者設定」で max_file_mb を大きくしてから「取り込み（差分）」を実行し直すと取り込めます。"),
         })
       );
     }
@@ -456,7 +456,7 @@ function knowledgeJobCell(job, maxFileMb, workers) {
         text:
           _t(`取り込み元に {0} 件のファイルがあり、1コレクションの上限（config.ini [vector_db] max_files_per_collection = {1}）を`, r.found_files, r.max_files) +
           _t(`超えたため、{0} 件は取り込んでいません（取り込み済みのファイルを優先し、残りはパス順の先頭から選んでいます）。`, r.over_limit) +
-          _t("config.ini タブ（「ベクターDB」プリセット）で max_files_per_collection を大きくしてから「取り込み（差分）」を実行し直すと取り込めます") +
+          _t("設定ダッシュボードの「管理者設定」で max_files_per_collection を大きくしてから「取り込み（差分）」を実行し直すと取り込めます") +
           _t("（取り込み中は対象のファイルの一覧をメモリーに持つため、管理ツールの PC のメモリーに注意してください）。") +
           _t("コレクションを取り込み元のフォルダごとに分けることもできます。"),
       })

@@ -337,7 +337,7 @@ def _watchdog(pid: int | None, seconds: float | None, path: Path):
         if fired.is_set():
             raise OfficeTimeout(
                 f"Office export to PDF did not finish within {seconds:g} seconds and was aborted (stopped at a confirmation dialog, etc.; "
-                f"the limit can be changed with [vector_db] office_timeout_seconds): {path.name}"
+                f"the limit can be changed with [vector_db] office_timeout_seconds in \"Admin settings\"): {path.name}"
             )
 
 

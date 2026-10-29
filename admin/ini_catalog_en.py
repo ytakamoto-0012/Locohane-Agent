@@ -848,7 +848,8 @@ DESCRIPTIONS: dict[str, str] = {
         'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
     ),
     'vector_db.qdrant_retry_interval_seconds': (
-        'Interval (seconds) between the retries above.'
+        'Interval (seconds) between the retries above.\n'
+        'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
     ),
     'vector_db.qdrant_preset': (
         'With backend = qdrant, Qdrant collection settings matched to the expected scale of the number of chunks (body text or images of one collection). One of these 11 values:\n'
@@ -888,9 +889,9 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'vector_db.embedding_routing_strategy': (
         'How to choose when there are several embedding_url entries. The same 3 values as [llm] main_routing_strategy (no check for free slots with GET /slots):\n'
-        'round_robin       : rotate the first endpoint one by one per request (for spreading the load over several machines with ingest_workers set to 2 or more).\n'
+        'round_robin       : rotate the first endpoint one by one per request (default; for spreading the load over several machines with ingest_workers set to 2 or more).\n'
         'random            : choose randomly per request.\n'
-        'priority_failover : always use the first one, and put an endpoint that returned an error at the back for 60 seconds and use the next one (default).\n'
+        'priority_failover : always use the first one, and put an endpoint that returned an error at the back for 60 seconds and use the next one.\n'
         'Whichever you choose, when an error is returned the same request is resent to the next endpoint.'
     ),
     'vector_db.embedding_max_retries': (
@@ -966,7 +967,8 @@ DESCRIPTIONS: dict[str, str] = {
         'Files whose text cannot be extracted (image-only PDFs, etc.) are not treated as failures either; only the file path is registered.'
     ),
     'vector_db.max_file_mb': (
-        'Size limit per file (MB). Larger files are not ingested, and the reason is listed in the failure list.'
+        'Size limit per file (MB). Larger files are not ingested, and the reason is listed in the failure list.\n'
+        'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
     ),
     'vector_db.image_input': (
         'Whether to input images to the embeddings (true/false).\n'
@@ -1011,7 +1013,8 @@ DESCRIPTIONS: dict[str, str] = {
     'vector_db.office_timeout_seconds': (
         'With image_input = true, the limit in seconds for one export of an Office file to PDF (a value greater than 0). When exceeded, it is considered stuck on an invisible dialog\n'
         '(password input, "a serious error occurred the last time it was opened", etc.), the process of that Office application (Word / PowerPoint /\n'
-        'Excel) is terminated, and the file is listed in the failure list. If the time is not enough for documents of hundreds of pages, increase it.'
+        'Excel) is terminated, and the file is listed in the failure list. If the time is not enough for documents of hundreds of pages, increase it.\n'
+        'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
     ),
     'vector_db.ingest_workers': (
         'Ingestion parallelism (1 or more). The number of files prepared in parallel (reading, extracting text, rendering images; the value of ingest_processes when it is 1 or more).\n'
@@ -1045,14 +1048,16 @@ DESCRIPTIONS: dict[str, str] = {
     'vector_db.scan_workers': (
         'Number of folders read at the same time when scanning the source folder (threads, 1 or more). Each differential ingestion reads all folders of the source\n'
         'to find changed files. Folders on file servers (network shares) have a large round-trip\n'
-        'latency per folder read, so reading in parallel makes it faster (the effect is small on local disks).'
+        'latency per folder read, so reading in parallel makes it faster (the effect is small on local disks).\n'
+        'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
     ),
     'vector_db.max_files_per_collection': (
         'Maximum number of files ingested per collection (1 or more). If the source has more files than this, only files up to the limit are ingested,\n'
         'and a warning is shown on the Knowledge screen (already ingested files take priority, and the remaining slots are taken from the start of the new files in path order,\n'
         'so the selected files do not change between ingestions. Files not ingested because of the limit are not treated as deleted as long as they are in the folder).\n'
         'Ingestion keeps the target files and the records of ingested files in memory (a few GB for 1 million), so this is a limit to keep the admin tool\n'
-        'from using too much memory. For large document sets, split collections per source folder.'
+        'from using too much memory. For large document sets, split collections per source folder.\n'
+        'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
     ),
     'vector_db.top_k': (
         'Number of results search_documents returns by default.'

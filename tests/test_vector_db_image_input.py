@@ -285,7 +285,7 @@ def test_config_reads_image_input(tmp_path, monkeypatch):
     cfg = load_config(overrides_path=path, instance_name="inst1")
     assert (cfg.vector_db_image_input, cfg.vector_db_image_dpi) == (True, 150)
     assert default.vector_db_image_input_extensions == (".pdf",)
-    assert (default.vector_db_embedded_images, default.vector_db_embedded_image_min_px) == (True, 64)
+    assert (default.vector_db_embedded_images, default.vector_db_embedded_image_min_px) == (True, 128)
     path.write_text(json.dumps({"vector_db": {"image_input_extensions": "PDF, .xlsx"}}), encoding="utf-8")
     assert load_config(overrides_path=path, instance_name="inst1").vector_db_image_input_extensions == (".pdf", ".xlsx")
     path.write_text(json.dumps({"vector_db": {"image_input_extensions": ""}}), encoding="utf-8")

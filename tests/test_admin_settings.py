@@ -115,6 +115,11 @@ def test_get_save_and_reset(env):
         {"vector_db.ingest_processes": -1},
         {"vector_db.qdrant_max_retries": -2},
         {"vector_db.qdrant_max_retries": "unlimited"},
+        {"vector_db.qdrant_retry_interval_seconds": 0},
+        {"vector_db.max_file_mb": "nan"},
+        {"vector_db.office_timeout_seconds": "x"},
+        {"vector_db.scan_workers": 0},
+        {"vector_db.max_files_per_collection": 1.5},
         {"admin.assistant_llm_instance": "missing"},
     ],
 )
@@ -131,6 +136,33 @@ def test_qdrant_max_retries_accepts_unlimited(env, monkeypatch):
     data = client.put("/api/admin-settings", json={"values": {"vector_db.qdrant_max_retries": -1}}).json()
     assert _setting(data, "vector_db.qdrant_max_retries")["value"] == "-1"
     assert admin_settings.current_admin_config(DEFAULT_CONFIG_PATH).vector_db_qdrant_max_retries == -1
+
+
+def test_shared_ingest_limits_are_saved(env, monkeypatch):
+    names = ("VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS", "VECTOR_DB_SCAN_WORKERS", "VECTOR_DB_MAX_FILES_PER_COLLECTION", "VECTOR_DB_MAX_FILE_MB", "VECTOR_DB_OFFICE_TIMEOUT_SECONDS")
+    for name in names:
+        monkeypatch.delenv(name, raising=False)
+    client = env["client"]
+    s = _setting(client.get("/api/admin-settings").json(), "vector_db.qdrant_retry_interval_seconds")
+    assert (s["value"], s["default"], s["kind"]) == ("10", "10", "positive_float")
+    body = {
+        "values": {
+            "vector_db.qdrant_retry_interval_seconds": "2.5",
+            "vector_db.scan_workers": 16,
+            "vector_db.max_files_per_collection": "5000",
+            "vector_db.max_file_mb": "50.0",  # config.ini と同じ値は上書きとして持たない
+            "vector_db.office_timeout_seconds": 300,
+        }
+    }
+    client.put("/api/admin-settings", json=body).raise_for_status()
+    assert json.loads(env["file"].read_text(encoding="utf-8")) == {
+        "vector_db": {"qdrant_retry_interval_seconds": "2.5", "scan_workers": "16", "max_files_per_collection": "5000", "office_timeout_seconds": "300"}
+    }
+    cfg = admin_settings.current_admin_config(DEFAULT_CONFIG_PATH)
+    assert (
+        cfg.vector_db_qdrant_retry_interval_seconds, cfg.vector_db_scan_workers, cfg.vector_db_max_files_per_collection,
+        cfg.vector_db_max_file_mb, cfg.vector_db_office_timeout_seconds,
+    ) == (2.5, 16, 5000, 50, 300)
 
 
 def test_env_override_is_reported(env, monkeypatch):

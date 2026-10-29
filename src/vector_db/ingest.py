@@ -91,7 +91,8 @@ def _over_limit_hint(result: IngestResult) -> str:
         f"The source has {result.found_files} files, which exceeds the per-collection limit (config.ini [vector_db] "
         f"max_files_per_collection = {result.max_files}), so {result.over_limit} files were not ingested "
         "(already ingested files take priority, and the rest are chosen from the start in path order). "
-        "Increase config.ini [vector_db] max_files_per_collection and run the ingestion (diff) again to ingest them "
+        "Increase [vector_db] max_files_per_collection (\"Admin settings\" of the settings dashboard, or config.ini) "
+        "and run the ingestion (diff) again to ingest them "
         "(while ingesting, the list of target files is kept in memory, so watch the memory). "
         "You can also split collections by source folder."
     )
@@ -101,7 +102,8 @@ def _too_large_hint(cfg: Config, count: int) -> str:
     """上限サイズを超えたファイルへの対処方法（CLI の表示用。画面は admin/static/knowledge.js が同じ内容を出す）。"""
     return (
         f"{count} files exceeded the size limit (config.ini [vector_db] max_file_mb = {cfg.vector_db_max_file_mb}MB, a Locohane limit) "
-        "and were not ingested. Increase max_file_mb and run the ingestion (diff) again to ingest them."
+        "and were not ingested. Increase max_file_mb (\"Admin settings\" of the settings dashboard, or config.ini) "
+        "and run the ingestion (diff) again to ingest them."
     )
 
 
