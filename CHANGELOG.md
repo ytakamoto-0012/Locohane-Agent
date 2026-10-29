@@ -12,6 +12,8 @@
 
 ## [Unreleased]
 
+## [0.4.6] - 2026-10-30
+
 ### 追加
 
 - `[vector_db] text_extensions` を追加しました。ここに書いた拡張子は `.txt` と同じくテキストとして取り込みます
@@ -91,7 +93,6 @@
 - ナレッジの取り込み中、進捗バー・「○ / ○ ファイル」が次のファイルを読み始めるときにしか進まず、準備の枠が埋まっている間や
   最後のファイルの準備が終わった後は止まったままになり、一覧の「文書」の件数とずれていたのを直しました。
   ファイルの記録が終わるたびに進むようにしました。
-
 - 設定ダッシュボードの「データバックアップ」と「管理者設定」で、保存・config.ini の値に戻すを押しても
   画面が描き直されるだけで反応がないように見えていたのを直しました。完了すると「保存しました。」等を表示し、
   保存中はボタンを押せないようにしました。
@@ -101,9 +102,19 @@
   取り込み中の5秒ごとの更新では、ジョブと取り込みの枠の状態だけを取得します（新しい API
   `GET /api/instances/{name}/knowledge/jobs`）。ファイル数の集計やほかのインスタンスの参照の確認は、取り込みが始まった・
   終わったときだけ行います。状態が変わっていなければ描き直しません。
-
 - 表示言語が日本語でも、チャットの実行計画（`create_plan` のステップ・詳細）が英語で作られることがあったのを直しました。
   計画や `ask_user_choice` の質問・選択肢も、画面で選んだ言語で書くよう指示しています。
+
+### 移行時の注意
+
+- インスタンス別の `config_overrides.json` に書いた `[vector_db] scan_workers`・`max_files_per_collection`・`max_file_mb`・
+  `office_timeout_seconds`・`qdrant_retry_interval_seconds` は使われなくなりました。設定ダッシュボードの「管理者設定」で設定し直し、
+  インスタンスの設定画面に「効かない値」として出る古い値は「既定値に戻す」で消してください。
+- スキルの登録系の設定（`[plan] plan_approval_exempt_scripts`・`[subagent] agent_type_run_script_allowlist`・
+  `[main_agent_tool_guard] allow_entries`）をインスタンス別に保存していた場合、その値は `config.ini` の既定値に足す分として扱われます。
+  既定値の項目を消す・`allow_entries` の上限回数を変える目的で保存していた場合は効かなくなるため、必要なら環境変数で値全体を指定してください。
+- `[vector_db] embedding_routing_strategy`・`embedded_image_min_px`・`qdrant_timeout_seconds` の既定値が変わりました。
+  これまでの動作のままにしたい場合は、`config.ini` に `priority_failover`・`64`・`30` を書いてください。
 
 ## [0.4.5] - 2026-10-29
 
@@ -588,7 +599,8 @@ v0.1.1 の `config.ini`・データをそのまま使う場合は、以下を確
 
 - 最初の公開版です。
 
-[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/ytakamoto-0012/Locohane-Agent/compare/v0.4.2...v0.4.3
