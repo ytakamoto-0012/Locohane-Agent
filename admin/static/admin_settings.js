@@ -14,7 +14,8 @@ function adminSettingInstanceLabel(i) {
   return i.display_name && i.display_name !== i.name ? `${i.display_name}（${i.name}）` : i.name;
 }
 
-async function renderAdminSettings() {
+// notice: 描き直したあと保存ボタンの上に出す完了メッセージ（保存・config.ini に戻した直後に渡す）。
+async function renderAdminSettings(notice = "") {
   mainEl.innerHTML = "";
   const container = el("section", { class: "admin-settings" });
   mainEl.append(container);
@@ -118,7 +119,7 @@ async function renderAdminSettings() {
   );
 
   const error = el("div", { class: "error" });
-  const message = el("div", { class: "hint" });
+  const message = el("div", { class: "hint ok-text", text: notice });
   const saveBtn = el("button", {
     class: "primary",
     text: _t("保存"),
@@ -127,11 +128,13 @@ async function renderAdminSettings() {
       message.textContent = "";
       const values = {};
       for (const [name, control] of Object.entries(inputs)) if (!control.disabled) values[name] = control.value;
+      saveBtn.disabled = true;
       try {
         await api("/api/admin-settings", { method: "PUT", body: { values } });
-        await renderAdminSettings();
+        await renderAdminSettings(_t("保存しました。"));
       } catch (e) {
         error.textContent = e.message;
+        saveBtn.disabled = false;
       }
     },
   });
@@ -141,7 +144,7 @@ async function renderAdminSettings() {
       if (!confirm(_t("この画面で保存した設定を消して、config.ini の値に戻します。よろしいですか？"))) return;
       try {
         await api("/api/admin-settings", { method: "DELETE" });
-        await renderAdminSettings();
+        await renderAdminSettings(_t("config.ini の値に戻しました。"));
       } catch (e) {
         error.textContent = e.message;
       }

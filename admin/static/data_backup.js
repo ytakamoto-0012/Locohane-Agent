@@ -19,7 +19,8 @@ function fmtBytes(n) {
   return `${i ? v.toFixed(1) : v} ${units[i]}`;
 }
 
-async function renderDataBackup() {
+// notice: 描き直したあと設定フォームの下に出す完了メッセージ（保存・既定に戻した直後に渡す）。
+async function renderDataBackup(notice = "") {
   mainEl.innerHTML = "";
   const container = el("section", { class: "data-backup" });
   mainEl.append(container);
@@ -39,7 +40,7 @@ async function renderDataBackup() {
 
   const status = el("div");
   container.append(status);
-  container.append(buildDataBackupForm(data));
+  container.append(buildDataBackupForm(data, notice));
   const list = el("div");
   container.append(list);
 
@@ -144,7 +145,7 @@ function dataBackupList(d) {
   return section;
 }
 
-function buildDataBackupForm(d) {
+function buildDataBackupForm(d, notice) {
   const s = d.settings;
   const sourceLabel = (key) => (d.sources[key] === "dashboard" ? _t("（この画面で設定）") : _t("（config.ini の既定値）"));
   const enabled = el("input", { type: "checkbox" });
@@ -171,7 +172,8 @@ function buildDataBackupForm(d) {
   toggle();
 
   const error = el("div", { class: "error" });
-  const message = el("div", { class: "hint" });
+  const message = el("div", { class: "hint ok-text", text: notice });
+  const saveBtn = el("button", { type: "submit", class: "primary", text: _t("保存") });
   const form = el("form", { class: "knowledge-form" }, [
     el("h3", { text: _t("設定") }),
     el("label", {}, [_t("保存先フォルダ"), sourceLabel("dest_dir"), dest]),
@@ -189,7 +191,7 @@ function buildDataBackupForm(d) {
     error,
     message,
     el("div", { class: "inline-actions" }, [
-      el("button", { type: "submit", class: "primary", text: _t("保存") }),
+      saveBtn,
       el("button", {
         type: "button",
         text: _t("config.ini の既定に戻す"),
@@ -197,7 +199,7 @@ function buildDataBackupForm(d) {
           if (!confirm(_t("この画面で保存した設定を消して、config.ini の [data_backup] の値に戻します。よろしいですか？"))) return;
           try {
             await api("/api/data-backup/settings", { method: "DELETE" });
-            renderDataBackup();
+            renderDataBackup(_t("config.ini の値に戻しました。"));
           } catch (e) {
             error.textContent = e.message;
           }
@@ -209,6 +211,7 @@ function buildDataBackupForm(d) {
     ev.preventDefault();
     error.textContent = "";
     message.textContent = "";
+    saveBtn.disabled = true;
     try {
       await api("/api/data-backup/settings", {
         method: "PUT",
@@ -223,9 +226,10 @@ function buildDataBackupForm(d) {
           exclude: lineList(exclude),
         },
       });
-      renderDataBackup();
+      renderDataBackup(_t("保存しました。"));
     } catch (e) {
       error.textContent = e.message;
+      saveBtn.disabled = false;
     }
   });
   return form;

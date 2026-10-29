@@ -449,6 +449,8 @@ const I18N_EN = {
   "まだありません。": "None yet.",
   "保存しました（トライアウトの結果は無効になりました）。": "Saved (the tryout results were invalidated).",
   "保存しました": "Saved",
+  "保存しました。": "Saved.",
+  "config.ini の値に戻しました。": "Reverted to the config.ini values.",
   "① 研究対象（スキルかサブエージェントを1つ以上）": "① Research targets (one or more skills or sub-agents)",
   "下の ② のとおりに動くよう、AI に直させるスキル・サブエージェントです。": "The skills and sub-agents the AI fixes so that they behave as described in ② below.",
   "スキル": "Skill",
