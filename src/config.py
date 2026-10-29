@@ -56,6 +56,17 @@ ADMIN_SETTING_KEYS = frozenset(
         ("admin", "assistant_embedding_instance"),
     }
 )
+
+
+def is_instance_overridable(section: str, key: str) -> bool:
+    """config.ini のキーがインスタンス別の config_overrides.json で上書きできるか。
+
+    _OVERRIDE_EXEMPT_SECTIONS・ADMIN_SETTING_KEYS は _apply_config_overrides が無視するため、設定ダッシュボードの
+    インスタンス別の設定画面にも出さない（admin/instances.py の config_key_applies 参照）。
+    """
+    return section not in _OVERRIDE_EXEMPT_SECTIONS and (section, key) not in ADMIN_SETTING_KEYS
+
+
 # ADMIN_SETTING_KEYS をインスタンス別に上書きしようとした (ファイル, セクション, キー) のうち、警告を出したもの。
 _warned_global_only: set[tuple[str, str, str]] = set()
 

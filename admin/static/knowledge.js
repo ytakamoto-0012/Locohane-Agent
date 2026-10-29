@@ -19,6 +19,47 @@ const KNOWLEDGE_REF_LABELS = { ok: _t("検索できます"), incompatible: _t("�
 // 自動取り込みの曜日（catalog.sqlite の schedule_weekdays。0=月〜6=日、Python の weekday() と同じ）。
 const KNOWLEDGE_WEEKDAYS = [_t("月"), _t("火"), _t("水"), _t("木"), _t("金"), _t("土"), _t("日")];
 
+// コレクション一覧の並べ替え。列ごとの並べ替えの値（null の列は並べ替えない。値が null・空の行は向きによらず末尾）。
+// 状態は、エラー → 取り込み中 → 待機中 → 停止 → 完了 → ジョブなし の順を昇順とする。
+const KNOWLEDGE_JOB_STATE_ORDER = ["error", "running", "queued", "stopped", "done"];
+const knowledgeTimeValue = (iso) => (iso ? Date.parse(iso) || null : null);
+const KNOWLEDGE_SORT_VALUES = [
+  (c) => c.name,
+  (c) => c.source_folders[0] || null,
+  (c) => c.file_count,
+  (c) => c.model || null,
+  (c) => knowledgeTimeValue(c.last_ingested_at),
+  (c) => (c.schedule_enabled ? knowledgeTimeValue(c.next_scheduled_at) : null),
+  (c) => (c.job ? KNOWLEDGE_JOB_STATE_ORDER.indexOf(c.job.state) : null),
+  null,
+];
+// 並べ替えの状態はブラウザに保存し、画面の描き直し（取り込み中の自動更新）や再読み込みでも保つ。
+const KNOWLEDGE_SORT_STORAGE_KEY = "la-knowledge-sort";
+
+function knowledgeLoadSort() {
+  try {
+    const s = JSON.parse(localStorage.getItem(KNOWLEDGE_SORT_STORAGE_KEY) || "null");
+    if (s && KNOWLEDGE_SORT_VALUES[s.index] && (s.dir === "asc" || s.dir === "desc")) return s;
+  } catch (e) {
+    // 壊れた値は無視して既定の並び（コレクションの登録順）に戻す。
+  }
+  return { index: null, dir: "asc" };
+}
+
+function knowledgeSortCollections(collections, sort) {
+  const value = KNOWLEDGE_SORT_VALUES[sort.index];
+  if (!value) return collections;
+  const sign = sort.dir === "asc" ? 1 : -1;
+  const isEmpty = (v) => v === null || v === undefined || v === -1;
+  return [...collections].sort((a, b) => {
+    const va = value(a);
+    const vb = value(b);
+    if (isEmpty(va) || isEmpty(vb)) return isEmpty(va) - isEmpty(vb);
+    const cmp = typeof va === "string" ? va.localeCompare(vb, I18N_LOCALE, { numeric: true, sensitivity: "base" }) : va - vb;
+    return cmp * sign || a.name.localeCompare(b.name, I18N_LOCALE, { numeric: true });
+  });
+}
+
 function knowledgeJobActive(job) {
   return !!job && (job.state === "queued" || job.state === "running");
 }
@@ -220,8 +261,20 @@ async function renderKnowledgePanel(container, name) {
   container.append(buildCreateCollectionForm(container, name));
   container.append(buildReferencesSection(container, name, data.references));
 
+  let sort = knowledgeLoadSort();
+  let latestData = data;
+  // 同じ列をもう一度押すと向きを逆にし、3回目で既定の並び（登録順）に戻す。
+  const onSort = (index) => {
+    if (sort.index !== index) sort = { index, dir: "asc" };
+    else if (sort.dir === "asc") sort = { index, dir: "desc" };
+    else sort = { index: null, dir: "asc" };
+    localStorage.setItem(KNOWLEDGE_SORT_STORAGE_KEY, JSON.stringify(sort));
+    draw(latestData);
+  };
+
   const draw = (d) => {
-    const collections = d.collections;
+    latestData = d;
+    const collections = knowledgeSortCollections(d.collections, sort);
     workersBox.replaceChildren(knowledgeWorkersPanel(d.workers, name));
     list.innerHTML = "";
     const rows = collections.map((c) => [
@@ -240,7 +293,12 @@ async function renderKnowledgePanel(container, name) {
       knowledgeActions(container, name, c, data.enabled),
     ]);
     list.append(
-      dataTable([_t("コレクション"), _t("取り込み元フォルダ"), _t("文書"), _t("埋め込みモデル"), _t("最終取り込み"), _t("自動取り込み"), _t("状態"), _t("操作")], rows, _t("まだコレクションはありません。"))
+      dataTable([_t("コレクション"), _t("取り込み元フォルダ"), _t("文書"), _t("埋め込みモデル"), _t("最終取り込み"), _t("自動取り込み"), _t("状態"), _t("操作")], rows, _t("まだコレクションはありません。"), {
+        sortable: KNOWLEDGE_SORT_VALUES.map(Boolean),
+        index: sort.index,
+        dir: sort.dir,
+        onSort,
+      })
     );
     // コピーを始めた直後（コピー先の定義ができる前）と、定義を作れずに終わったコピーのジョブ。
     for (const job of d.copy_jobs || []) {

@@ -1123,12 +1123,7 @@ function buildKeyRow(k) {
 
   const value = effectiveValue(k);
 
-  if (k.is_admin_section) {
-    const note = document.createElement("p");
-    note.className = "hint";
-    note.textContent = _t("[admin] は管理ツール自身の設定のため、ここからは変更できません（config.ini を直接編集してください）。");
-    inputWrap.appendChild(note);
-  } else if (k.ui_kind === "bool") {
+  if (k.ui_kind === "bool") {
     const wrap = document.createElement("label");
     wrap.className = "checkbox";
     const input = document.createElement("input");
@@ -2524,11 +2519,23 @@ function fmtElapsed(iso) {
   return _t(`{0}時間{1}分`, Math.floor(sec / 3600), Math.floor((sec % 3600) / 60));
 }
 
-function dataTable(headers, rows, emptyText) {
+// sort（任意）: { sortable: 列ごとの真偽, index: 並べ替え中の列（無ければ null）, dir: "asc"|"desc", onSort: (列) => void }。
+// 見出しを押すと onSort を呼ぶだけで、行の並べ替えは呼び出し側で行う。
+function dataTable(headers, rows, emptyText, sort) {
   const tbody = el("tbody");
   for (const cells of rows) tbody.append(el("tr", {}, cells.map((c) => el("td", {}, c))));
   if (!rows.length) tbody.append(el("tr", {}, el("td", { colspan: headers.length, class: "hint", text: emptyText || _t("なし") })));
-  return el("table", { class: "data-table" }, [el("thead", {}, el("tr", {}, headers.map((h) => el("th", { text: h })))), tbody]);
+  const th = (h, i) => {
+    if (!sort || !sort.sortable[i]) return el("th", { text: h });
+    const active = sort.index === i;
+    return el("th", {
+      class: "sortable" + (active ? " sorted" : ""),
+      title: _t("クリックで並べ替え"),
+      "aria-sort": active ? (sort.dir === "asc" ? "ascending" : "descending") : "none",
+      onclick: () => sort.onSort(i),
+    }, [h, el("span", { class: "sort-indicator", text: active ? (sort.dir === "asc" ? " ▲" : " ▼") : " ↕" })]);
+  };
+  return el("table", { class: "data-table" }, [el("thead", {}, el("tr", {}, headers.map(th))), tbody]);
 }
 
 function linkBtn(text, onClick) {

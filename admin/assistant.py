@@ -149,8 +149,6 @@ def format_key_block(key_views: list[dict[str, Any]]) -> str:
             lines.append(f"- Allowed values: {shown} (nothing else can be saved)")
         if view.get("env_override_active"):
             lines.append(f"- Note: overridden by the environment variable {view.get('env_name')}, so saving on the screen has no effect")
-        if view.get("is_admin_section"):
-            lines.append("- Note: [admin] is the settings of the admin tool itself and cannot be changed on the screen (edit config.ini or the environment variables and restart admin.bat)")
         if view.get("description"):
             lines.append("- Description: " + _clip(view["description"], _MAX_DESCRIPTION_CHARS).replace("\n", " "))
         lines.append("")

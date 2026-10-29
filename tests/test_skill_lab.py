@@ -508,6 +508,12 @@ def test_config_key_applies_by_kind():
     assert not inst.config_key_applies(lab, "skill_lab", "instance_locohane_dir")
     assert not inst.config_key_applies(app, "skill_lab_worker", "max_iterations")
     assert inst.config_key_applies(app, "skill_lab", "instance_locohane_dir") and inst.config_key_applies(app, "llm", "reasoning_effort")
+    # インスタンス別の上書きが無視されるキー（[admin]・[data_backup]・管理者設定のキー）はどちらにも出さない。
+    for k in (app, lab):
+        assert not inst.config_key_applies(k, "admin", "port")
+        assert not inst.config_key_applies(k, "data_backup", "keep")
+        assert not inst.config_key_applies(k, "vector_db", "ingest_workers")
+    assert inst.config_key_applies(app, "vector_db", "chunk_size")
 
 
 def test_worker_created_from_app_does_not_inherit_unused_settings(lab_env):

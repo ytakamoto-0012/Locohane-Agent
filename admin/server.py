@@ -27,7 +27,7 @@ from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.config import PROJECT_ROOT, load_config, resolve_instances_root, resolve_ssl_files
+from src.config import PROJECT_ROOT, is_instance_overridable, load_config, resolve_instances_root, resolve_ssl_files
 from src.version import __version__
 
 from . import api_docs, assistant, assistant_index, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
@@ -476,7 +476,6 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
                 "schema": _localize_schema(info.schema),
                 "env_name": _env_var_mapping.get((info.section, info.key)),
                 "env_override_active": (info.section, info.key) in active_env,
-                "is_admin_section": info.section == "admin",
             }
         )
     return {
@@ -501,7 +500,12 @@ class ConfigUpdateBody(BaseModel):
 def _flatten_updates(updates: dict[str, dict[str, str]], kind: str) -> dict[tuple[str, str], str]:
     flat = {(section, key): value for section, kv in updates.items() for key, value in kv.items()}
     # 画面に出していないキー（その種類のインスタンスでは効かない設定）は、API を直接叩いても保存させない。
-    rejected = [f"[{section}].{key}" for section, key in flat if not inst.config_key_applies(kind, section, key)]
+    # インスタンス別に上書きできないキーは、overrides.save() が変更先の画面を案内するエラーで拒否する。
+    rejected = [
+        f"[{section}].{key}"
+        for section, key in flat
+        if is_instance_overridable(section, key) and not inst.config_key_applies(kind, section, key)
+    ]
     if rejected:
         target = _t("スキル調整ワーカー") if kind == inst.KIND_SKILL_LAB else _t("本体のインスタンス")
         raise HTTPException(status_code=400, detail=_t("{0}では効かない設定のため変更できません: {1}", target, ', '.join(rejected)))

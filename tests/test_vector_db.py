@@ -936,6 +936,8 @@ def test_ingest_is_incremental(env):
     first = ingest.ingest_collection(cfg, "docs", progress=lambda *a: progress.append(a), **kwargs)
     assert (first.added, first.unchanged, first.failed) == (2, 0, [])
     assert progress[-1] == (2, 2, "")
+    # 記録が終わるたびにも件数を通知する（最後のファイルを読み始めた後も、終了の通知を待たずに 2 / 2 になる）。
+    assert progress[-2][:2] == (2, 2) and progress[-2][2]
     requests_after_first = len(env["embed"].requests)
 
     second = ingest.ingest_collection(cfg, "docs", **kwargs)

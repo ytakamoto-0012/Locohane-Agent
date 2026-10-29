@@ -211,7 +211,9 @@ def test_large_files_start_first_when_parallel(env):
     (env["docs"] / "b_large.md").write_text("大" * 500, encoding="utf-8")
     started = []
     cfg = _config(env, vector_db_ingest_workers=2)
-    ingest.ingest_collection(cfg, "docs", progress=lambda done, total, path: path and started.append(path), **env["kwargs"])
+    # 記録が終わったときの通知は直前に読み始めたファイルの path のまま来るため、続けて同じ path は数えない。
+    progress = lambda done, total, path: path and started[-1:] != [path] and started.append(path)  # noqa: E731
+    ingest.ingest_collection(cfg, "docs", progress=progress, **env["kwargs"])
     assert [p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in started] == ["b_large.md", "a_small.md"]
 
 

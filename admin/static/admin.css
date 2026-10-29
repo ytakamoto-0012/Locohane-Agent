@@ -238,6 +238,10 @@ select.le-type { width: auto; padding: 4px; font-size: 12px; flex-shrink: 0; }
 .data-table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
 .data-table th, .data-table td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .data-table th { color: var(--text-dim); font-weight: 500; }
+.data-table th.sortable { cursor: pointer; user-select: none; }
+.data-table th.sortable:hover, .data-table th.sorted { color: var(--text); }
+.data-table th .sort-indicator { font-size: 11px; opacity: 0.6; }
+.data-table th.sorted .sort-indicator { opacity: 1; }
 .inline-form { display: flex; gap: 8px; align-items: center; max-width: 480px; }
 .secret-row { display: flex; align-items: center; gap: 10px; }
 

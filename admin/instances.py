@@ -22,7 +22,7 @@ import socket
 from dataclasses import dataclass
 from pathlib import Path
 
-from src.config import PROJECT_ROOT, load_config
+from src.config import PROJECT_ROOT, is_instance_overridable, load_config
 from admin.i18n import t as _t
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
@@ -53,7 +53,10 @@ def config_key_applies(kind: str, section: str, key: str) -> bool:
     """config.ini のキーが、その種類のインスタンスの設定として意味を持つか（設定画面に出す・保存を許すか）。
 
     スキル調整ワーカーは接続先・[skill_lab_worker]・[log] だけ。本体には [skill_lab_worker] を出さない。
+    インスタンス別の上書きが効かない（config.ini・管理者設定の値しか使わない）キーはどちらにも出さない。
     """
+    if not is_instance_overridable(section, key):
+        return False
     if kind == KIND_SKILL_LAB:
         return section in SKILL_LAB_WORKER_SECTIONS or (section, key) in SKILL_LAB_WORKER_KEYS
     return section != "skill_lab_worker"

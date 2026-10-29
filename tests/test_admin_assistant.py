@@ -52,7 +52,6 @@ def _views(overrides: dict[tuple[str, str], str] | None = None) -> dict:
                 "group_heading": k.group_heading,
                 "env_name": None,
                 "env_override_active": False,
-                "is_admin_section": False,
             }
             for k in _keys()
         ]
@@ -159,11 +158,10 @@ def test_format_key_block_lists_choices():
     assert "Allowed values: (empty), round_robin, priority_failover" in assistant.format_key_block([view])
 
 
-def test_format_key_block_notes_env_override_and_admin_section():
-    view = dict(_views()["keys"][0], env_override_active=True, env_name="LLM_MAIN_URL", is_admin_section=True)
+def test_format_key_block_notes_env_override():
+    view = dict(_views()["keys"][0], env_override_active=True, env_name="LLM_MAIN_URL")
     block = assistant.format_key_block([view])
     assert "environment variable LLM_MAIN_URL" in block
-    assert "cannot be changed on the screen" in block
 
 
 def test_build_system_prompt_contains_rules_and_context():

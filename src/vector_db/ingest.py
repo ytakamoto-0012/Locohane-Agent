@@ -1201,6 +1201,8 @@ class _Pipeline:
         self.waiting = 0
         self.completed = 0
         self.completed_bytes = 0
+        # 最後に読み始めたファイル（progress の path。記録が終わったときの通知でも、表示中のファイルを変えない）。
+        self.current_source = ""
         self.stopped = False
         self.load_pool = None
         self.instance = instance
@@ -1358,8 +1360,7 @@ class _Pipeline:
             needs_keywords = source not in self.writer.keyword_sources
             if not needs_keywords and _is_unchanged(record, _file_mode(self.options, path), st):
                 # 変わっていないファイルは読まないため、スレッド・子プロセスに渡さずにここで済ませる。
-                if self.progress is not None:
-                    self.progress(self.completed, self.total, source)
+                self._report(source)
                 mode = _file_mode(self.options, path)
                 path_text = relative_path_text(source_root(self.folders, path), path)
                 self._loaded(_Prepared(path, record, mode, "unchanged", path_text=path_text))
@@ -1368,8 +1369,14 @@ class _Pipeline:
             if not self._submit_load(pool, _load if self.processes else _load_in_thread, args, False):
                 self._held_item = item
                 return
-            if self.progress is not None:
-                self.progress(self.completed, self.total, source)
+            self._report(source)
+
+    def _report(self, source: str | None = None) -> None:
+        """記録まで終わった件数を progress へ通知する（source はこれから読み始めるファイル。省略時は直前のまま）。"""
+        if source is not None:
+            self.current_source = source
+        if self.progress is not None:
+            self.progress(self.completed, self.total, self.current_source)
 
     def _loaded(self, prepared: _Prepared) -> None:
         job = _Job(prepared)
@@ -1461,6 +1468,9 @@ class _Pipeline:
         self.writer.write(prepared)
         _remove_dir(prepared.page_dir)
         self.completed += 1
+        # 読み始めたときだけ通知すると、準備の枠が埋まっている間や最後のファイルの準備が終わった後は、
+        # 記録が進んでも進捗（バー・○ / ○ ファイル）が止まったままになり、一覧の文書の件数とずれる。
+        self._report()
         # stat が無いのは、変わっていない・取り込めなかったファイル（_load）。
         if prepared.stat is not None:
             self.completed_bytes += prepared.stat.st_size
@@ -1539,8 +1549,12 @@ def main(argv: list[str] | None = None) -> int:
         print("[vector_db] enabled = false. Enable it before running this.")
         return 1
 
+    printed = [""]
+
     def _progress(done: int, total: int, path: str) -> None:
-        if path:
+        # 記録が終わったときの通知は直前に読み始めたファイルの path のまま来るため、読み始めたときだけ表示する。
+        if path and path != printed[0]:
+            printed[0] = path
             print(f"[{done + 1}/{total}] {path}")
 
     result = ingest_collection(cfg, args.collection, rebuild=args.rebuild, progress=_progress)
