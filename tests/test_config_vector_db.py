@@ -123,7 +123,7 @@ def test_admin_catalog_offers_embedding_url_editor():
     catalog = parse_file(Path(__file__).resolve().parent.parent / "config.ini")
     info = {(k.section, k.key): k for k in catalog.keys}[("vector_db", "embedding_url")]
     assert info.ui_kind == "list"
-    assert [f["name"] for f in info.schema["item"]["fields"]] == ["base_url", "api_key", "model"]
+    assert [f["name"] for f in info.schema["item"]["fields"]] == ["base_url", "api_key", "model", "provider"]
 
 
 @pytest.mark.parametrize(("value", "expected"), [("euclid", "Euclid"), (" DOT ", "Dot"), ("Manhattan", "Manhattan")])

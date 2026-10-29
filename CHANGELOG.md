@@ -27,6 +27,12 @@
 
 ### 変更
 
+- ナレッジの取り込み・検索の埋め込みで、`[vector_db] embedding_routing_strategy` が `round_robin`・`priority_failover` のとき、
+  `[llm]` の接続先の選び方と同じく、送る前に接続先の空きを確かめて埋まっている接続先を飛ばすようにしました
+  （`provider = "llama_cpp"` は GET /slots、`provider = "vllm"` は GET /metrics の待ち行列 `vllm:num_requests_waiting` で判断）。
+  全接続先が埋まっていれば、取り込みは `[llm] round_robin_busy_poll_interval_seconds` 秒ごとに空きを待ち、検索は待たずに送ります。
+  使うには `embedding_url` の各接続先に `"provider": "llama_cpp"` または `"provider": "vllm"` を書きます
+  （設定ダッシュボードの config.ini タブの `embedding_url` の入力欄にも provider を追加しました）。
 - スキルの登録系の設定（`[plan] plan_approval_exempt_scripts`・`[subagent] agent_type_run_script_allowlist`・
   `[main_agent_tool_guard] allow_entries`）は、設定ダッシュボードで保存した値（インスタンス別の `config_overrides.json`）が
   `config.ini` の既定値を置き換えず、既定値に無い項目だけを足すようにしました。アップデートで既定値に足された新しいスキルが、

@@ -1187,12 +1187,16 @@ Enable it in `config.ini` (or the config.ini tab of the dashboard; the "vector D
 ```ini
 [vector_db]
 enabled = true
-embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3"},]
+embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3", "provider": "llama_cpp"},]
 ```
 
 `embedding_url` has the same format as `[llm] main_url`; so that vectors do not change per endpoint, all must have the same `model`, and
 `start`/`end` cannot be specified. How to choose when several are given is decided by `embedding_routing_strategy` (the same
-`round_robin` (default), `random` and `priority_failover` as `[llm] main_routing_strategy`; no check with GET /slots). With any strategy, when it cannot connect or
+`round_robin` (default), `random` and `priority_failover` as `[llm] main_routing_strategy`). With `round_robin` and `priority_failover`, it checks whether an endpoint is free before sending,
+and moves on to the next endpoint if it is full (`provider = "llama_cpp"` counts the free slots with GET /slots, subtracting the requests this process is sending;
+`provider = "vllm"` checks whether `vllm:num_requests_waiting` of GET /metrics is 0; other providers, and cases where it cannot be checked, are treated as free).
+When all endpoints are full, ingestion waits until one is free, checking every `[llm] round_robin_busy_poll_interval_seconds` seconds (it can be stopped with "Stop"),
+and search sends to the first in the order without waiting. The timeout of the check is `[llm] round_robin_slots_probe_timeout_seconds`. With any strategy, when it cannot connect or
 a non-200 HTTP is returned, the same request is resent to the next endpoint, and with `priority_failover` an endpoint that returned an error is put at the back for 60 seconds.
 When all endpoints error, it waits `embedding_retry_interval_seconds` (default 10) seconds and tries all endpoints again, repeating this
 up to `embedding_max_retries` (default 3) times for ingestion. With `embedding_max_retries = 0` it repeats indefinitely until it succeeds
@@ -1714,7 +1718,7 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[vector_db]` | `qdrant_retry_interval_seconds` | Interval in seconds between the retries above (default 10; at most 1 for searches). **Shared by all instances** (cannot be overridden per instance; can be changed in "Admin settings" of the settings dashboard) | `VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS` |
 | `[vector_db]` | `qdrant_preset` | Settings of Qdrant collections by scale of chunk count (`none` default = Qdrant's default / `1m` / `2m` / ... / `10m` = for up to 1-10 million. HNSW, int8 quantization, putting vectors on disk, number of segments, `hnsw_ef` when searching). Applied to existing collections on the next ingestion (no rebuild needed). See "Using Qdrant" | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | Endpoints that compute embeddings (`/v1/embeddings`). Same format as `[llm] main_url`; all elements must have the same `model`, and `start`/`end` cannot be specified. Required when `enabled = true` (`[]` means not set) | `VECTOR_DB_EMBEDDING_URL` |
-| `[vector_db]` | `embedding_routing_strategy` | How to choose when `embedding_url` has several entries (`round_robin` default / `random` / `priority_failover`; no check with GET /slots). With any strategy, an error makes it resend to the next endpoint (see "Preparing and configuring the embedding server") | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
+| `[vector_db]` | `embedding_routing_strategy` | How to choose when `embedding_url` has several entries (`round_robin` default / `random` / `priority_failover`; `round_robin` and `priority_failover` check for free capacity with GET /slots for llama_cpp and GET /metrics for vllm, and skip full endpoints). With any strategy, an error makes it resend to the next endpoint (see "Preparing and configuring the embedding server") | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
 | `[vector_db]` | `embedding_max_retries` | Number of retries when all endpoints error during ingestion (default 3). `0` repeats indefinitely until it succeeds. No retry if only 4xx other than 408/429 | `VECTOR_DB_EMBEDDING_MAX_RETRIES` |
 | `[vector_db]` | `search_embedding_max_retries` | Number of retries likewise for search (`search_documents`) (default 2). `0` does not retry (unlimited cannot be specified) | `VECTOR_DB_SEARCH_EMBEDDING_MAX_RETRIES` |
 | `[vector_db]` | `embedding_retry_interval_seconds` | Interval of the retries above (seconds, default 10; shared by ingestion and search) | `VECTOR_DB_EMBEDDING_RETRY_INTERVAL_SECONDS` |

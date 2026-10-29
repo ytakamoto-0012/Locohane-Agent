@@ -585,6 +585,7 @@ def _no_embedding_retry_wait(monkeypatch):
     monkeypatch.setattr(embeddings, "_sleep", sleeps.append)
     monkeypatch.setattr(embeddings, "_round_robin_counters", {})
     monkeypatch.setattr(embeddings, "_failed_until", {})
+    monkeypatch.setattr(embeddings, "_inflight", {})
     return sleeps
 
 
@@ -740,6 +741,91 @@ def test_priority_failover_puts_failed_endpoint_last_for_a_while(tmp_path):
     embed_texts(cfg, ["x"], kind="query", transport=transport)
     embed_texts(cfg, ["y"], kind="query", transport=transport)
     assert calls == ["http://a/v1/embeddings", "http://b/v1/embeddings", "http://b/v1/embeddings"]
+
+
+def _load_transport(server: FakeEmbeddingServer, loads: dict[str, list]) -> tuple[httpx.MockTransport, list[str]]:
+    """GET /slots・/metrics にホストごとの空き状況（呼ばれるたびに先頭から消費、最後の値は使い回す）を返すトランスポート。
+
+    loads の値は llama_cpp なら空きスロット数（総数は2）、vllm なら num_requests_waiting、None なら 503。
+    """
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            calls.append(request.url.host)
+            return server.handler(request)
+        queue = loads[request.url.host]
+        value = queue.pop(0) if len(queue) > 1 else queue[0]
+        if value is None:
+            return httpx.Response(503)
+        if request.url.path == "/slots":
+            return httpx.Response(200, json=[{"id": i, "is_processing": i >= value} for i in range(2)])
+        text = f'# HELP vllm:num_requests_waiting x\nvllm:num_requests_running{{model_name="m"}} 3.0\nvllm:num_requests_waiting{{model_name="m"}} {value}\n'
+        return httpx.Response(200, text=text)
+
+    return httpx.MockTransport(handler), calls
+
+
+def _provider_endpoints(provider: str, *hosts: str) -> tuple[LLMEndpoint, ...]:
+    return tuple(LLMEndpoint(base_url=f"http://{h}/v1", api_key="k", model="fake-embed", provider=provider) for h in hosts)
+
+
+@pytest.mark.parametrize(("provider", "busy", "free"), [("llama_cpp", 0, 1), ("vllm", 2, 0)])
+@pytest.mark.parametrize("strategy", ["round_robin", "priority_failover"])
+def test_embed_skips_endpoint_without_free_slot(tmp_path, _no_embedding_retry_wait, provider, busy, free, strategy):
+    """llama_cpp は GET /slots、vllm は GET /metrics の待ち行列で埋まっている接続先を飛ばす。"""
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [busy], "b": [free]})
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_provider_endpoints(provider, "a", "b"), vector_db_embedding_routing_strategy=strategy)
+    for _ in range(2):
+        embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert calls == ["b", "b"] and embeddings._inflight == {"http://b": 0}
+
+
+def test_embed_document_waits_for_free_slot_but_query_does_not(tmp_path, _no_embedding_retry_wait):
+    cfg = make_config(
+        tmp_path,
+        vector_db_embedding_endpoints=_provider_endpoints("llama_cpp", "a", "b"),
+        vector_db_embedding_routing_strategy="priority_failover",
+        round_robin_busy_poll_interval_seconds=1.5,
+    )
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [0, 0, 1], "b": [0]})
+    embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert calls == ["a"] and sum(_no_embedding_retry_wait) == pytest.approx(3.0)
+
+    _no_embedding_retry_wait.clear()
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [0], "b": [0]})
+    embed_texts(cfg, ["x"], kind="query", transport=transport)
+    assert calls == ["a"] and _no_embedding_retry_wait == []
+
+
+def test_embed_busy_wait_stops_when_requested(tmp_path, _no_embedding_retry_wait):
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_provider_endpoints("vllm", "a"))
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [5]})
+    checks = iter([False, False, True])
+    with pytest.raises(EmbeddingStopped):
+        embed_texts(cfg, ["x"], kind="document", transport=transport, should_stop=lambda: next(checks))
+    assert calls == []
+
+
+def test_embed_treats_unknown_load_as_free(tmp_path, _no_embedding_retry_wait):
+    """GET /slots・/metrics が確かめられない接続先は空きとみなして送る（埋め込みを止めない）。"""
+    cfg = make_config(tmp_path, vector_db_embedding_endpoints=_provider_endpoints("llama_cpp", "a", "b"))
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [None], "b": [1]})
+    embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert calls == ["a"]
+
+
+def test_embed_counts_own_requests_in_flight(tmp_path, _no_embedding_retry_wait):
+    """GET /slots にまだ反映されていない、このプロセスから送信中のリクエストの分も埋まっているとみなす。"""
+    cfg = make_config(
+        tmp_path,
+        vector_db_embedding_endpoints=_provider_endpoints("llama_cpp", "a", "b"),
+        vector_db_embedding_routing_strategy="priority_failover",
+    )
+    embeddings._inflight["http://a"] = 2
+    transport, calls = _load_transport(FakeEmbeddingServer(), {"a": [2], "b": [2]})
+    embed_texts(cfg, ["x"], kind="document", transport=transport)
+    assert calls == ["b"] and embeddings._inflight == {"http://a": 2, "http://b": 0}
 
 
 def test_embed_texts_rejects_token_level_embeddings(tmp_path):

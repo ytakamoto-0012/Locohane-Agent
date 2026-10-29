@@ -10,7 +10,8 @@ import random
 import sys
 import threading
 import time
-from typing import Callable, Literal
+from typing import Callable, Literal, NamedTuple
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -34,6 +35,9 @@ _round_robin_counters: dict[tuple[str, ...], int] = {}
 # priority_failover で、エラーが返った接続先を後回しにする期限（base_url → time.monotonic()）。
 _failed_until: dict[str, float] = {}
 _FAILOVER_COOLDOWN_SECONDS = 60.0
+# このプロセスから送信中（空きを確かめて選んでから応答が返るまで）のリクエスト数（サーバーのルート → 件数）。
+# 複数の取り込みスレッドが同時に GET /slots で同じ空きを見て、全員がそこへ送るのを防ぐ（_has_room 参照）。
+_inflight: dict[str, int] = {}
 # encoding_format = base64 に対応していない（400・422 を返した）接続先の base_url。以後は float で受け取る。
 _float_only: set[str] = set()
 # 再試行を待つ間に should_stop() を確かめる間隔（秒）。
@@ -129,9 +133,11 @@ def embed_texts(
     batch_size = cfg.vector_db_embedding_batch_size
     # 検索は止める手段が無いため、無制限（embedding_max_retries = 0）にはしない。
     max_retries = cfg.vector_db_search_embedding_max_retries if kind == "query" else (cfg.vector_db_embedding_max_retries or None)
+    # 検索は AI の応答を待たせるため、接続先が埋まっていても空きを待たずに送る。
+    wait_when_busy = kind == "document"
     with _client_scope(cfg, client, transport) as http:
         for start in range(0, len(inputs), batch_size):
-            vectors.extend(_embed_batch(cfg, http, endpoints, inputs[start : start + batch_size], max_retries, should_stop))
+            vectors.extend(_embed_batch(cfg, http, endpoints, inputs[start : start + batch_size], max_retries, should_stop, wait_when_busy))
     return vectors
 
 
@@ -163,7 +169,7 @@ def embed_images(
         for png in pngs:
             url = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
             batch = [{"content": [{"type": "image_url", "image_url": {"url": url}}]}]
-            vectors.extend(_embed_batch(cfg, http, endpoints, batch, cfg.vector_db_embedding_max_retries or None, should_stop))
+            vectors.extend(_embed_batch(cfg, http, endpoints, batch, cfg.vector_db_embedding_max_retries or None, should_stop, True))
     return vectors
 
 
@@ -192,6 +198,123 @@ def _endpoint_order(cfg: Config, endpoints: tuple[LLMEndpoint, ...]) -> list[LLM
     with _routing_lock:
         cooling = {e.base_url for e in endpoints if _failed_until.get(e.base_url, 0.0) > now}
     return [e for e in endpoints if e.base_url not in cooling] + [e for e in endpoints if e.base_url in cooling]
+
+
+class _Load(NamedTuple):
+    """接続先の空き状況。total が None なら同時に受けられる数は分からない（vLLM）。"""
+
+    free: int
+    total: int | None
+
+
+def _server_key(base_url: str) -> str | None:
+    """base_url（"http://host:port/v1" 等）からサーバーのルート（scheme+netloc）を取り出す。"""
+    parsed = urlsplit(base_url)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _probe_load(cfg: Config, client: httpx.Client, endpoint: LLMEndpoint) -> _Load | None:
+    """provider="llama_cpp" は GET /slots、"vllm" は GET /metrics で接続先の空き状況を確かめる。
+
+    - llama_cpp: is_processing でないスロットの数と、スロットの総数。
+    - vllm: スロットの考え方が無いため、vllm:num_requests_waiting（スケジューラの待ち行列。
+      データ並列なら全エンジンの合計）が 0 なら空き1・1以上なら空き0とする。
+
+    タイムアウトは [llm].round_robin_slots_probe_timeout_seconds。確かめられなかった場合
+    （接続できない・形式が違う・対象外の provider）は None（呼び出し元は空きとみなす）。
+    """
+    key = _server_key(endpoint.base_url)
+    if key is None or endpoint.provider not in ("llama_cpp", "vllm"):
+        return None
+    probe_timeout = cfg.round_robin_slots_probe_timeout_seconds
+    timeout = httpx.Timeout(probe_timeout, connect=min(2.0, probe_timeout))
+    url = f"{key}/slots" if endpoint.provider == "llama_cpp" else f"{key}/metrics"
+    try:
+        response = client.get(url, timeout=timeout)
+        response.raise_for_status()
+        if endpoint.provider == "llama_cpp":
+            slots = response.json()
+            if not isinstance(slots, list) or not slots:
+                return None
+            return _Load(free=sum(1 for slot in slots if not slot.get("is_processing", True)), total=len(slots))
+        waiting: float | None = None
+        for line in response.text.splitlines():
+            if line.split("{", 1)[0].split(" ", 1)[0] == "vllm:num_requests_waiting":
+                waiting = (waiting or 0.0) + float(line.rsplit(None, 1)[-1])
+        return None if waiting is None else _Load(free=0 if waiting > 0 else 1, total=None)
+    except (httpx.TransportError, httpx.HTTPStatusError, ValueError, AttributeError) as e:
+        logger.debug("embeddings: checking GET %s failed (treating it as free): %s", url, e)
+        return None
+
+
+def _has_room(load: _Load, inflight: int) -> bool:
+    """空きがあるか。llama_cpp はこのプロセスから送信中の数を総数から引いた残りでも抑える
+    （GET /slots に送信直前・直後のリクエストがまだ反映されていない分を補う）。"""
+    if load.total is None:
+        return load.free > 0
+    return min(load.free, load.total - inflight) > 0
+
+
+def _claim(key: str | None) -> None:
+    if key is not None:
+        with _routing_lock:
+            _inflight[key] = _inflight.get(key, 0) + 1
+
+
+def _release(key: str | None) -> None:
+    if key is not None:
+        with _routing_lock:
+            _inflight[key] = max(0, _inflight.get(key, 0) - 1)
+
+
+def _choose_order(
+    cfg: Config,
+    client: httpx.Client,
+    endpoints: tuple[LLMEndpoint, ...],
+    wait_when_busy: bool,
+    should_stop: Callable[[], bool] | None,
+) -> tuple[list[LLMEndpoint], bool]:
+    """1回のリクエストで試す接続先の順を決める（src/llm/routing.py の _select_endpoint_with_slots_probe と同じ考え方）。
+
+    round_robin / priority_failover では、_endpoint_order() の順に provider="llama_cpp"・"vllm" の
+    接続先の空きを確かめ（_probe_load）、空きが無ければ次点へ回す。確かめられない接続先・
+    その他の provider は確かめずに選ぶ。全接続先が埋まっていれば、wait_when_busy なら
+    [llm].round_robin_busy_poll_interval_seconds 秒ごとに空きが出るまで確かめ直し（should_stop() が
+    True なら EmbeddingStopped）、そうでなければ待たずに並び順の先頭を使う。random は確かめない。
+
+    選んだ接続先を先頭に、残りをエラー時の切り替え先として並べて返す。2つ目の戻り値は、
+    先頭の接続先を送信中として数え済み（_claim）か。
+    """
+    strategy = cfg.vector_db_embedding_routing_strategy
+    attempt = 0
+    while True:
+        order = _endpoint_order(cfg, endpoints)
+        if strategy == "random":
+            return order, False
+        for i, endpoint in enumerate(order):
+            key = _server_key(endpoint.base_url)
+            load = _probe_load(cfg, client, endpoint)
+            with _routing_lock:
+                inflight = _inflight.get(key, 0) if key is not None else 0
+                chosen = load is None or _has_room(load, inflight)
+                if chosen and key is not None:
+                    _inflight[key] = inflight + 1
+            if chosen:
+                return [endpoint] + order[:i] + order[i + 1 :], key is not None
+            logger.debug(
+                "embeddings: %s has no free slot (%s, sending from this process=%d), trying the next endpoint",
+                endpoint.base_url,
+                load,
+                inflight,
+            )
+        if not wait_when_busy:
+            return order, False
+        attempt += 1
+        interval = cfg.round_robin_busy_poll_interval_seconds
+        logger.info("embeddings: no free slot on any endpoint, checking again in %g seconds (attempt %d)", interval, attempt)
+        _wait_retry(interval, should_stop)
 
 
 def _mark_failed(endpoint: LLMEndpoint) -> None:
@@ -225,10 +348,12 @@ def _embed_batch(
     batch: list[str | dict],
     max_retries: int | None,
     should_stop: Callable[[], bool] | None,
+    wait_when_busy: bool,
 ) -> list[list[float]]:
     """batch を埋め込む。エラーが返れば次の接続先へ切り替え、全接続先でエラーなら時間を置いて試し直す。
 
-    接続できない・HTTP 200 以外が返ったら、_endpoint_order() の順で次の接続先を試す。全接続先で
+    最初に送る接続先は _choose_order() が空き状況を見て決める（wait_when_busy はそちら参照）。
+    接続できない・HTTP 200 以外が返ったら、_choose_order() の順で次の接続先を試す。全接続先で
     エラーになったら [vector_db].embedding_retry_interval_seconds 秒待って全接続先を試し直し、これを
     max_retries 回まで（None なら成功するまで無制限に、0 なら試し直さずに）繰り返す。ただし、すべてのエラーが
     408・429 以外の 4xx（入力・設定の誤りで、待っても直らない）なら試し直さない。
@@ -238,8 +363,12 @@ def _embed_batch(
     while True:
         errors: list[str] = []
         retryable = False
-        for endpoint in _endpoint_order(cfg, endpoints):
+        order, claimed = _choose_order(cfg, client, endpoints, wait_when_busy, should_stop)
+        for n, endpoint in enumerate(order):
             url = endpoint.base_url.rstrip("/") + "/embeddings"
+            key = _server_key(endpoint.base_url)
+            if not (n == 0 and claimed):
+                _claim(key)
             try:
                 response = _post(cfg, client, endpoint, url, batch)
             except httpx.TransportError as e:
@@ -248,6 +377,8 @@ def _embed_batch(
                 retryable = True
                 _mark_failed(endpoint)
                 continue
+            finally:
+                _release(key)
             if response.status_code != 200:
                 logger.warning("embeddings: %s returned an error (HTTP %d): %s", url, response.status_code, response.text[:300])
                 errors.append(f"{url} returned an error (HTTP {response.status_code}): {response.text[:300]}")

@@ -1202,12 +1202,16 @@ llama-server.exe -m D:\models\bge-m3-Q8_0.gguf --alias bge-m3 --embedding --pool
 ```ini
 [vector_db]
 enabled = true
-embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3"},]
+embedding_url = [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3", "provider": "llama_cpp"},]
 ```
 
 `embedding_url` は `[llm] main_url` と同じ形式で、接続先ごとにベクターが変わらないよう、すべて同じ `model` にする必要があり、
 `start`/`end` は指定できない。複数書いたときの選び方は `embedding_routing_strategy`（`[llm] main_routing_strategy` と同じ
-`round_robin`（既定）・`random`・`priority_failover`。GET /slots の確認はしない）で決める。どの戦略でも、接続できない・
+`round_robin`（既定）・`random`・`priority_failover`）で決める。`round_robin`・`priority_failover` では、送る前に接続先の空きを確かめ、
+埋まっていれば次の接続先へ回す（`provider = "llama_cpp"` は GET /slots の空きスロット数（このプロセスから送信中の分を差し引く）、
+`provider = "vllm"` は GET /metrics の `vllm:num_requests_waiting` が 0 かで判断し、その他の provider・確かめられない場合は空きとみなす）。
+全接続先が埋まっていれば、取り込みは `[llm] round_robin_busy_poll_interval_seconds` 秒ごとに空きが出るまで待ち（「停止」で止められる）、
+検索は待たずに並び順の先頭へ送る。確かめのタイムアウトは `[llm] round_robin_slots_probe_timeout_seconds`。どの戦略でも、接続できない・
 HTTP 200 以外が返ったときは同じリクエストを次の接続先へ送り直し、`priority_failover` ではエラーが返った接続先を60秒間後回しにする。
 すべての接続先でエラーになったら `embedding_retry_interval_seconds`（既定10）秒待って全接続先を試し直し、これを
 取り込みでは `embedding_max_retries`（既定3）回まで繰り返す。`embedding_max_retries = 0` なら成功するまで無制限に繰り返す
@@ -1734,7 +1738,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `qdrant_retry_interval_seconds` | 上記の送り直しの間隔（秒。既定10。検索は最大1秒）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS` |
 | `[vector_db]` | `qdrant_preset` | Qdrant のコレクションのチャンク件数の規模別の設定（`none` 既定＝Qdrant の既定 / `1m` / `2m` / … / `10m`＝〜100万〜1000万件向け。HNSW・int8 量子化・ベクターのディスク配置・セグメント数・検索時の `hnsw_ef`）。既存のコレクションには次の取り込み時に反映（再構築不要）。「Qdrant を使う」参照 | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | 埋め込みを計算する接続先（`/v1/embeddings`）。`[llm] main_url` と同じ形式で、全要素同じ `model`・`start`/`end` 指定不可。`enabled = true` のとき必須（`[]` は未設定） | `VECTOR_DB_EMBEDDING_URL` |
-| `[vector_db]` | `embedding_routing_strategy` | `embedding_url` が複数件のときの選び方（`round_robin` 既定 / `random` / `priority_failover`。GET /slots の確認はしない）。どの戦略でもエラーが返れば次の接続先へ送り直す（「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
+| `[vector_db]` | `embedding_routing_strategy` | `embedding_url` が複数件のときの選び方（`round_robin` 既定 / `random` / `priority_failover`。`round_robin`・`priority_failover` は llama_cpp なら GET /slots、vllm なら GET /metrics で空きを確かめ、埋まっている接続先を飛ばす）。どの戦略でもエラーが返れば次の接続先へ送り直す（「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
 | `[vector_db]` | `embedding_max_retries` | 取り込みで全接続先がエラーになったとき試し直す回数（既定3）。`0` なら成功するまで無制限。408・429 以外の 4xx だけなら試し直さない | `VECTOR_DB_EMBEDDING_MAX_RETRIES` |
 | `[vector_db]` | `search_embedding_max_retries` | 検索（`search_documents`）で同じく試し直す回数（既定2）。`0` は試し直さない（無制限は指定できない） | `VECTOR_DB_SEARCH_EMBEDDING_MAX_RETRIES` |
 | `[vector_db]` | `embedding_retry_interval_seconds` | 上記の試し直しの間隔（秒、既定10。取り込み・検索で共通） | `VECTOR_DB_EMBEDDING_RETRY_INTERVAL_SECONDS` |

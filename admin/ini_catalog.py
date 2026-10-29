@@ -147,8 +147,9 @@ _LLM_URL = {
         ],
     },
 }
-# [vector_db].embedding_url。接続先ごとにベクターが変わらないよう start/end・provider は持たない
-# （src/config.py の _as_embedding_endpoints 参照）。
+# [vector_db].embedding_url。接続先ごとにベクターが変わらないよう start/end は持たない
+# （src/config.py の _as_embedding_endpoints 参照）。provider は空きの確かめ方に使う
+# （src/vector_db/embeddings.py の _probe_load 参照）。
 _EMBEDDING_URL = {
     "type": "list",
     "item": {
@@ -157,6 +158,7 @@ _EMBEDDING_URL = {
             {"name": "base_url", "schema": _str("例: http://localhost:12440/v1")},
             {"name": "api_key", "schema": {**_str("dummy-not-used"), "default": "dummy-not-used"}},
             {"name": "model", "schema": _str("埋め込みモデル名（全接続先で同じにする）")},
+            {"name": "provider", "schema": {"type": "choice", "choices": ["openai_compatible", "llama_cpp", "vllm"]}, "optional": True},
         ],
     },
 }

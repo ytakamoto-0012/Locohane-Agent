@@ -886,16 +886,24 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'vector_db.embedding_url': (
         'Endpoints of the inference server that computes embeddings. A list in the same format as [llm] main_url (calls the OpenAI-compatible /v1/embeddings).\n'
-        'Example: start llama-server on another port with --embedding --pooling mean etc., and [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3"},]\n'
+        'Example: start llama-server on another port with --embedding --pooling mean etc., and [{"base_url": "http://localhost:12440/v1", "api_key": "dummy-not-used", "model": "bge-m3", "provider": "llama_cpp"},]\n'
+        '  provider: "openai_compatible" (default, can be omitted) / "llama_cpp" / "vllm". The kind of inference server. With round_robin / priority_failover it decides\n'
+        '            how to check whether the endpoint is free before sending (see embedding_routing_strategy below; "openai_compatible" is not checked).\n'
         'If several are given, they are tried in the order of embedding_routing_strategy, switching to the next endpoint when an error is returned (cannot connect, non-200 HTTP).\n'
         'They must return the same vectors, so use the same model for all (start/end cannot be specified).\n'
         'Required when enabled = true ([] means not set).'
     ),
     'vector_db.embedding_routing_strategy': (
-        'How to choose when there are several embedding_url entries. The same 3 values as [llm] main_routing_strategy (no check for free slots with GET /slots):\n'
+        'How to choose when there are several embedding_url entries. The same 3 values as [llm] main_routing_strategy:\n'
         'round_robin       : rotate the first endpoint one by one per request (default; for spreading the load over several machines with ingest_workers set to 2 or more).\n'
         'random            : choose randomly per request.\n'
         'priority_failover : always use the first one, and put an endpoint that returned an error at the back for 60 seconds and use the next one.\n'
+        'With round_robin and priority_failover, it checks whether an endpoint is free before sending and moves on to the next one if it is full (checked even with a single endpoint):\n'
+        '  provider = "llama_cpp" : counts the free slots with GET /slots (requests this process is sending also count as busy).\n'
+        '  provider = "vllm"      : treated as full if vllm:num_requests_waiting (the queue) of GET /metrics is 1 or more.\n'
+        '  Other providers, and cases where it cannot be checked, are treated as free.\n'
+        'When all endpoints are full, ingestion waits until one is free, checking every [llm] round_robin_busy_poll_interval_seconds seconds (it can be stopped with "Stop").\n'
+        'Search sends to the first in the order without waiting. The timeout of the check is [llm] round_robin_slots_probe_timeout_seconds. random does not check.\n'
         'Whichever you choose, when an error is returned the same request is resent to the next endpoint.'
     ),
     'vector_db.embedding_max_retries': (
