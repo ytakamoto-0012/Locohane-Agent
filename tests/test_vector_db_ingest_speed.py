@@ -206,15 +206,17 @@ def test_scan_source_files_returns_same_stat_as_path_stat(tmp_path):
     assert (st.st_size, st.st_mtime) == (path.stat().st_size, path.stat().st_mtime)
 
 
-def test_large_files_start_first_when_parallel(env):
-    (env["docs"] / "a_small.md").write_text("小", encoding="utf-8")
-    (env["docs"] / "b_large.md").write_text("大" * 500, encoding="utf-8")
+@pytest.mark.parametrize("workers", [1, 2])
+def test_small_files_start_first(env, workers):
+    # パスの順（a → b）とサイズの順（b → a）を逆にしておく。
+    (env["docs"] / "a_large.md").write_text("大" * 500, encoding="utf-8")
+    (env["docs"] / "b_small.md").write_text("小", encoding="utf-8")
     started = []
-    cfg = _config(env, vector_db_ingest_workers=2)
+    cfg = _config(env, vector_db_ingest_workers=workers)
     # 記録が終わったときの通知は直前に読み始めたファイルの path のまま来るため、続けて同じ path は数えない。
     progress = lambda done, total, path: path and started[-1:] != [path] and started.append(path)  # noqa: E731
     ingest.ingest_collection(cfg, "docs", progress=progress, **env["kwargs"])
-    assert [p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in started] == ["b_large.md", "a_small.md"]
+    assert [p.rsplit("\\", 1)[-1].rsplit("/", 1)[-1] for p in started] == ["b_small.md", "a_large.md"]
 
 
 def test_ingest_with_child_processes(tmp_path):

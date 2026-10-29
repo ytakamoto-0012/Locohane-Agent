@@ -1398,9 +1398,8 @@ class _Pipeline:
 
     def run(self, files: list[tuple[Path, os.stat_result]]) -> None:
         """files を処理する（停止したら self.stopped が True）。"""
-        if self.workers > 1 or self.processes > 1:
-            # 大きいファイルから始め、最後に大きいファイルが1つだけ残って待つのを避ける。
-            files = sorted(files, key=lambda item: item[1].st_size, reverse=True)
+        # 小さいファイルから始め、多くのファイルを早く検索できるようにする（同じサイズはパスの順のまま）。
+        files = sorted(files, key=lambda item: item[1].st_size)
         self.total = len(files)
         self.pending = iter(files)
         self.exhausted = False
