@@ -102,12 +102,17 @@ def settings_to_register(directory: Path) -> dict[tuple[str, str], list]:
     return result
 
 
-def _current_override_text(instances_root: Path, name: str, section: str, key: str, catalog) -> str:
+def _current_override_text(instances_root: Path, name: str, section: str, key: str, catalog) -> tuple[str, str]:
+    """(config_overrides.json の今の値（無ければ空）, config.ini の既定値)。
+
+    登録先のキーは config.ini の既定値に足す分だけを上書きに持つ（src/config.py の ADDITIVE_OVERRIDE_KEYS）ため、
+    既定値を上書きへ写さない（写すと、アップデートで既定値から外した項目が残り続ける）。
+    """
     existing = overrides.read(inst.overrides_path(instances_root, name))
     info = find_key(catalog, section, key)
     if info is None:
         raise PromotionError(_t("config.ini に [{0}].{1} がありません。", section, key))
-    return existing.get(section, {}).get(key, info.default_value)
+    return existing.get(section, {}).get(key, ""), info.default_value
 
 
 def _env_blocked(instances_root: Path, name: str, keys) -> list[str]:
@@ -127,8 +132,8 @@ def compute_updates(instances_root: Path, name: str, register: dict[tuple[str, s
     updates: dict[tuple[str, str], str] = {}
     added: dict[str, list] = {}
     for (section, key), items in register.items():
-        current = _current_override_text(instances_root, name, section, key, catalog)
-        new_value, new_items = merged_value(section, key, current, items)
+        current, default = _current_override_text(instances_root, name, section, key, catalog)
+        new_value, new_items = merged_value(section, key, current, items, default)
         if new_value is not None:
             updates[(section, key)] = new_value
             added[f"{section}.{key}"] = new_items

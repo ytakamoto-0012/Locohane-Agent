@@ -92,6 +92,32 @@ def test_multiline_value_override_applied(tmp_path):
     assert cfg.main_endpoints[0].base_url == "http://example/v1"
 
 
+def test_skill_registration_lists_are_added_to_defaults(tmp_path, monkeypatch):
+    """スキルの登録系のリストは既定値を置き換えず、既定値に無い項目だけを足す（既定値の項目は消せない）。"""
+    for env in ("PLAN_APPROVAL_EXEMPT_SCRIPTS", "SUBAGENT_AGENT_TYPE_RUN_SCRIPT_ALLOWLIST", "MAIN_AGENT_TOOL_GUARD_ALLOW_ENTRIES"):
+        monkeypatch.delenv(env, raising=False)
+    baseline = load_config(overrides_path=tmp_path / "missing.json")
+    ov_path = tmp_path / "overrides.json"
+    _write_overrides(
+        ov_path,
+        {
+            "plan": {"plan_approval_exempt_scripts": '[["my-skill", "run.py"]]'},
+            "subagent": {"agent_type_run_script_allowlist": '[["my-agent", "excel-read"]]'},
+            # Glob は既定値にある対象なので、上限回数を変えようとしても既定値のまま
+            "main_agent_tool_guard": {"allow_entries": '[["Glob", 99], [["my-skill", "run.py"], -1]]'},
+        },
+    )
+    cfg = load_config(overrides_path=ov_path)
+    assert cfg.plan_approval_exempt_scripts == baseline.plan_approval_exempt_scripts | {("my-skill", "run.py")}
+    assert cfg.subagent_agent_type_run_script_allowlist == baseline.subagent_agent_type_run_script_allowlist | {
+        ("my-agent", "excel-read")
+    }
+    allow = dict(cfg.main_agent_tool_guard_allow_entries)
+    assert allow["Glob"] == dict(baseline.main_agent_tool_guard_allow_entries)["Glob"]
+    assert allow[("my-skill", "run.py")] == -1
+    assert set(dict(baseline.main_agent_tool_guard_allow_entries)) <= set(allow)
+
+
 def test_all_keys_roundtrip_to_identical_config(tmp_path):
     """全キーを自分自身の既定値で上書きすると、上書きなしと完全に同じConfigになる。"""
     from admin.ini_catalog import parse_file

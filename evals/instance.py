@@ -24,7 +24,12 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 from admin.instances import InstanceError, validate_name  # noqa: E402
-from src.config import DEFAULT_INSTANCE_NAME, resolve_instances_root  # noqa: E402
+from src.config import (  # noqa: E402
+    ADDITIVE_OVERRIDE_KEYS,
+    DEFAULT_INSTANCE_NAME,
+    merge_additive_override,
+    resolve_instances_root,
+)
 
 
 def resolve_instance_name(cli_value: str | None) -> str:
@@ -106,6 +111,9 @@ def raw_setting(name: str, section: str, key: str, env_name: str, *, process_env
     if overrides_file.is_file():
         data = json.loads(overrides_file.read_text(encoding="utf-8") or "{}")
         if key in (data.get(section) or {}):
+            if (section, key) in ADDITIVE_OVERRIDE_KEYS:
+                # スキルの登録系のリストは config.ini の値に足すだけ（load_config() と同じ合成）
+                return merge_additive_override(section, key, _ini_value(section, key) or "", str(data[section][key]))[0]
             return data[section][key]
     return _ini_value(section, key)
 

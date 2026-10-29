@@ -73,6 +73,61 @@ def is_instance_overridable(section: str, key: str) -> bool:
     return section not in _OVERRIDE_EXEMPT_SECTIONS and (section, key) not in ADMIN_SETTING_KEYS
 
 
+# スキルの登録系のリスト型キー。インスタンス別の config_overrides.json の値は config.ini の値を置き換えず、
+# config.ini（既定値）に無い項目だけを足す（merge_additive_override 参照）。置き換えにすると、アップデートで
+# 既定値へ足された新しいスキルが、以前に保存した上書きの値で消えてしまうため。既定値の項目は上書きで消したり
+# 変えたり（allow_entries の上限回数を含む）できない。
+ADDITIVE_OVERRIDE_KEYS = frozenset(
+    {
+        ("plan", "plan_approval_exempt_scripts"),
+        ("subagent", "agent_type_run_script_allowlist"),
+        ("main_agent_tool_guard", "allow_entries"),
+    }
+)
+
+
+def _additive_item_identity(section: str, key: str, item: object) -> object:
+    """ADDITIVE_OVERRIDE_KEYS の重複判定の単位。allow_entries は対象（[対象, 上限回数] の対象）だけで判定する。"""
+
+    def _freeze(x: object) -> object:
+        return tuple(_freeze(i) for i in x) if isinstance(x, (list, tuple)) else x
+
+    if (section, key) == ("main_agent_tool_guard", "allow_entries") and isinstance(item, (list, tuple)) and item:
+        return _freeze(item[0])
+    return _freeze(item)
+
+
+def merge_additive_override(section: str, key: str, base_text: str, override_text: str) -> tuple[str, list]:
+    """config.ini の値（base_text）に、上書きの値（override_text）のうち既定値に無い項目だけを足した値を返す。
+
+    どちらも config.ini に書くのと同じ Python リストリテラル文字列。リストとして読めない場合は
+    合成せず override_text をそのまま返す（以降の load_config() の解析で従来どおりエラーにする）。
+
+    Returns:
+        (合成した値の文字列, 既定値と同じ対象のため無視した上書きの項目のうち、既定値と内容が違うもの)。
+    """
+    try:
+        base = ast.literal_eval(base_text.strip()) if base_text and base_text.strip() else []
+        extra = ast.literal_eval(override_text.strip()) if override_text and override_text.strip() else []
+    except (ValueError, SyntaxError):
+        return override_text, []
+    if not isinstance(base, list) or not isinstance(extra, list):
+        return override_text, []
+    base_items = {_additive_item_identity(section, key, i): i for i in base}
+    merged = list(base)
+    seen = set(base_items)
+    ignored = []
+    for item in extra:
+        ident = _additive_item_identity(section, key, item)
+        if ident in seen:
+            if ident in base_items and _additive_item_identity("", "", item) != _additive_item_identity("", "", base_items[ident]):
+                ignored.append(item)
+            continue
+        seen.add(ident)
+        merged.append(item)
+    return repr(merged), ignored
+
+
 # ADMIN_SETTING_KEYS をインスタンス別に上書きしようとした (ファイル, セクション, キー) のうち、警告を出したもの。
 _warned_global_only: set[tuple[str, str, str]] = set()
 
@@ -4005,7 +4060,8 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
 
     [admin] セクションは上書き対象から除外する（管理ツール自身の起動設定を
     管理ツールから変更できてしまう循環を避けるため）。ADMIN_SETTING_KEYS（全インスタンス共通の
-    キー）も除外する。
+    キー）も除外する。ADDITIVE_OVERRIDE_KEYS（スキルの登録系のリスト）は置き換えず、
+    config.ini の値に無い項目だけを足す（merge_additive_override 参照）。
 
     Args:
         parser: config.ini を読み込み済みの ConfigParser（このオブジェクトを
@@ -4060,6 +4116,19 @@ def _apply_config_overrides(parser: configparser.ConfigParser, path: Path) -> No
                         section,
                         key,
                     )
+                continue
+            if (section, key) in ADDITIVE_OVERRIDE_KEYS:
+                merged, ignored = merge_additive_override(section, key, parser.get(section, key), str(value))
+                if ignored and (str(path), section, key) not in _warned_global_only:
+                    _warned_global_only.add((str(path), section, key))
+                    logger.warning(
+                        "%s: ignoring %s in [%s].%s because the config.ini defaults cannot be overridden (only new entries are added).",
+                        path,
+                        ignored,
+                        section,
+                        key,
+                    )
+                parser.set(section, key, merged)
                 continue
             parser.set(section, key, str(value))
 

@@ -296,7 +296,8 @@ DESCRIPTIONS: dict[str, str] = {
         'If empty, the 19 default entries below are used. A target is one of these two kinds:\n'
         '- "skill name"                         : allow all scripts under that skill\n'
         '- ["skill name","script file name"]   : allow only that script\n'
-        'For skills like pdf-tools that mix read-only scripts (read_pdf.py / render_pdf_pages.py) and write scripts (create_pdf.py) under the same skill, allow them individually with the latter form, not per skill name.'
+        'For skills like pdf-tools that mix read-only scripts (read_pdf.py / render_pdf_pages.py) and write scripts (create_pdf.py) under the same skill, allow them individually with the latter form, not per skill name.\n'
+        'A value saved on the settings dashboard (the per-instance config_overrides.json) does not replace the defaults; only entries not in the defaults are added (default entries cannot be removed, so that new skills added to the defaults by an update are not wiped out by a previously saved value).'
     ),
     'context_trim.enabled': (
         'Settings for the main agent (src/graph.py). Sub-agents (dispatch_agent, run_subagent in src/subagent.py) use the values in the [context_trim.subagent] section below where items are given, and items not given inherit the values of this section (by default no items are given = full inheritance, so unless you edit [context_trim.subagent], the same values apply to main and sub as before).\n'
@@ -483,7 +484,8 @@ DESCRIPTIONS: dict[str, str] = {
         '- analyze_image (with show_image merged into it, the main agent can also call it directly.\n'
         'But 1-2 images is the guideline. Hammering many pages can hit the token limit, so the "Handling images" section of system_prompt.md urges delegating large numbers to worker/explore)\n'
         'run_script / run_script_background are not registered as bare tool names (registering them would limit them all together regardless of which skill script is run, and the granularity of [skill name, script file name] below would lose its meaning).\n'
-        'So when you add a new skill script, the main agent cannot run it unless you add it individually to allow_entries below (it can be run via sub-agents).'
+        'So when you add a new skill script, the main agent cannot run it unless you add it individually to allow_entries below (it can be run via sub-agents).\n'
+        'A value saved on the settings dashboard (the per-instance config_overrides.json) does not replace the defaults; only targets not in the defaults are added (default targets cannot be removed and their max_calls cannot be changed, so that new skills added to the defaults by an update are not wiped out by a previously saved value).'
     ),
     'thinking_loop_guard.enabled': (
         'Settings of the feature that, when a repetition loop (a runaway in which the same sentence or code block repeats almost verbatim) is detected while streaming an LLM response (thinking/body), cuts off generation, injects a warning message and retries. [llm].dry_multiplier (the server-side DRY sampler) suppresses this greatly, but this is an app-side (client-side) safety net for the residual risk that does not disappear completely.'
@@ -1195,7 +1197,8 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'plan.plan_approval_exempt_scripts': (
         'A whitelist of read-only scripts exempted from plan approval (Plan Mode) for run_script/run_script_background. Specify it as a Python/JSON-style list [["skill name","script file name"], ...] (trailing comma allowed). If empty, the 7 default entries below are used.\n'
-        'Limit it to "read-only scripts without side effects" (be careful: adding write scripts would let writes run without plan approval).'
+        'Limit it to "read-only scripts without side effects" (be careful: adding write scripts would let writes run without plan approval).\n'
+        'A value saved on the settings dashboard (the per-instance config_overrides.json) does not replace the defaults; only entries not in the defaults are added (default entries cannot be removed, so that new skills added to the defaults by an update are not wiped out by a previously saved value).'
     ),
     'auth.enabled': (
         'Turns login authentication on/off.\n'

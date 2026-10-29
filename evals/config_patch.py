@@ -117,15 +117,16 @@ def format_list_literal(items: list) -> str:
     return "[\n" + "".join(f"    {json.dumps(item, ensure_ascii=False)},\n" for item in items) + "]"
 
 
-def merged_value(section: str, key: str, current_text: str, items: list) -> tuple[str | None, list]:
+def merged_value(section: str, key: str, current_text: str, items: list, default_text: str = "") -> tuple[str | None, list]:
     """今の値（リストリテラル文字列）に items を足した新しい値と、実際に足した項目を返す。
 
     既にある項目（allow_entries は対象が同じもの）は足さない。足すものが無ければ (None, [])。
+    default_text（config.ini の既定値）を渡すと、そこにある項目も足さない。config_overrides.json は
+    既定値に足す分だけを持つため（src/config.py の ADDITIVE_OVERRIDE_KEYS）、昇格では current_text に
+    上書きの値だけを、default_text に config.ini の値を渡す。
     """
-    current = ast.literal_eval(current_text.strip()) if current_text and current_text.strip() else []
-    if not isinstance(current, list):
-        raise ConfigPatchError(f"[{section}].{key} の今の値がリストではありません: {current_text!r}")
-    seen = {_identity(section, key, _as_json_like(i)) for i in current}
+    current = _literal_list(section, key, current_text)
+    seen = {_identity(section, key, _as_json_like(i)) for i in [*current, *_literal_list(section, key, default_text)]}
     added = []
     for item in items:
         ident = _identity(section, key, item)
@@ -136,6 +137,13 @@ def merged_value(section: str, key: str, current_text: str, items: list) -> tupl
     if not added:
         return None, []
     return format_list_literal([*(_as_json_like(i) for i in current), *added]), added
+
+
+def _literal_list(section: str, key: str, text: str) -> list:
+    value = ast.literal_eval(text.strip()) if text and text.strip() else []
+    if not isinstance(value, list):
+        raise ConfigPatchError(f"[{section}].{key} の今の値がリストではありません: {text!r}")
+    return value
 
 
 def _as_json_like(item):

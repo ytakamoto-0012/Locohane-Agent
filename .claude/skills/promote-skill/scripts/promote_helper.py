@@ -227,14 +227,21 @@ def _format_list_literal(items: list) -> str:
     return "[\n" + "".join(f"    {json.dumps(item, ensure_ascii=False)},\n" for item in items) + "]"
 
 
-def _merged_value(current_text: str, entries: list[tuple[str, str]], allow_entries: bool) -> tuple[str | None, list]:
-    """今の値（リストリテラル文字列）に entries を足した新しい値と、足した要素を返す（足すものが無ければ None）。"""
+def _merged_value(
+    current_text: str, entries: list[tuple[str, str]], allow_entries: bool, default_text: str = ""
+) -> tuple[str | None, list]:
+    """今の値（リストリテラル文字列）に entries を足した新しい値と、足した要素を返す（足すものが無ければ None）。
+
+    default_text（config.ini の既定値）にある要素も足さない。config_overrides.json は既定値に足す分だけを
+    持つ（src/config.py の ADDITIVE_OVERRIDE_KEYS）ため、current_text には上書きの値だけを渡す。
+    """
     items = ast.literal_eval(current_text.strip()) if current_text.strip() else []
+    defaults = ast.literal_eval(default_text.strip()) if default_text.strip() else []
     if allow_entries:
-        registered = {tuple(k) if isinstance(k, list) else k for k, _ in items}
+        registered = {tuple(k) if isinstance(k, list) else k for k, _ in [*items, *defaults]}
         added = [[list(e), -1] for e in entries if e not in registered]
     else:
-        registered = {tuple(i) for i in items}
+        registered = {tuple(i) for i in [*items, *defaults]}
         added = [list(e) for e in entries if e not in registered]
     if not added:
         return None, []
@@ -268,8 +275,8 @@ def _register_guard_exemptions(instance: str, entries: list[tuple[str, str]], ac
         info = find_key(catalog, section, key)
         if info is None:
             raise SystemExit(f"config.ini に [{section}].{key} がありません。")
-        current = existing.get(section, {}).get(key, info.default_value)
-        new_value, new_items = _merged_value(current, entries, allow_entries=(key == "allow_entries"))
+        current = existing.get(section, {}).get(key, "")
+        new_value, new_items = _merged_value(current, entries, allow_entries=(key == "allow_entries"), default_text=info.default_value)
         if new_value is not None:
             updates[(section, key)] = new_value
             added[f"{section}.{key}"] = new_items

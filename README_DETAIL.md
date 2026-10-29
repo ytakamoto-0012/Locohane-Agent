@@ -2075,6 +2075,13 @@ config_overrides.json`）。`[admin]` セクション（管理ツール自身の
 （`admin/instances.py` の `config_key_applies()`、`src/config.py` の
 `is_instance_overridable()`）。
 
+スキルの登録系のリスト（`[plan] plan_approval_exempt_scripts`・`[subagent]
+agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`）は、
+`config_overrides.json` の値で config.ini を置き換えず、既定値に無い項目だけを
+足す（`src/config.py` の `ADDITIVE_OVERRIDE_KEYS`）。アップデートで既定値に足された
+新しいスキルを、保存済みの値でつぶさないため。既定値の項目は消せず、`allow_entries`
+の上限回数も既定値のままになる（環境変数は従来どおり値全体を置き換える）。
+
 保存前には `load_config()` 本体の型変換・バリデーションで実際に検証し、
 失敗する値は保存されない。保存のたびに変更前の内容を
 `instances/<name>/backups/` へバックアップし（`[admin].backup_keep`
