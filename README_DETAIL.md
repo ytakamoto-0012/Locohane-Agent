@@ -1121,6 +1121,8 @@ YAML frontmatter 付き Markdown ファイルとして保存する。ロジッ�
   キーワード検索用に入れる（`src/vector_db/keyword_index.py`）。
 - **取り込み**（`src/vector_db/ingest.py`）: 対応形式は `.pdf`（ページ単位）・`.docx`・`.xlsx`/`.xlsm`（シート単位）・`.pptx`
   （スライド単位、ノート含む）・`.md`/`.txt`/`.csv`（`[vector_db] include_extensions` で絞れる。Office の一時ファイル `~$*` は除く）。
+  アプリ専用の拡張子でも中身がテキストの形式（`.step`・`.igs`・AutoForm の材料ファイル `.mat` 等）は、`[vector_db] text_extensions` に書くと
+  `.txt` と同じくテキストとして取り込める（`include_extensions` にも書く。中身がバイナリ（NUL を含む）ならファイルパスだけを登録する）。
   Office ファイルは本文の段落・セル・図形の文字に加えて、次のものも本文として取り出す（`src/vector_db/extract.py`）:
   - `.docx`: テキストボックス・ヘッダー/フッター・脚注/文末脚注・コメント（本文の後ろに `[Text box]`・`[Header]` 等の見出しを付けて並べる）。
     本文は段落と表を文書の順に読み、コンテンツコントロールの中の文字・変更履歴で挿入した文字も含める（削除した文字は含めない）。
@@ -1737,6 +1739,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `query_prefix` / `document_prefix` | 検索語・文書の先頭に付ける文字列（既定 `auto` で `model` の名前から決める。空欄で付けない、それ以外はその値。末尾の空白を残すならダブルクォートで囲む。`document_prefix` を変えたら再構築が必要。「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_QUERY_PREFIX` / `VECTOR_DB_DOCUMENT_PREFIX` |
 | `[vector_db]` | `chunk_size` / `chunk_overlap` | チャンク1つの最大文字数（既定800）と、隣り合うチャンクで重ねる文字数（既定100、`chunk_size` 未満） | `VECTOR_DB_CHUNK_SIZE` / `VECTOR_DB_CHUNK_OVERLAP` |
 | `[vector_db]` | `include_extensions` | 取り込む拡張子（カンマ区切り。対応形式は `.pdf .docx .xlsx .xlsm .pptx .md .txt .csv` と画像ファイル `.png .jpg .jpeg .gif .bmp .webp .tif .tiff .heic .heif`。画像ファイルは `image_input = false` ならファイルパスだけを登録する） | `VECTOR_DB_INCLUDE_EXTENSIONS` |
+| `[vector_db]` | `text_extensions` | 対応形式のほかに、`.txt` と同じくテキストとして読む拡張子（カンマ区切り。既定は空。例: `.step, .igs, .mat`）。取り込むには `include_extensions` にも書く。中身がバイナリ（NUL を含む）のファイルはファイルパスだけを登録する。対応形式・画像ファイルの拡張子はその形式の読み方が優先 | `VECTOR_DB_TEXT_EXTENSIONS` |
 | `[vector_db]` | `max_file_mb` | 取り込む1ファイルの上限サイズ（MB、既定50。超えると失敗一覧に載る）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_MAX_FILE_MB` |
 | `[vector_db]` | `image_input` | 埋め込みに画像を入力するか（既定 false）。true なら `image_input_extensions` の形式（既定 `.pdf`）は本文に加えてページごとの画像も埋め込み、それ以外の Office ファイルは中の画像を埋め込み（`embedded_images`）、画像ファイル（`.png .jpg .heic` 等）も画像として埋め込む。画像入力に対応した埋め込みモデルと、Office ファイルには Windows・Microsoft Office が必要（「ページを画像として取り込む（image_input）」参照） | `VECTOR_DB_IMAGE_INPUT` |
 | `[vector_db]` | `image_input_extensions` | `image_input = true` のときにページ画像も埋め込む文書の形式（既定 `.pdf`。`.pdf .docx .pptx .xlsx .xlsm` から選ぶ。空ならどれも画像にしない）。含めない Office ファイルは本文と中の画像（`embedded_images`）で埋め込む。画像ファイルはこの設定に関係なく画像で埋め込む | `VECTOR_DB_IMAGE_INPUT_EXTENSIONS` |

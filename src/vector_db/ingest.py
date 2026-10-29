@@ -34,7 +34,7 @@ from .catalog import Catalog, CatalogError, FileRecord, open_catalog
 from .chunking import split_text
 from .embedded_images import EMBEDDED_IMAGE_EXTENSIONS, extract_embedded_images
 from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_model, open_client
-from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
+from .extract import SUPPORTED_EXTENSIONS, ExtractError, NotTextError, extract_segments
 from .gc_pacer import GcPacer
 from .journal import IngestJournal, open_journal
 from .keyword_index import KeywordIndex, open_keyword_index
@@ -250,13 +250,14 @@ def _is_hidden(path: Path, st: os.stat_result | None = None) -> bool:
         return False
 
 
-def effective_extensions(extensions: tuple[str, ...]) -> tuple[str, ...]:
+def effective_extensions(extensions: tuple[str, ...], text_extensions: Collection[str] = ()) -> tuple[str, ...]:
     """include_extensions のうち、実際に取り込む拡張子。
 
     画像ファイル（.png・.heic 等）は image_input = True なら画像として埋め込み、False でもファイル名・
     フォルダ名で探せるようパスだけを登録する（file_mode() の "path"）。
+    text_extensions（[vector_db].text_extensions）の拡張子は、テキストとして読む形式として加える。
     """
-    supported = SUPPORTED_EXTENSIONS + IMAGE_FILE_EXTENSIONS
+    supported = (*SUPPORTED_EXTENSIONS, *IMAGE_FILE_EXTENSIONS, *text_extensions)
     return tuple(e for e in extensions if e in supported)
 
 
@@ -484,6 +485,7 @@ def scan_source_files(
     known: Collection[str] = (),
     exclude_keywords: Sequence[str] = (),
     include_keywords: Sequence[str] = (),
+    text_extensions: Collection[str] = (),
 ) -> ScanResult:
     """取り込み対象のファイルとその stat を探す（Office の一時ファイル ~$*.docx 等と、隠しファイル・隠しフォルダ配下は除く）。
 
@@ -492,7 +494,7 @@ def scan_source_files(
     exclude_keywords（取り込み除外キーワード）のどれかを取り込み元フォルダより下のパスに含むフォルダ・ファイルも除き、
     include_keywords（取り込み対象キーワード）があれば、どれかを含むファイルだけにする（大文字小文字は区別しない。_PathFilter）。
     シンボリックリンク・ジャンクションのフォルダもたどるが、ループ・重複になるものはたどらない（_LinkGuard）。
-    拡張子は effective_extensions() で絞る。stat は os.scandir() のもの（Windows ではフォルダを読むときに
+    拡張子は effective_extensions()（text_extensions も渡す）で絞る。stat は os.scandir() のもの（Windows ではフォルダを読むときに
     サイズ・更新日時・属性も得られるため、ファイルごとに問い合わせずに済む）。
 
     workers が 2 以上なら、その数のスレッドで複数のフォルダを同時に読む（ファイルサーバー上のフォルダでは
@@ -502,7 +504,7 @@ def scan_source_files(
     ファイルを優先し、残りの枠を新しいファイルのパス順の先頭から埋める。メモリーに持つのは高々 max_files の
     2倍程度のファイルまで。
     """
-    allowed = set(effective_extensions(extensions))
+    allowed = set(effective_extensions(extensions, text_extensions))
     path_filter = _PathFilter.from_keywords(exclude_keywords, include_keywords)
     roots = _scan_roots(folders, recursive)
     links = _LinkGuard(roots)
@@ -572,9 +574,13 @@ def list_source_files(
     extensions: tuple[str, ...],
     exclude_keywords: Sequence[str] = (),
     include_keywords: Sequence[str] = (),
+    text_extensions: Collection[str] = (),
 ) -> list[Path]:
     """scan_source_files() のファイルのパスだけを返す。"""
-    scan = scan_source_files(folders, recursive, extensions, exclude_keywords=exclude_keywords, include_keywords=include_keywords)
+    scan = scan_source_files(
+        folders, recursive, extensions,
+        exclude_keywords=exclude_keywords, include_keywords=include_keywords, text_extensions=text_extensions,
+    )
     return [path for path, _st in scan.files]
 
 
@@ -802,6 +808,8 @@ class _LoadOptions:
     office_timeout: float = 0.0
     # ページ画像の PNG を書き出す一時フォルダ（取り込み1回ごとに作る。_ingest）。空ならシステムの一時フォルダ。
     pages_dir: str = ""
+    # テキストとして読む拡張子（[vector_db].text_extensions）。
+    text_extensions: tuple[str, ...] = ()
 
     @classmethod
     def from_config(cls, cfg: Config, pages_dir: str = "") -> "_LoadOptions":
@@ -816,6 +824,7 @@ class _LoadOptions:
             cfg.vector_db_embedded_image_min_px,
             cfg.vector_db_office_timeout_seconds,
             pages_dir,
+            cfg.vector_db_text_extensions,
         )
 
     @property
@@ -833,10 +842,11 @@ def _file_mode(options: _LoadOptions, path: Path) -> str:
 
 
 def _chunk_segments(options: _LoadOptions, path: Path, data: bytes | None = None) -> list[ChunkRecord]:
-    if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+    suffix = path.suffix.lower()
+    if suffix not in SUPPORTED_EXTENSIONS and suffix not in options.text_extensions:
         return []  # 画像ファイルには本文が無い
     chunks = []
-    for segment in extract_segments(path, data):
+    for segment in extract_segments(path, data, options.text_extensions):
         for text in split_text(segment.text, options.chunk_size, options.chunk_overlap):
             chunks.append(ChunkRecord(locator=segment.locator, text=text))
     return chunks
@@ -886,7 +896,12 @@ def _load(
                 path, record, mode, "touch", stat=st, sha=sha, keyword_chunks=_keyword_chunks(options, path, needs_keywords),
                 path_text=path_text,
             )
-        chunks = _chunk_segments(options, path, data)
+        not_text: NotTextError | None = None
+        try:
+            chunks = _chunk_segments(options, path, data)
+        except NotTextError as e:
+            # text_extensions の形式でも中身がバイナリなら、失敗にせずパスだけを登録する（画像だけの PDF と同じ）。
+            chunks, not_text = [], e
         pages: list[PageImage] = []
         if mode == "text+embedded":
             page_dir = Path(tempfile.mkdtemp(prefix="file_", dir=options.pages_dir or None))
@@ -907,6 +922,8 @@ def _load(
             reason = "There was neither text nor a page that could be rendered as an image"
         elif mode == "text+embedded":
             reason = "There was neither text nor an image in the file"
+        elif not_text is not None:
+            reason = str(not_text)
         else:
             reason = "Could not extract text (e.g. a PDF of images only; with [vector_db] image_input = true it can be ingested as images)"
         return _Prepared(path, record, mode, "path_only", stat=st, sha=sha, path_text=path_text, reason=reason)
@@ -1650,7 +1667,7 @@ def _ingest(
     scan = scan_source_files(
         folders, recursive, cfg.vector_db_include_extensions,
         workers=cfg.vector_db_scan_workers, max_files=max_files, known=known,
-        exclude_keywords=exclude_keywords, include_keywords=include_keywords,
+        exclude_keywords=exclude_keywords, include_keywords=include_keywords, text_extensions=cfg.vector_db_text_extensions,
     )
     files = scan.files
     result.found_files, result.max_files, result.over_limit = scan.total, max_files, scan.over_limit

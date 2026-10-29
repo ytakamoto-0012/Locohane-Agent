@@ -36,6 +36,7 @@ def test_defaults_are_disabled_sqlite_vec(tmp_path):
     assert cfg.vector_db_qdrant_collection_prefix == "locohane_inst1_"
     assert cfg.vector_db_distance == "Cosine"
     assert ".pdf" in cfg.vector_db_include_extensions
+    assert cfg.vector_db_text_extensions == ()
     # 無効のときはディレクトリを作らない
     assert not cfg.vector_db_dir.exists()
 
@@ -51,12 +52,14 @@ def test_enabled_with_overrides(tmp_path, monkeypatch):
             "embedding_url": _EMBED,
             "query_prefix": '"query: "',
             "include_extensions": "PDF, .md, md",
+            "text_extensions": "STEP, .igs, mat",
         },
     )
     assert cfg.vector_db_enabled and cfg.vector_db_backend == "qdrant"
     assert cfg.vector_db_embedding_endpoints[0].model == "bge-m3"
     assert cfg.vector_db_query_prefix == "query: "
     assert cfg.vector_db_include_extensions == (".pdf", ".md")
+    assert cfg.vector_db_text_extensions == (".step", ".igs", ".mat")
     assert cfg.vector_db_qdrant_api_key == "secret"
     assert cfg.vector_db_dir.is_dir()
 

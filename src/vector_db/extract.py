@@ -13,6 +13,7 @@ import locale
 from pathlib import Path
 import re
 import threading
+from typing import Collection
 
 SUPPORTED_EXTENSIONS = (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".md", ".txt", ".csv")
 
@@ -38,12 +39,18 @@ class ExtractError(Exception):
     """対応していない形式、またはファイルを読めなかった。"""
 
 
-def extract_segments(path: Path, data: bytes | None = None) -> list[Segment]:
+class NotTextError(ExtractError):
+    """text_extensions の形式だが、中身がテキストではなかった（バイナリ形式で保存されたファイル等）。"""
+
+
+def extract_segments(path: Path, data: bytes | None = None, text_extensions: Collection[str] = ()) -> list[Segment]:
     """拡張子に応じてテキストを取り出す。本文が空の区切りは含めない。
 
     data にファイルの中身を渡すと、ファイルを読み直さずにそれを使う（取り込みで SHA-256 の計算と読み取りを1回にするため）。
+    text_extensions（[vector_db].text_extensions）の拡張子は .txt と同じくテキストとして読む（対応形式の読み方が優先）。
 
     Raises:
+        NotTextError: text_extensions の形式で、中身が NUL を含む（バイナリ）場合。
         ExtractError: 対応していない拡張子、またはファイルを読めなかった場合。
     """
     ext = path.suffix.lower()
@@ -59,6 +66,12 @@ def extract_segments(path: Path, data: bytes | None = None) -> list[Segment]:
             segments = _extract_pptx(source)
         elif ext in (".md", ".txt", ".csv"):
             segments = [Segment("", _decode_text(path.read_bytes() if data is None else data))]
+        elif ext in text_extensions:
+            raw = path.read_bytes() if data is None else data
+            # テキスト形式と同じ拡張子のバイナリ形式（保存時に形式を選べるアプリ）は、文字化けしたチャンクにしない。
+            if b"\x00" in raw:
+                raise NotTextError("Not a text file (contains binary data); only the file path is registered")
+            segments = [Segment("", _decode_text(raw))]
         else:
             raise ExtractError(f"Unsupported format: {ext}")
     except ExtractError:

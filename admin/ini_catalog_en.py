@@ -966,6 +966,13 @@ DESCRIPTIONS: dict[str, str] = {
         'if false, only the file path is registered without reading the content (they can be found by file and folder names with search_document_paths).\n'
         'Files whose text cannot be extracted (image-only PDFs, etc.) are not treated as failures either; only the file path is registered.'
     ),
+    'vector_db.text_extensions': (
+        'Extensions read as text like .txt, in addition to the supported formats (comma-separated; empty by default).\n'
+        'For application-specific formats whose content is text (ASCII, etc.) (e.g. .step, .igs, AutoForm material files .mat).\n'
+        'To ingest them, also add them to include_extensions. The character encoding is read in the same order as .txt: UTF-8 -> the OS ANSI code page -> CP932.\n'
+        'Files whose content is binary (contains NUL) are not read; only the file path is registered (for applications that can also save the same extension in a binary format).\n'
+        'Extensions of the supported formats (.pdf .docx .md, etc.) and image files are still read in their own way even if listed here.'
+    ),
     'vector_db.max_file_mb': (
         'Size limit per file (MB). Larger files are not ingested, and the reason is listed in the failure list.\n'
         'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'

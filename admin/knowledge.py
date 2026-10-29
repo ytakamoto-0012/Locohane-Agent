@@ -835,7 +835,7 @@ def build_router(
             "embedding_model": endpoints[0].model if endpoints else None,
             "query_prefix": cfg.vector_db_query_prefix,
             "document_prefix": cfg.vector_db_document_prefix,
-            "include_extensions": list(effective_extensions(cfg.vector_db_include_extensions)),
+            "include_extensions": list(effective_extensions(cfg.vector_db_include_extensions, cfg.vector_db_text_extensions)),
             "image_input": cfg.vector_db_image_input,
             "image_input_extensions": list(cfg.vector_db_image_input_extensions),
             "embedded_images": cfg.vector_db_embedded_images,

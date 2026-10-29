@@ -13,7 +13,7 @@ from src.vector_db import catalog as vcat
 from src.vector_db import embeddings, ingest, search
 from src.vector_db.chunking import split_text
 from src.vector_db.embeddings import EmbeddingError, EmbeddingStopped, embed_images, embed_texts, open_client, shared_client
-from src.vector_db.extract import ExtractError, extract_segments
+from src.vector_db.extract import ExtractError, NotTextError, extract_segments
 from src.vector_db.qdrant_store import QDRANT_PRESETS, QdrantStore
 from src.vector_db.sqlite_vec_store import SqliteVecStore
 from src.vector_db.store import ChunkRecord, StoreError
@@ -488,6 +488,17 @@ def test_extract_rejects_unsupported_and_broken_files(tmp_path):
     (tmp_path / "broken.docx").write_bytes(b"not a zip")
     with pytest.raises(ExtractError):
         extract_segments(tmp_path / "broken.docx")
+
+
+def test_extract_reads_text_extensions_as_text(tmp_path):
+    """text_extensions の拡張子は .txt と同じくテキストとして読み、中身がバイナリなら NotTextError にする。"""
+    (tmp_path / "steel.mat").write_bytes("MATERIAL SPCC\nYOUNG 206000\n".encode("cp932"))
+    with pytest.raises(ExtractError):
+        extract_segments(tmp_path / "steel.mat")
+    assert extract_segments(tmp_path / "steel.mat", text_extensions=(".mat",))[0].text == "MATERIAL SPCC\nYOUNG 206000\n"
+    (tmp_path / "binary.mat").write_bytes(b"MATLAB 5.0\x00\x01\x02")
+    with pytest.raises(NotTextError):
+        extract_segments(tmp_path / "binary.mat", text_extensions=(".mat",))
 
 
 # --- 埋め込み ---------------------------------------------------------------------
@@ -1025,6 +1036,28 @@ def test_ingest_skips_files_over_size_limit_and_non_recursive(env):
         catalog.update("docs", recursive=False)
     files = ingest.list_source_files(env["docs"], False, cfg.vector_db_include_extensions)
     assert [p.name for p in files] == ["weld.md"]
+
+
+def test_ingest_reads_text_extensions_only_when_included(env):
+    """text_extensions の拡張子は include_extensions にも書いたときだけ取り込み、バイナリならパスだけを登録する。"""
+    docs, kwargs = env["docs"], env["kwargs"]
+    (docs / "spcc.mat").write_text("MATERIAL SPCC 引張強さ 270MPa", encoding="utf-8")
+    (docs / "binary.mat").write_bytes(b"\x00\x01binary")
+    (docs / "part.step").write_text("ISO-10303-21;", encoding="ascii")
+    base = env["cfg"]
+    # text_extensions に書いても include_extensions に無ければ取り込まない（従来どおり）。
+    only_text = make_config(base.vector_db_dir.parent, vector_db_backend=base.vector_db_backend, vector_db_text_extensions=(".mat",))
+    assert ingest.ingest_collection(only_text, "docs", **kwargs).added == 2
+
+    cfg = make_config(
+        base.vector_db_dir.parent, vector_db_backend=base.vector_db_backend,
+        vector_db_include_extensions=(*base.vector_db_include_extensions, ".mat", ".step"), vector_db_text_extensions=(".mat",),
+    )
+    result = ingest.ingest_collection(cfg, "docs", **kwargs)
+    # .step は text_extensions に無いため対象外のまま。バイナリの .mat は失敗にせずパスだけを登録する。
+    assert (result.added, result.path_only, result.failed) == (2, 1, [])
+    hits = search.search(cfg, "SPCC 引張強さ", **kwargs).hits
+    assert any(h.text == "MATERIAL SPCC 引張強さ 270MPa" for h in hits)
 
 
 def test_ingest_requires_rebuild_when_embedding_model_changes(env):

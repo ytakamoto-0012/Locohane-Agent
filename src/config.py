@@ -538,6 +538,9 @@ class Config:
             隣り合うチャンクの重複文字数。
         vector_db_include_extensions: 取り込む拡張子（小文字・"." 付き）。画像ファイルは
             vector_db_image_input が False ならファイルパスだけを登録する。
+        vector_db_text_extensions: 対応形式（.pdf 等）のほかに、.txt と同じくテキストとして読む拡張子（小文字・"." 付き。
+            AutoForm の .mat 等のアプリ専用のテキスト形式用）。include_extensions にも書いたものだけを取り込む。
+            中身がバイナリ（NUL を含む）ならパスだけを登録する。
         vector_db_max_file_mb: 取り込む1ファイルの上限サイズ（MB）。管理者設定（全インスタンス共通）。
         vector_db_image_input: True なら image_input_extensions の文書をページごとの画像にし、それ以外の Office ファイルは
             中の画像を取り出して（embedded_images）、画像ファイル（.png/.jpg/.heic 等）もそのまま画像として埋め込む
@@ -1120,6 +1123,7 @@ class Config:
     vector_db_chunk_size: int
     vector_db_chunk_overlap: int
     vector_db_include_extensions: tuple[str, ...]
+    vector_db_text_extensions: tuple[str, ...]
     vector_db_max_file_mb: float
     vector_db_image_input: bool
     vector_db_image_input_extensions: tuple[str, ...]
@@ -3356,6 +3360,7 @@ def load_config(
         vector_db_include_extensions=_as_extension_list(
             os.getenv("VECTOR_DB_INCLUDE_EXTENSIONS", vector_db.get("include_extensions", ".pdf, .docx, .xlsx, .xlsm, .pptx, .md, .txt, .csv, .png, .jpg, .jpeg, .gif, .bmp, .webp, .tif, .tiff, .heic, .heif"))
         ),
+        vector_db_text_extensions=_as_extension_list(os.getenv("VECTOR_DB_TEXT_EXTENSIONS", vector_db.get("text_extensions", ""))),
         vector_db_max_file_mb=_positive_float(os.getenv("VECTOR_DB_MAX_FILE_MB", vector_db.get("max_file_mb", 50)), "[vector_db].max_file_mb"),
         vector_db_image_input=_as_bool(os.getenv("VECTOR_DB_IMAGE_INPUT", vector_db.get("image_input", False))),
         vector_db_image_input_extensions=_as_page_image_extensions(
