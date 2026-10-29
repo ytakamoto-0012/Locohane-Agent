@@ -525,7 +525,6 @@ input.narrow { width: 80px; }
 .kn-meter > span { width: 4px; border-radius: 1px; background: var(--border); transition: background 0.2s; }
 .kn-meter > span.on { background: var(--ok); box-shadow: 0 0 3px var(--ok); }
 .kn-meter-text { font-variant-numeric: tabular-nums; }
-.kn-stalled { margin: 0 0 8px; font-size: 12px; color: var(--warn); }
 .kn-worker.waiting { border: 2px dotted var(--warn); animation: kn-blink 1.6s ease-in-out infinite; }
 .kn-worker.other { opacity: 0.4; }
 .kn-workers-row { margin: 3px 0; }

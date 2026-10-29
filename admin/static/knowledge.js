@@ -71,10 +71,6 @@ function knowledgeFileStalled(f) {
   return f.requests > 0 && f.idle_seconds >= KNOWLEDGE_STALL_SECONDS;
 }
 
-function knowledgeBaseName(path) {
-  return String(path).split(/[\/]/).pop();
-}
-
 // 準備の枠（全インスタンス共通の並列数の枠。admin/knowledge.py の IngestSlots.snapshot() の load）のアイコン。
 // 空きは灰の輪、準備中（読み取り・抽出・画像化）は回る輪（admin.css の .kn-worker）。1アイコン＝1ファイル。
 function knowledgeLoadIcon(slot, mine) {
@@ -107,29 +103,6 @@ function knowledgeEmbedFiles(files, limit) {
     .filter((f) => f.requests > 0 || f.done > 0)
     .sort((a, b) => knowledgeFileStalled(b) - knowledgeFileStalled(a) || b.requests - a.requests || b.idle_seconds - a.idle_seconds)
     .slice(0, limit);
-}
-
-// 詰まっているファイルの一覧（パネル・行の下に出す）。
-// 多いときは長く進んでいないものから KNOWLEDGE_STALLED_LINES 件だけ出し、残りは件数だけ出す。
-const KNOWLEDGE_STALLED_LINES = 5;
-
-function knowledgeStalledList(files, withCollection) {
-  const stalled = files.filter(knowledgeFileStalled).sort((a, b) => b.idle_seconds - a.idle_seconds);
-  if (!stalled.length) return null;
-  const rest = stalled.length - KNOWLEDGE_STALLED_LINES;
-  return el("div", { class: "kn-stalled" }, [
-    ...stalled.slice(0, KNOWLEDGE_STALLED_LINES).map((f) =>
-      el("div", {
-        title: f.detail,
-        text: _t(
-          `進んでいません: {0}（{1} 秒・{2}/{3} 件・送信中 {4}）`,
-          (withCollection ? `${f.instance}/${f.collection}: ` : "") + knowledgeBaseName(f.detail),
-          Math.round(f.idle_seconds), f.done, f.total, f.requests
-        ),
-      })
-    ),
-    rest > 0 ? el("div", { text: _t(`ほか {0} ファイル`, rest) }) : null,
-  ]);
 }
 
 // 送信中の埋め込みのリクエスト数のメーター（縦のセグメントを並べ、使っている分を光らせる）。admin.css の .kn-meter。
@@ -186,7 +159,7 @@ function knowledgeWorkersPanel(workers, instance) {
       ])
     );
   }
-  return el("div", {}, [el("div", { class: "kn-workers-panel" }, parts), knowledgeStalledList(workers.files || [], true)]);
+  return el("div", { class: "kn-workers-panel" }, parts);
 }
 
 // snapshot のうち instance/collection の取り込みの分（admin/knowledge.py の job_workers と同じ形）。
@@ -212,7 +185,7 @@ function knowledgeJobWorkerIcons(w) {
   if (w.requests) icons.push(knowledgeRequestMeter(w.requests, w.request_slots));
   if (w.waiting) icons.push(el("span", { class: "kn-worker waiting", title: _t("ほかの取り込みが並列数の枠を使っているため、空きを待っています") }));
   if (!icons.length) return null;
-  return el("div", {}, [el("div", { class: "kn-workers kn-workers-row" }, icons), knowledgeStalledList(w.files || [], false)]);
+  return el("div", { class: "kn-workers kn-workers-row" }, icons);
 }
 
 function knowledgeWorkersBusy(workers) {

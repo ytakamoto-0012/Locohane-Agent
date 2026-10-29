@@ -1411,7 +1411,7 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
   One icon is one file (idle preparation worker = gray ring, preparing = spinning blue ring, waiting = blinking dotted ring; files of
   ingestions of other instances are dimmed; hover an icon to see the file being processed). A file being embedded is a dot filled green by the
   share already embedded, pulsing while requests are in flight. A file with requests in flight that has not progressed for 60 seconds or more
-  blinks yellow and is listed below as "Not progressing: file name (seconds, items)" (to find stuck files). The number of embedding icons is the ingestion
+  blinks yellow and is shown as an icon ahead of other files (to find stuck files). The number of embedding icons is the ingestion
   parallelism (`ingest_workers`; idle ones are gray rings), and the number of embedding requests in flight ("Requests 7/32") is also shown.
   The "Status" column of each collection and the instance cards show only that ingestion.
 - **Queued deletion**: while ingestions or copies are running in the same instance, deleting a collection becomes "Waiting to delete" and runs

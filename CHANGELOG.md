@@ -27,6 +27,8 @@
 
 ### 変更
 
+- 設定ダッシュボードのナレッジ画面で、詰まっているファイルを「進んでいません: ファイル名（秒数・件数）」として
+  ワーカーの表示の下に一覧するのをやめました（黄色で点滅するアイコンで分かり、ファイル名・秒数・件数はアイコンにマウスを載せると出ます）。
 - ナレッジの取り込み・検索の埋め込みで、`[vector_db] embedding_routing_strategy` が `round_robin`・`priority_failover` のとき、
   `[llm]` の接続先の選び方と同じく、送る前に接続先の空きを確かめて埋まっている接続先を飛ばすようにしました
   （`provider = "llama_cpp"` は GET /slots、`provider = "vllm"` は GET /metrics の待ち行列 `vllm:num_requests_waiting` で判断）。
