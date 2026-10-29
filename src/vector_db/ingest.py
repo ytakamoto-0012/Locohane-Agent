@@ -34,7 +34,7 @@ from .catalog import Catalog, CatalogError, FileRecord, open_catalog
 from .chunking import split_text
 from .embedded_images import EMBEDDED_IMAGE_EXTENSIONS, extract_embedded_images
 from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_model, open_client
-from .extract import SUPPORTED_EXTENSIONS, ExtractError, NotTextError, extract_segments
+from .extract import SUPPORTED_EXTENSIONS, ExtractError, NotTextError, extract_segments, watch_stop_file
 from .gc_pacer import GcPacer
 from .journal import IngestJournal, open_journal
 from .keyword_index import KeywordIndex, open_keyword_index
@@ -110,6 +110,8 @@ def _too_large_hint(cfg: Config, count: int) -> str:
 SLOT_KINDS = ("load", "embed")
 # 枠が空くのを待っている間に、停止の求めを見直す間隔（秒）。
 _SLOT_POLL_SECONDS = 1.0
+# 走査・準備・埋め込みの完了を待っている間に、停止の求めを見直す間隔（秒）。
+_STOP_POLL_SECONDS = 0.5
 
 
 class _SlotUser:
@@ -269,11 +271,13 @@ class ScanResult:
     total: 見つかった取り込み対象のファイルの数（max_files を超えた分も数える）。
     found_known: 見つかったファイルのうち、known に含まれていたもののパス（選ばれなかったものも含む。
         取り込み済みのファイルが消えたかの判定に使う）。
+    stopped: 走査の途中で停止を求められた（files 等は途中までの分で、すべてではない）。
     """
 
     files: list[tuple[Path, os.stat_result]]
     total: int
     found_known: set[str]
+    stopped: bool = False
 
     @property
     def over_limit(self) -> int:
@@ -486,6 +490,7 @@ def scan_source_files(
     exclude_keywords: Sequence[str] = (),
     include_keywords: Sequence[str] = (),
     text_extensions: Collection[str] = (),
+    should_stop: Callable[[], bool] | None = None,
 ) -> ScanResult:
     """取り込み対象のファイルとその stat を探す（Office の一時ファイル ~$*.docx 等と、隠しファイル・隠しフォルダ配下は除く）。
 
@@ -503,6 +508,9 @@ def scan_source_files(
     max_files を超えるファイルがあれば、取り込みのたびに選ぶファイルが入れ替わらないよう、known（取り込み済み）の
     ファイルを優先し、残りの枠を新しいファイルのパス順の先頭から埋める。メモリーに持つのは高々 max_files の
     2倍程度のファイルまで。
+
+    should_stop() が True を返したら、残りのフォルダを読まずにやめる（ScanResult.stopped。ファイルサーバー上の
+    大きなフォルダでは走査だけで長くかかるため、フォルダを1つ読むごとに確かめる）。
     """
     allowed = set(effective_extensions(extensions, text_extensions))
     path_filter = _PathFilter.from_keywords(exclude_keywords, include_keywords)
@@ -513,6 +521,12 @@ def scan_source_files(
     # known に無いファイル。max_files があればパス順で先頭の max_files 件だけを残す（ヒープの先頭がパス順で最後のもの）。
     new_files: list[tuple[_Descending, Path, os.stat_result]] = []
     total = 0
+    stopped = False
+
+    def stop_requested() -> bool:
+        nonlocal stopped
+        stopped = stopped or (should_stop is not None and should_stop())
+        return stopped
 
     def collect(found: list[tuple[Path, os.stat_result]]) -> None:
         nonlocal total
@@ -533,18 +547,22 @@ def scan_source_files(
     if workers <= 1:
         # (読むフォルダ, そのフォルダを含む取り込み元フォルダ)
         directories = [(root, root) for root in reversed(roots)]
-        while directories:
+        while directories and not stop_requested():
             directory, root = directories.pop()
             found, subdirectories = _read_directory(directory, recursive, allowed, root, path_filter)
             collect(found)
             directories.extend((d.path, root) for d in subdirectories if links.allow(d))
     else:
-        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vector_db_scan") as pool:
+        pool = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="vector_db_scan")
+        try:
             # 読んでいるフォルダごとの、そのフォルダを含む取り込み元フォルダ。
             running = {pool.submit(_read_directory, root, recursive, allowed, root, path_filter): root for root in roots}
             try:
                 while running:
-                    done, _pending = wait(running, return_when=FIRST_COMPLETED)
+                    # 応答の遅いフォルダを読んでいる間も、停止の求めに気づけるよう _STOP_POLL_SECONDS 秒ごとに見直す。
+                    done, _pending = wait(running, timeout=_STOP_POLL_SECONDS, return_when=FIRST_COMPLETED)
+                    if stop_requested():
+                        break
                     for future in done:
                         root = running.pop(future)
                         found, subdirectories = future.result()
@@ -556,6 +574,9 @@ def scan_source_files(
                 for future in running:
                     future.cancel()
                 raise
+        finally:
+            # 停止したときは、読んでいる途中のフォルダの応答を待たずに返す（結果は使わない）。
+            pool.shutdown(wait=not stopped, cancel_futures=True)
 
     known_files.sort(key=lambda item: item[0])
     selected = [(path, st) for _key, path, st in known_files]
@@ -565,7 +586,7 @@ def scan_source_files(
         new_sorted = new_sorted[: max_files - len(selected)]
     selected += [(path, st) for _key, path, st in new_sorted]
     selected.sort(key=lambda item: str(item[0]).lower())
-    return ScanResult(selected, total, found_known)
+    return ScanResult(selected, total, found_known, stopped)
 
 
 def list_source_files(
@@ -810,6 +831,8 @@ class _LoadOptions:
     pages_dir: str = ""
     # テキストとして読む拡張子（[vector_db].text_extensions）。
     text_extensions: tuple[str, ...] = ()
+    # 取り込みの停止の印のファイル（できたら本文の抽出・画像化を途中でやめる。extract.watch_stop_file）。空なら見張らない。
+    stop_file: str = ""
 
     @classmethod
     def from_config(cls, cfg: Config, pages_dir: str = "") -> "_LoadOptions":
@@ -874,7 +897,15 @@ def _load(
     ワーカースレッドか子プロセス（[vector_db].ingest_processes）で動く。読めないファイルは kind="failed" で返す。
     ページ画像は options.pages_dir の下のファイルごとの一時フォルダへ PNG で書き出し（_Prepared.page_dir）、
     メモリーには全ページの画像を持たない（400ページの PDF 等でもメモリーを使い切らないため）。
+    options.stop_file ができたら（取り込みの停止）、本文の抽出・画像化を途中でやめて kind="failed" で返す（結果は使われない）。
     """
+    with watch_stop_file(options.stop_file or None):
+        return _load_file(options, folder, path, st, record, needs_keywords)
+
+
+def _load_file(
+    options: _LoadOptions, folder: Path, path: Path, st: os.stat_result, record: FileRecord | None, needs_keywords: bool
+) -> _Prepared:
     # image_input・image_input_extensions・embedded_images を切り替えたら、内容の変わっていないファイルも新しい埋め込み方で取り込み直す。
     mode = _file_mode(options, path)
     path_text = relative_path_text(folder, path)
@@ -1290,6 +1321,9 @@ class _Pipeline:
 
     準備・埋め込みは、始める前に IngestSlots の枠を1つ取り、終わったら返す（ほかの取り込みと共有するとき、
     並列数を合計で守るため）。枠が空いていなければ、空くまで待つ（_SlotUser.wakeup）。
+
+    停止を求められたら、準備中・埋め込み中のファイルの終わりを待たずに止める。準備中のファイルには停止の印のファイル
+    （_LoadOptions.stop_file）で本文の抽出・画像化をやめさせ、スレッド・子プロセスの後片付けは別のスレッドで待つ。
     """
 
     def __init__(
@@ -1371,7 +1405,8 @@ class _Pipeline:
         self.pending = iter(files)
         self.exhausted = False
         pages_root = tempfile.mkdtemp(prefix="locohane_vdb_pages_")
-        self.options = replace(self.options, pages_dir=pages_root)
+        stop_file = Path(pages_root) / "STOP"
+        self.options = replace(self.options, pages_dir=pages_root, stop_file=str(stop_file))
         self.load_pool = self._new_load_pool()
         embed_pool = ThreadPoolExecutor(max_workers=self.embed_limit, thread_name_prefix="vector_db_embed")
         self.slot_user = self.slots.join(self.instance, self.writer.name)
@@ -1379,8 +1414,11 @@ class _Pipeline:
         try:
             while True:
                 if not self.stopped and self.should_stop is not None and self.should_stop():
-                    # 全ファイルの準備を始めた後でも、残りの埋め込みを始めずに止める。
                     self.stopped = True
+                if self.stopped:
+                    # 準備中・埋め込み中のファイルの終わりを待たずに止める（巨大なファイルの本文の抽出・画像化を待つと、
+                    # 停止までに長くかかるため）。それらのファイルは記録せず、次回の取り込みで処理する。
+                    break
                 self.slots.begin_round(self.slot_user)
                 self._start_loads(self.load_pool)
                 self._start_embeds(embed_pool)
@@ -1391,11 +1429,13 @@ class _Pipeline:
                         break
                     if not hungry:
                         continue
-                # コミットの期限までしか待たない（_Writer.seconds_until_commit 参照）。枠が空くのを待っている間は、
-                # 停止の求めに気づけるよう長くても _SLOT_POLL_SECONDS 秒ごとに見直す。
+                # コミットの期限までしか待たない（_Writer.seconds_until_commit 参照）。枠が空くのを待っている間は
+                # _SLOT_POLL_SECONDS 秒、停止を求められうるときは _STOP_POLL_SECONDS 秒ごとに見直す。
                 timeout = self.writer.seconds_until_commit()
                 if hungry:
                     timeout = min(timeout, _SLOT_POLL_SECONDS) if timeout is not None else _SLOT_POLL_SECONDS
+                if self.should_stop is not None:
+                    timeout = min(timeout, _STOP_POLL_SECONDS) if timeout is not None else _STOP_POLL_SECONDS
                 done, _ = wait(
                     list(self.loads) + list(self.embeds) + [self.slot_user.wakeup], timeout=timeout, return_when=FIRST_COMPLETED
                 )
@@ -1413,19 +1453,32 @@ class _Pipeline:
                     # どちらでもなければ、異常終了した子プロセスの準備で、_pool_broken で準備し直しに回したもの。
                 self.writer.commit_if_due()
                 self._gc.tick()
-        except BaseException:
-            # 埋め込みサーバーに接続できない等で止めるときは、まだ始まっていない処理を始めない。
-            for future in list(self.loads) + list(self.embeds):
-                future.cancel()
-            raise
         finally:
-            embed_pool.shutdown(wait=True, cancel_futures=True)
-            if not self.processes and self.cfg.vector_db_image_input:
-                _close_office_in_threads(self.load_pool, self.workers)
-            self.load_pool.shutdown(wait=True, cancel_futures=True)
+            # 停止したとき・埋め込みサーバーに接続できない等で止めるときは、まだ始まっていない処理を始めない。
+            unfinished = [future for future in list(self.loads) + list(self.embeds) if not future.cancel()]
             self.slots.leave(self.slot_user)
-            # 書き込まずに終えたファイル（停止・エラー）のページ画像もここで消す。
-            _remove_dir(Path(pages_root))
+            load_pool = self.load_pool
+
+            def close_pools() -> None:
+                embed_pool.shutdown(wait=True, cancel_futures=True)
+                if not self.processes and self.cfg.vector_db_image_input:
+                    _close_office_in_threads(load_pool, self.workers)
+                load_pool.shutdown(wait=True, cancel_futures=True)
+                # 書き込まずに終えたファイル（停止・エラー）のページ画像もここで消す。
+                _remove_dir(Path(pages_root))
+
+            if unfinished:
+                # 準備中のファイルの本文の抽出・画像化（Office の PDF への書き出しも）を途中でやめさせる（_load 参照）。
+                try:
+                    stop_file.touch()
+                except OSError:
+                    logger.warning("vector_db ingest: could not create the stop marker %s", stop_file, exc_info=True)
+                # 停止で途中の準備・埋め込みを残したときは、その終わりを待つ後片付け（スレッド・子プロセス・Office の終了と
+                # ページ画像の削除）を別のスレッドで行い、取り込みはすぐに終える。結果は使わない。枠（IngestSlots）は
+                # 処理が終わるまで使用中のまま残り、ほかの取り込みが並列数を超えて動くことはない。
+                threading.Thread(target=close_pools, name="vector_db_ingest_cleanup", daemon=True).start()
+            else:
+                close_pools()
 
     def _pool_broken(self, args: tuple, isolated: bool) -> None:
         """子プロセスが異常終了した。巻き込まれた準備中のファイルを1つずつ準備し直す（新しいプロセスで）。
@@ -1668,7 +1721,12 @@ def _ingest(
         folders, recursive, cfg.vector_db_include_extensions,
         workers=cfg.vector_db_scan_workers, max_files=max_files, known=known,
         exclude_keywords=exclude_keywords, include_keywords=include_keywords, text_extensions=cfg.vector_db_text_extensions,
+        should_stop=should_stop,
     )
+    if scan.stopped:
+        # 途中までの走査では「消えた」ファイルを判定できないため、何も書かずに終える。
+        logger.info("vector_db ingest: collection=%s stopped while scanning the source folders", name)
+        return
     files = scan.files
     result.found_files, result.max_files, result.over_limit = scan.total, max_files, scan.over_limit
     logger.info(

@@ -7,13 +7,16 @@ skills/ 配下の読み取りスクリプト（read_pdf.py 等）は CLI とし�
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import io
 import locale
+import os
 from pathlib import Path
 import re
 import threading
-from typing import Collection
+import time
+from typing import Collection, Iterator
 
 SUPPORTED_EXTENSIONS = (".pdf", ".docx", ".xlsx", ".xlsm", ".pptx", ".md", ".txt", ".csv")
 
@@ -41,6 +44,53 @@ class ExtractError(Exception):
 
 class NotTextError(ExtractError):
     """text_extensions の形式だが、中身がテキストではなかった（バイナリ形式で保存されたファイル等）。"""
+
+
+class ExtractStopped(ExtractError):
+    """取り込みの「停止」を求められたため、本文の抽出・画像化を途中でやめた。"""
+
+
+# 取り込みの「停止」を、準備中のファイルの本文の抽出・画像化へ伝える。ワーカースレッドでも子プロセス
+# （[vector_db].ingest_processes）でも同じように伝わるよう、停止の印はファイル（取り込みの一時フォルダの中）にし、
+# そのパスをスレッドごとに持つ（watch_stop_file）。巨大なファイルでも停止までに長くかからないよう、
+# ページ・行・画像ごとに check_stopped() で確かめる。
+_stop = threading.local()
+# 停止の印のファイルを確かめる間隔（秒）。行ごとに呼んでも遅くならないよう、間隔を空けて確かめる。
+_STOP_CHECK_SECONDS = 0.2
+
+
+@contextmanager
+def watch_stop_file(path: str | None) -> Iterator[None]:
+    """この中で動く本文の抽出・画像化は、path のファイルができたら ExtractStopped で止まる（None なら止まらない）。"""
+    previous = getattr(_stop, "path", None), getattr(_stop, "checked_at", 0.0)
+    _stop.path, _stop.checked_at = path, 0.0
+    try:
+        yield
+    finally:
+        _stop.path, _stop.checked_at = previous
+
+
+def stop_file() -> str | None:
+    """このスレッドの watch_stop_file() の停止の印のファイルのパス（無ければ None。別のスレッドで見張るとき用）。"""
+    return getattr(_stop, "path", None)
+
+
+def stop_requested() -> bool:
+    """watch_stop_file() の停止の印のファイルができているか（間隔を空けずに確かめる）。"""
+    path = stop_file()
+    return bool(path) and os.path.exists(path)
+
+
+def check_stopped() -> None:
+    """停止を求められていれば ExtractStopped を投げる（_STOP_CHECK_SECONDS 秒に1回だけファイルを確かめる）。"""
+    if not getattr(_stop, "path", None):
+        return
+    now = time.monotonic()
+    if now - _stop.checked_at < _STOP_CHECK_SECONDS:
+        return
+    _stop.checked_at = now
+    if stop_requested():
+        raise ExtractStopped("Stopped because the ingestion was stopped")
 
 
 def extract_segments(path: Path, data: bytes | None = None, text_extensions: Collection[str] = ()) -> list[Segment]:
@@ -122,6 +172,7 @@ def _extract_pdf(source: str | bytes) -> list[Segment]:
         try:
             segments = []
             for i in range(len(pdf)):
+                check_stopped()
                 page = pdf[i]
                 try:
                     textpage = page.get_textpage()
@@ -334,6 +385,7 @@ def _xlsx_segments(sheets, extras: dict[str, dict[int, list[str]]]) -> list[Segm
         notes = dict(extras.get(name, {}))
         lines = []
         for row_number, row in enumerate(_without_table_numbers(rows), start=1):
+            check_stopped()
             if text := _row_text(row):
                 lines.append(text)
             lines.extend(notes.pop(row_number, []))
@@ -740,6 +792,7 @@ def _extract_pptx(source) -> list[Segment]:
     presentation = Presentation(source)
     segments = []
     for i, slide in enumerate(presentation.slides, start=1):
+        check_stopped()
         lines = _pptx_shape_lines(slide.shapes)
         if slide.has_notes_slide and slide.notes_slide.notes_text_frame is not None:
             notes = slide.notes_slide.notes_text_frame.text

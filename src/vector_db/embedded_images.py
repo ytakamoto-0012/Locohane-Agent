@@ -17,7 +17,7 @@ from xml.etree import ElementTree
 import zipfile
 
 from . import extract
-from .extract import _NS_PKG_REL, _NS_R, _NS_S, _NS_XDR, _cell_name, _drawing_anchors, _drop_fallbacks, _int_text
+from .extract import _NS_PKG_REL, _NS_R, _NS_S, _NS_XDR, _cell_name, _drawing_anchors, _drop_fallbacks, _int_text, check_stopped
 from .render import _A4_LONG_SIDE_INCHES, PageImage, _page_writer, _to_png
 
 logger = logging.getLogger(__name__)
@@ -207,6 +207,7 @@ def extract_embedded_images(
         collect(pkg, collector)
         digests: set[str] = set()
         for locator, part, text in collector.items:
+            check_stopped()
             if part not in pkg.names:
                 continue
             raw = package.read(part)

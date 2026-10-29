@@ -184,6 +184,56 @@ def test_stop_is_honored_after_all_files_started(env):
     assert search.list_collections(cfg)[0].file_count == 0
 
 
+def test_stop_does_not_wait_for_a_file_being_prepared(env, monkeypatch):
+    """巨大なファイルの本文の抽出中に停止を求めたら、抽出の終わりを待たずに止め、抽出も途中でやめさせる。"""
+    from src.vector_db.extract import ExtractStopped, check_stopped
+
+    (env["docs"] / "huge.md").write_text("巨大な文書", encoding="utf-8")
+    state = {"started": threading.Event(), "stopped": threading.Event()}
+
+    def slow_chunks(options, path, data=None):
+        state["started"].set()
+        deadline = time.monotonic() + 30
+        try:
+            while time.monotonic() < deadline:  # 1ページずつ抽出している間
+                check_stopped()
+                time.sleep(0.01)
+        except ExtractStopped:
+            state["stopped"].set()
+            raise
+        return []
+
+    real_chunks = ingest._chunk_segments
+    monkeypatch.setattr(ingest, "_chunk_segments", slow_chunks)
+    slots = ingest.IngestSlots(1)
+    started = time.monotonic()
+    result = ingest.ingest_collection(
+        env["cfg"], "docs", should_stop=lambda: state["started"].is_set(), slots=slots, **env["kwargs"]
+    )
+    assert time.monotonic() - started < 5
+    assert result.added == 0 and result.removed == 0
+    # 抽出は停止の印で途中でやめ、準備の枠も返る（設定ダッシュボードの「準備中」が消える）。
+    assert state["stopped"].wait(5)
+    deadline = time.monotonic() + 5
+    while slots.snapshot()["load"] != [None] and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert slots.snapshot()["load"] == [None]
+    # 次回の取り込みで処理する。
+    monkeypatch.setattr(ingest, "_chunk_segments", real_chunks)
+    assert ingest.ingest_collection(env["cfg"], "docs", **env["kwargs"]).added == 1
+
+
+def test_scan_stops_when_requested(tmp_path):
+    for i in range(3):
+        sub = tmp_path / f"d{i}"
+        sub.mkdir()
+        (sub / "a.md").write_text("x", encoding="utf-8")
+    for workers in (1, 2):
+        scan = ingest.scan_source_files(tmp_path, True, (".md",), workers=workers, should_stop=lambda: True)
+        assert scan.stopped
+    assert not ingest.scan_source_files(tmp_path, True, (".md",), workers=2).stopped
+
+
 # --- 子プロセスの異常終了 -----------------------------------------------------------------
 
 
@@ -329,6 +379,25 @@ def test_office_export_is_killed_after_timeout(fake_office, tmp_path, monkeypatc
         render._export_office_to_pdf(tmp_path / "a.docx", tmp_path, timeout=0.3)
     assert time.monotonic() - started < 3
     # 終了させたアプリは使い回さず、やり直しもしない（同じ確認画面でまた止まるため）
+    assert killed == [4242] and len(apps) == 1 and "quit" in log
+
+
+def test_office_export_is_killed_when_ingestion_stops(fake_office, tmp_path, monkeypatch):
+    """取り込みの停止の印ができたら、時間制限より前でも Office を終了して ExtractStopped にする。"""
+    from src.vector_db.extract import ExtractStopped, watch_stop_file
+
+    log, apps, state = fake_office
+    block = threading.Event()
+    state["block"] = block
+    killed = []
+    monkeypatch.setattr(render, "_app_pid", lambda prog_id, app: 4242)
+    monkeypatch.setattr(render.os, "kill", lambda pid, sig: (killed.append(pid), block.set()))
+    stop_file = tmp_path / "STOP"
+    threading.Timer(0.3, stop_file.touch).start()
+    started = time.monotonic()
+    with watch_stop_file(str(stop_file)), pytest.raises(ExtractStopped):
+        render._export_office_to_pdf(tmp_path / "a.docx", tmp_path, timeout=60)
+    assert time.monotonic() - started < 3
     assert killed == [4242] and len(apps) == 1 and "quit" in log
 
 

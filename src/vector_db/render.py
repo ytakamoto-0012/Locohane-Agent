@@ -21,11 +21,12 @@ import signal
 import subprocess
 import tempfile
 import threading
+import time
 from typing import Callable
 import uuid
 
 from ..config import PAGE_IMAGE_EXTENSIONS
-from .extract import PDFIUM_LOCK, ExtractError, normalize_newlines
+from .extract import PDFIUM_LOCK, ExtractError, ExtractStopped, check_stopped, normalize_newlines, stop_file
 
 # ページごとに画像にできる文書の形式（実際に画像にする形式は [vector_db].image_input_extensions で選ぶ）。
 PAGE_EXTENSIONS = PAGE_IMAGE_EXTENSIONS
@@ -139,6 +140,7 @@ def _render_pdf(pdf_path: Path, dpi: int, locate: Locate, write: _PageWriter) ->
             total = len(pdf)
             pages = []
             for i in range(total):
+                check_stopped()
                 page = pdf[i]
                 try:
                     text = page.get_textpage().get_text_bounded() or ""
@@ -168,7 +170,10 @@ def _render_image_file(path: Path, dpi: int, write: _PageWriter) -> list[PageIma
         # ImageSequence.Iterator は同じ Image を seek し直して返すため、ページごとにその場で PNG にする
         # （list() で先に集めると、すべて最後のページになる）。
         frames = ImageSequence.Iterator(img) if path.suffix.lower() in _MULTI_PAGE_IMAGE_EXTENSIONS else [img]
-        written = [write(_to_png(ImageOps.exif_transpose(frame), max_long_side)) for frame in frames]
+        written = []
+        for frame in frames:
+            check_stopped()
+            written.append(write(_to_png(ImageOps.exif_transpose(frame), max_long_side)))
     if len(written) == 1:
         return [PageImage("image", "", *written[0])]
     return [PageImage(f"p.{i}", "", png, png_path) for i, (png, png_path) in enumerate(written, start=1)]
@@ -308,33 +313,50 @@ def _find_process(image_name: str) -> int | None:
     return None
 
 
+# Office の書き出しの間に、取り込みの停止の印（extract.watch_stop_file）を確かめる間隔（秒）。
+_STOP_POLL_SECONDS = 0.5
+
+
 @contextmanager
-def _watchdog(pid: int | None, seconds: float | None, path: Path):
+def _watchdog(pid: int | None, seconds: float | None, path: Path, stop_path: str | None = None):
     """seconds 秒を過ぎても抜けなければ pid のプロセスを終了し、抜けるときに OfficeTimeout を投げる。
 
     見えない確認画面（「前回開いた時に重大なエラーが発生しました」・パスワード入力等）で Office が止まると、
     COM の呼び出しが返らず取り込みが進まなくなるため。プロセスを終了すると止まっていた呼び出しはエラーで返る。
+    stop_path（取り込みの停止の印のファイル）ができたときも pid のプロセスを終了し、ExtractStopped を投げる
+    （巨大なファイルの書き出しを、取り込みの停止後も最後まで待たないため）。
     """
-    if pid is None or not seconds:
+    if pid is None or not (seconds or stop_path):
         yield
         return
-    fired = threading.Event()
+    done = threading.Event()
+    fired: list[str] = []
 
-    def kill() -> None:
-        fired.set()
-        try:
-            os.kill(pid, signal.SIGTERM)  # Windows では TerminateProcess
-        except OSError:
-            pass
+    def watch() -> None:
+        deadline = time.monotonic() + seconds if seconds else None
+        while not done.wait(_STOP_POLL_SECONDS if stop_path else max(0.0, deadline - time.monotonic())):
+            if stop_path and os.path.exists(stop_path):
+                fired.append("stop")
+            elif deadline is not None and time.monotonic() >= deadline:
+                fired.append("timeout")
+            else:
+                continue
+            try:
+                os.kill(pid, signal.SIGTERM)  # Windows では TerminateProcess
+            except OSError:
+                pass
+            return
 
-    timer = threading.Timer(seconds, kill)
-    timer.daemon = True
-    timer.start()
+    watcher = threading.Thread(target=watch, name="vector_db_office_watchdog", daemon=True)
+    watcher.start()
     try:
         yield
     finally:
-        timer.cancel()
-        if fired.is_set():
+        done.set()
+        watcher.join()
+        if fired == ["stop"]:
+            raise ExtractStopped(f"Office export to PDF was aborted because the ingestion was stopped: {path.name}")
+        if fired:
             raise OfficeTimeout(
                 f"Office export to PDF did not finish within {seconds:g} seconds and was aborted (stopped at a confirmation dialog, etc.; "
                 f"the limit can be changed with [vector_db] office_timeout_seconds in \"Admin settings\"): {path.name}"
@@ -364,16 +386,18 @@ def _export_office_to_pdf(path: Path, out_dir: Path, timeout: float | None = Non
 
     使い回しているアプリでエラーになったら（利用者が閉じた・応答しなくなった等）、そのアプリを終了し、
     新しく起動して1回だけやり直す。timeout 秒で終わらなければアプリのプロセスを終了し、やり直さずに
-    OfficeTimeout にする（_watchdog）。
+    OfficeTimeout にする（_watchdog）。取り込みの停止を求められたときも同じく終了し、ExtractStopped にする。
     """
     prog_id = _PROG_ID[path.suffix.lower()]
+    stop_path = stop_file()
     while True:
+        check_stopped()
         fresh = True
         try:
             app, fresh = _office_app(prog_id)
-            with _watchdog(_app_pid(prog_id, app) if timeout else None, timeout, path):
+            with _watchdog(_app_pid(prog_id, app) if timeout or stop_path else None, timeout, path, stop_path):
                 entries = _export_with(app, path, out_dir)
-        except OfficeTimeout:
+        except (OfficeTimeout, ExtractStopped):
             _release_office_app(prog_id, broken=True)
             raise
         except Exception:
