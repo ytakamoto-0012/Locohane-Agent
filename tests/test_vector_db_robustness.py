@@ -478,3 +478,48 @@ def test_office_export_uses_absolute_output_path(fake_office, tmp_path, monkeypa
     [(pdf_path, _locate)] = render._export_with(app, Path("a.docx"), Path("rel"))
     # 相対パスは Office の作業フォルダからの位置と解釈されて書き出せないため、絶対パスで渡す
     assert Path(saved[0]).is_absolute() and pdf_path.is_absolute()
+
+
+def test_xlsx_stop_does_not_reread_with_openpyxl(tmp_path, monkeypatch):
+    """calamine で読んでいる途中に停止を求められたら、「calamine で読めなかった」として openpyxl で読み直さずに止める。"""
+    import openpyxl
+
+    from src.vector_db import extract
+    from src.vector_db.extract import ExtractStopped, watch_stop_file
+
+    workbook = openpyxl.Workbook()
+    for i in range(1, 30):
+        workbook.active.append([f"品目{i}", f"説明{i}"])
+    workbook.save(tmp_path / "book.xlsx")
+    stop_file = tmp_path / "STOP"
+    stop_file.write_text("", encoding="utf-8")
+    reread = []
+    monkeypatch.setattr(extract, "_openpyxl_sheets", lambda source: reread.append(source) or iter(()))
+    with watch_stop_file(str(stop_file)), pytest.raises(ExtractStopped):
+        extract.extract_segments(tmp_path / "book.xlsx")
+    assert reread == []
+
+
+def test_concurrent_open_of_new_sqlite_files_does_not_fail(tmp_path):
+    """作ったばかりの SQLite（ingest_journal.sqlite 等）を複数の取り込みが同時に開いても、WAL への切り替えで
+    「database is locked」にならない（同じインスタンスの複数のコレクションの取り込みを同時に始めたとき）。"""
+    from src.vector_db.journal import open_journal
+
+    for attempt in range(5):
+        directory = tmp_path / f"db{attempt}"
+        barrier = threading.Barrier(8)
+        errors = []
+
+        def open_one():
+            barrier.wait()
+            try:
+                open_journal(directory).close()
+            except Exception as e:  # noqa: BLE001
+                errors.append(e)
+
+        threads = [threading.Thread(target=open_one) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=60)
+        assert errors == []

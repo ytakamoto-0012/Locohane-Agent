@@ -388,7 +388,8 @@ def _extract_xlsx(source) -> list[Segment]:
         try:
             return _xlsx_segments(_calamine_sheets(source), extras)
         except BaseException as e:  # noqa: BLE001 - Rust 側の panic は BaseException の PanicException になる
-            if not isinstance(e, Exception) and type(e).__name__ != "PanicException":
+            # 取り込みの停止（ExtractStopped）は読めなかったのではないため、openpyxl で読み直さずにそのまま止める。
+            if isinstance(e, ExtractStopped) or (not isinstance(e, Exception) and type(e).__name__ != "PanicException"):
                 raise
     return _xlsx_segments(_openpyxl_sheets(source), extras)
 
