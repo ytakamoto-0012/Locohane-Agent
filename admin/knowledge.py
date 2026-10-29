@@ -354,7 +354,9 @@ def run_delete_job(cfg: Config, instance: str, job: IngestJob, jobs: _JobRegistr
             # 途中で止まって一覧に残ったコレクションは、記録はあるのにベクターが消えているため、
             # 次の取り込みで作り直させる（journal.begin_drop。削除をやり直しても消える）。
             journal.begin_drop(job.collection)
-            store = open_store(cfg, transport=store_transport)
+            # 削除は止める手段が無く、画面の要求の中で動くこともあるため、Qdrant への送り直しは検索と同じく抑える
+            # （失敗したらエラーの行が残り、削除をやり直せる）。
+            store = open_store(cfg, transport=store_transport, unstoppable=True)
             try:
                 for storage in storage_collection_names(job.collection):
                     store.drop_collection(storage)

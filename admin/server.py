@@ -27,7 +27,16 @@ from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from src.config import PROJECT_ROOT, is_instance_overridable, load_config, resolve_instances_root, resolve_ssl_files
+from src.config import (
+    ADDITIVE_OVERRIDE_KEYS,
+    ADMIN_SETTING_KEYS,
+    PROJECT_ROOT,
+    is_instance_overridable,
+    load_config,
+    merge_additive_override,
+    resolve_instances_root,
+    resolve_ssl_files,
+)
 from src.version import __version__
 
 from . import api_docs, assistant, assistant_index, audit, auth, env_files, env_overrides, monitor, overrides, settings_files, supervisor
@@ -459,16 +468,23 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
     # 英語表示では説明・見出しを英訳カタログ（admin/ini_catalog_en.py）から返す（日本語の正本は config.ini のコメント）。
     english = admin_i18n.current_lang() == "en"
     for info in catalog.keys:
-        if not inst.config_key_applies(kind, info.section, info.key):
-            continue
         override_value = ov.get(info.section, {}).get(info.key)
+        # 全インスタンス共通の設定（管理者設定）へ移したキーに、以前インスタンス別に保存した値が残っていれば、
+        # 効かないことを示して消せるように出す（[admin] は従来からインスタンス別に保存できないため除く）。
+        ignored = override_value is not None and (info.section, info.key) in ADMIN_SETTING_KEYS and info.section != "admin"
+        if not ignored and not inst.config_key_applies(kind, info.section, info.key):
+            continue
+        effective = override_value if override_value is not None else info.default_value
+        if override_value is not None and (info.section, info.key) in ADDITIVE_OVERRIDE_KEYS:
+            # 上書きは既定値に足す分だけを持つため、実際に効く値（既定値＋足す分）を見せ、それを編集させる。
+            effective = merge_additive_override(info.section, info.key, info.default_value, override_value)[0]
         keys.append(
             {
                 "section": info.section,
                 "key": info.key,
                 "default": info.default_value,
                 "override": override_value,
-                "effective": override_value if override_value is not None else info.default_value,
+                "effective": effective,
                 "description": ini_catalog_en.DESCRIPTIONS.get(f"{info.section}.{info.key}", info.description) if english else info.description,
                 "group_heading": ini_catalog_en.HEADINGS.get(info.group_heading or "", info.group_heading) if english else info.group_heading,
                 "ui_kind": info.ui_kind,
@@ -476,6 +492,7 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
                 "schema": _localize_schema(info.schema),
                 "env_name": _env_var_mapping.get((info.section, info.key)),
                 "env_override_active": (info.section, info.key) in active_env,
+                "ignored": ignored,
             }
         )
     return {

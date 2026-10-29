@@ -450,6 +450,9 @@ const I18N_EN = {
   "保存しました": "Saved",
   "保存しました。": "Saved.",
   "config.ini の値に戻しました。": "Reverted to the config.ini values.",
+  "このキーは全インスタンス共通の設定になったため、ここに残っている値は効きません。「管理者設定」画面で設定し、この値は「既定値に戻す」で消してください。":
+    "This key is now shared by all instances, so the value left here has no effect. Set it on the \"Admin settings\" screen and remove this value with \"Reset to default\".",
+  "（保存すると消します）": "(removed when you save)",
   "① 研究対象（スキルかサブエージェントを1つ以上）": "① Research targets (one or more skills or sub-agents)",
   "下の ② のとおりに動くよう、AI に直させるスキル・サブエージェントです。": "The skills and sub-agents the AI fixes so that they behave as described in ② below.",
   "スキル": "Skill",

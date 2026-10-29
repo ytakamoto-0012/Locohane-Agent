@@ -32,7 +32,7 @@ from pathlib import Path
 
 from evals.config_patch import PATCHABLE_KEYS, load_patch, merged_value
 from evals.skill_tree import DRAFT_META_FILENAME, FIXTURES_DIRNAME, copy_ignore_for, file_sha256, tree_sha256
-from src.config import PROJECT_ROOT, Config, load_config
+from src.config import PROJECT_ROOT, Config, load_config, merge_additive_override
 
 from .. import instances as inst
 from .. import overrides
@@ -135,7 +135,8 @@ def compute_updates(instances_root: Path, name: str, register: dict[tuple[str, s
         current, default = _current_override_text(instances_root, name, section, key, catalog)
         new_value, new_items = merged_value(section, key, current, items, default)
         if new_value is not None:
-            updates[(section, key)] = new_value
+            # overrides.save() には画面と同じく既定値を含めた全体を渡す（足す分だけを取り出して保存する）。
+            updates[(section, key)] = merge_additive_override(section, key, default, new_value)[0]
             added[f"{section}.{key}"] = new_items
     return updates, added
 

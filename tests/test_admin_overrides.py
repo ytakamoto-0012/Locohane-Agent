@@ -62,6 +62,51 @@ def test_save_creates_file_and_returns_overrides(workdir, catalog):
     assert saved == {"ui": {"max_display_messages": "77"}}
 
 
+def _default_list(catalog, section, key):
+    import ast
+
+    return ast.literal_eval(next(k.default_value for k in catalog.keys if (k.section, k.key) == (section, key)))
+
+
+def test_additive_list_saves_only_additions(workdir, catalog):
+    """スキルの登録系のリストは、画面で既定値を含めた全体を保存しても、既定値に足す分だけを上書きに持つ。"""
+    edited = [*_default_list(catalog, "plan", "plan_approval_exempt_scripts"), ["my-skill", "run.py"]]
+    result = _save(workdir, catalog, updates={("plan", "plan_approval_exempt_scripts"): json.dumps(edited)})
+    assert json.loads(result["plan"]["plan_approval_exempt_scripts"]) == [["my-skill", "run.py"]]
+    # 足した分を消して既定値と同じ全体にしたら、上書きは無くなる
+    result = _save(workdir, catalog, updates={("plan", "plan_approval_exempt_scripts"): json.dumps(edited[:-1])})
+    assert result == {}
+
+
+@pytest.mark.parametrize("change", ["remove", "limit"])
+def test_additive_list_rejects_removing_or_changing_defaults(workdir, catalog, change):
+    defaults = _default_list(catalog, "main_agent_tool_guard", "allow_entries")
+    edited = defaults[1:] if change == "remove" else [[defaults[0][0], 12345], *defaults[1:]]
+    with pytest.raises(overrides.ValidationError, match="allow_entries"):
+        _save(workdir, catalog, updates={("main_agent_tool_guard", "allow_entries"): json.dumps(edited)})
+
+
+def test_config_view_shows_merged_additive_list_and_stale_shared_keys(tmp_path, monkeypatch):
+    """設定画面には、足す分だけの上書きを既定値と合成した値を出し、全インスタンス共通になったキーの古い上書きは効かないものとして出す。"""
+    from admin import instances as inst
+    from admin import server
+
+    root = tmp_path / "instances"
+    (root / "a").mkdir(parents=True)
+    (root / "a" / "config_overrides.json").write_text(
+        json.dumps({"plan": {"plan_approval_exempt_scripts": '[["my-skill", "run.py"]]'}, "vector_db": {"max_file_mb": "200"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(server, "INSTANCES_ROOT", root)
+    keys = {(k["section"], k["key"]): k for k in server._config_key_view("a", inst.KIND_APP)["keys"]}
+    plan = keys[("plan", "plan_approval_exempt_scripts")]
+    assert json.loads(plan["effective"]) == [*_default_list(parse_file(CONFIG_INI_PATH), "plan", "plan_approval_exempt_scripts"), ["my-skill", "run.py"]]
+    assert not plan["ignored"]
+    stale = keys[("vector_db", "max_file_mb")]
+    assert stale["ignored"] and stale["override"] == "200"
+    assert ("vector_db", "scan_workers") not in keys
+
+
 def test_save_same_as_default_removes_key(workdir, catalog):
     default_value = next(k.default_value for k in catalog.keys if k.section == "ui" and k.key == "max_display_messages")
     _save(workdir, catalog, updates={("ui", "max_display_messages"): "999"})

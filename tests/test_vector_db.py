@@ -422,6 +422,32 @@ def test_extract_xlsx_drops_numbers_inside_tables(tmp_path, monkeypatch, reader)
     ]
 
 
+def test_id_column_keeps_numbers_after_non_numeric_ids():
+    """ID の列に数値でない値（"A100"）が混じっても、その下の数値の ID は残す（空の行で表が切れるまで）。"""
+    from src.vector_db.extract import _without_table_numbers
+
+    rows = [
+        ["品番", "名称", "数量"],
+        ["A100", "ボルト", 10],
+        [2001, "ナット", 20],
+        [2002, "座金", 30],
+        [],
+        ["区分", "金額"],
+        [1, 100],
+        [2, 200],
+    ]
+    assert list(_without_table_numbers(rows)) == [
+        ["品番", "名称", "数量"],
+        ["A100", "ボルト", None],
+        [2001, "ナット", None],
+        [2002, "座金", None],
+        [],
+        ["区分", "金額"],
+        [None, None],
+        [None, None],
+    ]
+
+
 def test_extract_csv_drops_numbers_inside_tables(tmp_path):
     """CSV も Excel と同じく表の中に縦に並ぶ数値を除き、引用符の中の区切り・改行はそのまま1つのセルとして読む。"""
     path = tmp_path / "a.csv"

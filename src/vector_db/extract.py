@@ -435,10 +435,12 @@ def _numeric_columns(values) -> tuple[int, list[bool]]:
 def _without_table_numbers(rows):
     """表の中の数値のセル（同じ列の真上か真下のセルも数値）を None にした行を、行の数を変えずに返す。
 
-    1行だけの「項目名＋値」（"品番 | 10"）は表ではないため残す。列の見出し（その列で直前に出てきた、数値ではない
-    文字のセル）が ID らしい列（_ID_HEADER）の数値も、検索の手がかりになるため残す。日付・時刻は数値として扱わない。
+    1行だけの「項目名＋値」（"品番 | 10"）は表ではないため残す。ID らしい見出し（_ID_HEADER）の文字のセルより下の
+    数値も、検索の手がかりになるため残す（空の行で表が切れるまで。途中に "A100" のような数値でない値が混じっても
+    ID の列のままにする）。日付・時刻は数値として扱わない。
     """
-    headers: dict[int, str] = {}
+    # ID らしい見出しが出てきた列（空の行で表が切れたら忘れる）。
+    id_columns: set[int] = set()
     above: list[bool] = []
     rows = iter(rows)
     row = next(rows, None)
@@ -447,14 +449,16 @@ def _without_table_numbers(rows):
         below_row = next(rows, None)
         below = _numeric_columns(below_row) if below_row is not None else (0, [])
         end, numeric = current
+        if all(v is None or (isinstance(v, str) and not v.strip()) for v in row[:end]):
+            id_columns.clear()
         kept = None
         for col in range(end):
             if not numeric[col]:
-                if isinstance(row[col], str) and row[col].strip():
-                    headers[col] = row[col]
+                if isinstance(row[col], str) and _ID_HEADER.search(row[col]):
+                    id_columns.add(col)
                 continue
             in_table = (col < len(above) and above[col]) or (col < below[0] and below[1][col])
-            if in_table and not _ID_HEADER.search(headers.get(col, "")):
+            if in_table and col not in id_columns:
                 if kept is None:
                     kept = list(row)
                 kept[col] = None

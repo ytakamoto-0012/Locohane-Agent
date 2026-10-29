@@ -1414,7 +1414,8 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
   送り直しを待つ間も「停止」で止められ、そのときはエラーにせずコミットしていない分を捨てて止まる（次回の取り込みで処理する）。
   送り直しても結果が変わらないよう、Qdrant への更新は冪等にしている（ポイントの ID はファイルのパスとチャンクの番号から決まり、
   削除はファイルのパスで絞り込む。コレクションの作成は、タイムアウトの後に送り直して「既にある」と返ったら作成済みを確かめる）。
-  検索は止める手段が無く AI の応答が返らなくなるため、この設定によらず最大1回（間隔は最大1秒）だけ送り直す。
+  検索とコレクションの削除は止める手段が無く応答が返らなくなるため、この設定によらず最大1回（間隔は最大1秒）だけ送り直す。
+  検索の1リクエストのタイムアウトは `qdrant_timeout_seconds` によらず最大30秒、接続のタイムアウトは最大10秒。
   コレクションの削除は始まると止められないため、`-1` のときは Qdrant が戻るまで待ち続ける（管理ツールを止めても上記のとおり整合は保たれる）。
 - **停止**: 「停止」を押すと新しいファイル・バッチを始めず（全ファイルの準備を始めた後でも、残りの埋め込みを送らない）、
   送信中の埋め込みが返るのを待って、埋め込みまで終わったファイルだけを記録して止まる（ボタンは押した時点で「停止中…」になる）。
@@ -1728,7 +1729,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `dir` | `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`sqlite_vec` 時の `vectors.sqlite`、キーワード索引 `keywords.sqlite` の保存先（既定 `${common_data_dir}/vector_db`） | `VECTOR_DB_DIR` |
 | `[vector_db]` | `qdrant_url` | `backend = qdrant` 時の Qdrant サーバー URL（例 `http://localhost:6333`）。API キーは `.env` の `QDRANT_API_KEY` | `VECTOR_DB_QDRANT_URL` |
 | `[vector_db]` | `qdrant_collection_prefix` | Qdrant 上のコレクション名の接頭辞（既定 `locohane_${instance}_`）。この接頭辞以外のコレクションには触れない | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
-| `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
+| `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定120。検索は最大30秒、接続は最大10秒） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
 | `[vector_db]` | `qdrant_max_retries` | Qdrant へ接続できない・接続を切られた・タイムアウトした・5xx・408・429 が返ったときに送り直す回数（既定5。`-1` は無制限、`0` は送り直さない。取り込み・コピーは送り直しの待ち中も「停止」で止められる。検索はこの値によらず最大1回）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_QDRANT_MAX_RETRIES` |
 | `[vector_db]` | `qdrant_retry_interval_seconds` | 上記の送り直しの間隔（秒。既定10。検索は最大1秒）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS` |
 | `[vector_db]` | `qdrant_preset` | Qdrant のコレクションのチャンク件数の規模別の設定（`none` 既定＝Qdrant の既定 / `1m` / `2m` / … / `10m`＝〜100万〜1000万件向け。HNSW・int8 量子化・ベクターのディスク配置・セグメント数・検索時の `hnsw_ef`）。既存のコレクションには次の取り込み時に反映（再構築不要）。「Qdrant を使う」参照 | `VECTOR_DB_QDRANT_PRESET` |
@@ -2081,6 +2082,13 @@ agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`）は
 足す（`src/config.py` の `ADDITIVE_OVERRIDE_KEYS`）。アップデートで既定値に足された
 新しいスキルを、保存済みの値でつぶさないため。既定値の項目は消せず、`allow_entries`
 の上限回数も既定値のままになる（環境変数は従来どおり値全体を置き換える）。
+設定画面では既定値と足した項目を合わせたリストを表示・編集し、保存時に既定値に無い
+項目だけを `config_overrides.json` へ記録する（既定値の項目を消した・変えた場合は
+保存時にエラー。`admin/overrides.py`）。
+
+「管理者設定」へ移した全インスタンス共通のキー（`ADMIN_SETTING_KEYS`）に、以前
+インスタンス別に保存した値が残っている場合は、設定画面に「効かない値」として表示し、
+「既定値に戻す」で消せる。
 
 保存前には `load_config()` 本体の型変換・バリデーションで実際に検証し、
 失敗する値は保存されない。保存のたびに変更前の内容を

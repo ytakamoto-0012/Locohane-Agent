@@ -106,13 +106,10 @@ def merge_additive_override(section: str, key: str, base_text: str, override_tex
     Returns:
         (合成した値の文字列, 既定値と同じ対象のため無視した上書きの項目のうち、既定値と内容が違うもの)。
     """
-    try:
-        base = ast.literal_eval(base_text.strip()) if base_text and base_text.strip() else []
-        extra = ast.literal_eval(override_text.strip()) if override_text and override_text.strip() else []
-    except (ValueError, SyntaxError):
+    parsed = _parse_additive_lists(base_text, override_text)
+    if parsed is None:
         return override_text, []
-    if not isinstance(base, list) or not isinstance(extra, list):
-        return override_text, []
+    base, extra = parsed
     base_items = {_additive_item_identity(section, key, i): i for i in base}
     merged = list(base)
     seen = set(base_items)
@@ -125,7 +122,48 @@ def merge_additive_override(section: str, key: str, base_text: str, override_tex
             continue
         seen.add(ident)
         merged.append(item)
-    return repr(merged), ignored
+    # JSON の書式にする（設定ダッシュボードのリストの編集欄でもそのまま読めるように）。
+    return json.dumps(merged, ensure_ascii=False), ignored
+
+
+def _parse_additive_lists(*texts: str) -> list[list] | None:
+    """texts をそれぞれリストリテラルとして読む（空なら []。どれかがリストとして読めなければ None）。"""
+    result = []
+    for text in texts:
+        try:
+            value = ast.literal_eval(text.strip()) if text and text.strip() else []
+        except (ValueError, SyntaxError):
+            return None
+        if not isinstance(value, list):
+            return None
+        result.append(value)
+    return result
+
+
+def additive_override_additions(section: str, key: str, base_text: str, edited_text: str) -> tuple[str | None, list, list]:
+    """設定ダッシュボードで編集した全体のリスト（edited_text）から、config.ini の値（base_text）に足す分だけを取り出す。
+
+    ADDITIVE_OVERRIDE_KEYS の上書きは既定値に足す分だけを持つ（merge_additive_override）ため、画面で既定値を含めた
+    リストを編集して保存したときに、既定値を上書きへ写さない（写すと、アップデートで既定値から外した項目が残り続ける）。
+
+    Returns:
+        (足す分の値の文字列（足す分が無ければ None。リストとして読めなければ edited_text のまま）,
+         edited_text から消された既定値の項目, 既定値と同じ対象で内容（allow_entries の上限回数）を変えた項目)。
+    """
+    parsed = _parse_additive_lists(base_text, edited_text)
+    if parsed is None:
+        return edited_text, [], []
+    base, edited = parsed
+    edited_items = {_additive_item_identity(section, key, i): i for i in edited}
+    base_items = {_additive_item_identity(section, key, i): i for i in base}
+    removed = [i for ident, i in base_items.items() if ident not in edited_items]
+    changed = [
+        edited_items[ident]
+        for ident, i in base_items.items()
+        if ident in edited_items and _additive_item_identity("", "", edited_items[ident]) != _additive_item_identity("", "", i)
+    ]
+    additions = [i for ident, i in edited_items.items() if ident not in base_items]
+    return (json.dumps(additions, ensure_ascii=False) if additions else None), removed, changed
 
 
 # ADMIN_SETTING_KEYS をインスタンス別に上書きしようとした (ファイル, セクション, キー) のうち、警告を出したもの。
@@ -561,11 +599,12 @@ class Config:
         vector_db_qdrant_api_key: Qdrant の API キー（.env の QDRANT_API_KEY のみ）。
         vector_db_qdrant_collection_prefix: Qdrant のコレクション名の接頭辞
             （${instance} 展開済み）。
-        vector_db_qdrant_timeout_seconds: Qdrant への1リクエストのタイムアウト秒数。
+        vector_db_qdrant_timeout_seconds: Qdrant への1リクエストのタイムアウト秒数（検索は最大
+            qdrant_store.SEARCH_TIMEOUT_SECONDS 秒、接続は最大 qdrant_store.CONNECT_TIMEOUT_SECONDS 秒）。
         vector_db_qdrant_max_retries: Qdrant へ接続できない・接続を切られた・タイムアウトした・5xx・408・429 が返ったときに、
             vector_db_qdrant_retry_interval_seconds 秒待って同じリクエストを送り直す回数。-1 なら成功するまで無制限
             （取り込みは「停止」で止められる）。0 なら送り直さない。管理者設定（全インスタンス共通）。
-            検索は止める手段が無いため、この値によらず最大1回だけ送り直す（qdrant_store.SEARCH_MAX_RETRIES）。
+            検索・コレクションの削除は止める手段が無いため、この値によらず最大1回だけ送り直す（qdrant_store.SEARCH_MAX_RETRIES）。
         vector_db_qdrant_retry_interval_seconds: 上記の送り直しの間隔（秒）。管理者設定（全インスタンス共通）。
         vector_db_qdrant_preset: Qdrant のコレクションの規模別の設定（VECTOR_DB_QDRANT_PRESETS
             のいずれか。none は Qdrant の既定のまま）。

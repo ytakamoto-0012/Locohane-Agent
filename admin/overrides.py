@@ -15,7 +15,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from src.config import ADMIN_SETTING_KEYS, load_config
+from src.config import ADDITIVE_OVERRIDE_KEYS, ADMIN_SETTING_KEYS, additive_override_additions, load_config
 
 from . import audit
 from . import instances as inst
@@ -127,6 +127,21 @@ def _build_new_data(
         info = key_index.get((section, key))
         if info is None:
             raise ValidationError(_t("[{0}].{1} は config.ini に存在しないキーです。", section, key))
+        if (section, key) in ADDITIVE_OVERRIDE_KEYS:
+            # 画面は既定値を含めた全体を編集するため、既定値に足す分だけを保存する（src/config.py の merge_additive_override）。
+            additions, removed, changed = additive_override_additions(section, key, info.default_value, value)
+            if removed or changed:
+                raise ValidationError(
+                    _t(
+                        "[{0}].{1} の config.ini の既定値の項目は、インスタンス別には消したり変えたりできません（足すことだけができます）: {2}",
+                        section, key, ", ".join(json.dumps(i, ensure_ascii=False) for i in [*removed, *changed]),
+                    )
+                )
+            if additions is None:
+                new_data.get(section, {}).pop(key, None)
+            else:
+                new_data.setdefault(section, {})[key] = additions
+            continue
         if value == info.default_value:
             new_data.get(section, {}).pop(key, None)
         else:

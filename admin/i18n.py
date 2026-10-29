@@ -152,6 +152,7 @@ EN: dict[str, str] = {
     "設定を読めません: {0}": "Cannot read the settings: {0}",
     "（「管理者設定」の「回答に使う LLM」で、LLM に接続できるインスタンスを選べます）": " (you can select an instance whose LLM can be reached in \"LLM used for answers\" under \"Admin settings\")",
     "[{0}].{1} は全インスタンス共通の設定のため、インスタンス別には変更できません（「管理者設定」画面で変更してください）。": "[{0}].{1} is shared by all instances and cannot be changed per instance (change it on the \"Admin settings\" screen).",
+    "[{0}].{1} の config.ini の既定値の項目は、インスタンス別には消したり変えたりできません（足すことだけができます）: {2}": "The config.ini default entries of [{0}].{1} cannot be removed or changed per instance (you can only add entries): {2}",
     "残す世代数は 1 以上の整数にしてください。": "The number of generations to keep must be an integer of 1 or more.",
     "保存先は絶対パスで指定してください: {0}": "Specify the destination as an absolute path: {0}",
     "自動バックアップを有効にするときは時刻を1つ以上指定してください。": "Specify at least one time when enabling scheduled backup.",

@@ -29,6 +29,12 @@ _UPSERT_BATCH = 256
 # [vector_db].qdrant_max_retries = -1（無制限）のままだと AI の応答が返らなくなるため。
 SEARCH_MAX_RETRIES = 1
 SEARCH_RETRY_INTERVAL_SECONDS = 1.0
+# 検索の1リクエストのタイムアウトの上限（秒）。[vector_db].qdrant_timeout_seconds は取り込みの書き込みの反映待ち
+# （wait=true）に合わせて長くしてあるため、検索ではこれより長く待たない。
+SEARCH_TIMEOUT_SECONDS = 30.0
+# 接続（TCP の確立）のタイムアウトの上限（秒）。Qdrant のホストが落ちて応答が無いときに、読み取りの長いタイムアウトまで
+# 待たずに失敗させる（送り直しの判断を早くする）。
+CONNECT_TIMEOUT_SECONDS = 10.0
 # 送り直しを待つ間に should_stop() を確かめる間隔（秒）。
 _STOP_POLL_SECONDS = 0.5
 # 送り直しの待ちに使う sleep（テストで差し替える）。
@@ -109,7 +115,8 @@ _shared_lock = threading.Lock()
 
 def _new_client(url: str, api_key: str, timeout: float, transport: httpx.BaseTransport | None = None) -> httpx.Client:
     headers = {"api-key": api_key} if api_key else {}
-    return httpx.Client(base_url=url.rstrip("/"), headers=headers, timeout=timeout, transport=transport)
+    timeouts = httpx.Timeout(timeout, connect=min(timeout, CONNECT_TIMEOUT_SECONDS))
+    return httpx.Client(base_url=url.rstrip("/"), headers=headers, timeout=timeouts, transport=transport)
 
 
 def shared_client(url: str, api_key: str, timeout: float) -> httpx.Client:

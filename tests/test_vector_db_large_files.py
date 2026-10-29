@@ -398,6 +398,31 @@ def test_search_retries_at_most_once(tmp_path, monkeypatch):
     assert state["calls"] == 1 + qdrant_store.SEARCH_MAX_RETRIES
 
 
+def test_unstoppable_store_retries_at_most_once(tmp_path, monkeypatch):
+    """止める手段の無い処理（コレクションの削除）は、qdrant_max_retries = -1 でも送り直しを1回までにする。"""
+    cfg, _embed, qdrant = _qdrant_env(tmp_path, vector_db_qdrant_max_retries=-1, vector_db_qdrant_retry_interval_seconds=30)
+    waits: list[float] = []
+    monkeypatch.setattr(qdrant_store, "_sleep", lambda seconds: waits.append(seconds))
+    transport, state = _flaky(qdrant, 100)
+    with pytest.raises(StoreError):
+        open_store(cfg, transport=transport, unstoppable=True).drop_collection("docs")
+    assert state["calls"] == 1 + qdrant_store.SEARCH_MAX_RETRIES
+    assert sum(waits) <= qdrant_store.SEARCH_RETRY_INTERVAL_SECONDS
+
+
+def test_search_timeout_is_capped(tmp_path):
+    """検索は qdrant_timeout_seconds を長くしても SEARCH_TIMEOUT_SECONDS 秒までしか待たず、接続は CONNECT_TIMEOUT_SECONDS 秒まで。"""
+    cfg = make_config(tmp_path, vector_db_backend="qdrant", vector_db_qdrant_url="http://qdrant.invalid:6333", vector_db_qdrant_timeout_seconds=120)
+    search = open_store(cfg, shared=True)
+    ingest_store = open_store(cfg)
+    try:
+        assert search._client.timeout.read == qdrant_store.SEARCH_TIMEOUT_SECONDS
+        assert ingest_store._client.timeout.read == 120
+        assert ingest_store._client.timeout.connect == qdrant_store.CONNECT_TIMEOUT_SECONDS
+    finally:
+        ingest_store.close()
+
+
 def test_collection_created_by_a_timed_out_request_is_accepted(tmp_path):
     """タイムアウトしたが Qdrant 側では作れていたコレクションの作成を送り直しても、エラーにしない。"""
     cfg, _embed, qdrant = _qdrant_env(tmp_path, vector_db_qdrant_max_retries=3)

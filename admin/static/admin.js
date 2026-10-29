@@ -296,7 +296,8 @@ function renderCardIngest(box, item) {
     }
     const state = j.stop_requested ? _t("停止中") : j.trigger === "schedule" ? _t("取り込み中（自動）") : _t("取り込み中");
     const count = j.total ? _t(`{0} / {1} ファイル`, fmtNum(j.done), fmtNum(j.total)) : _t("対象を確認中");
-    const current = j.current ? j.current.split(/[\\/]/).pop() : "";
+    // 取り込み中のファイルはワーカーのアイコンにカーソルを合わせると出るため、文字では出さない（コピーは枠を使わないため出す）。
+    const current = j.current && j.kind === "copy" ? j.current.split(/[\\/]/).pop() : "";
     return el("div", { class: "card-ingest-job", title: [j.collection, state, count, j.current].filter(Boolean).join("\n") }, [
       el("div", { class: "card-ingest-head" }, [
         el("span", { class: "card-ingest-name", text: j.collection }),
@@ -1123,7 +1124,14 @@ function buildKeyRow(k) {
 
   const value = effectiveValue(k);
 
-  if (k.ui_kind === "bool") {
+  if (k.ignored) {
+    // 全インスタンス共通の設定になったキーに残っている、インスタンス別の古い上書き（admin/server.py の _config_key_view）。
+    // 効かない値のため編集はさせず、確認と「既定値に戻す」（上書きから消す）だけをできるようにする。
+    row.querySelector(".key-desc").textContent =
+      _t("このキーは全インスタンス共通の設定になったため、ここに残っている値は効きません。「管理者設定」画面で設定し、この値は「既定値に戻す」で消してください。") +
+      "\n" + k.description;
+    inputWrap.appendChild(el("code", { text: resetKeys.has(id) ? _t("（保存すると消します）") : k.override }));
+  } else if (k.ui_kind === "bool") {
     const wrap = document.createElement("label");
     wrap.className = "checkbox";
     const input = document.createElement("input");
@@ -1989,7 +1997,8 @@ function storeEdit(k, newValue) {
   if (newValue === k.default) {
     // 上書き値が保存済みなら、既定値の手入力は「既定値へ戻す」と同じ変更として扱う
     if (k.override !== null) resetKeys.add(id);
-  } else if (k.override === null || newValue !== k.override) {
+  } else if (k.override === null || newValue !== k.effective) {
+    // 上書きがあるときの effective は保存済みの値（既定値に足すだけのリストは、既定値と合成した値。admin/server.py）。
     dirtyEdits[id] = newValue;
   }
 }

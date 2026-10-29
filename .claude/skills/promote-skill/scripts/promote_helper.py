@@ -255,7 +255,7 @@ def _register_guard_exemptions(instance: str, entries: list[tuple[str, str]], ac
     from admin import instances as inst
     from admin import overrides
     from admin.ini_catalog import find_key, parse_file
-    from src.config import load_config, resolve_instances_root
+    from src.config import load_config, merge_additive_override, resolve_instances_root
 
     instances_root = resolve_instances_root(CONFIG_INI_PATH)
     env_file = inst.env_path(instances_root, instance)
@@ -278,7 +278,8 @@ def _register_guard_exemptions(instance: str, entries: list[tuple[str, str]], ac
         current = existing.get(section, {}).get(key, "")
         new_value, new_items = _merged_value(current, entries, allow_entries=(key == "allow_entries"), default_text=info.default_value)
         if new_value is not None:
-            updates[(section, key)] = new_value
+            # overrides.save() には画面と同じく既定値を含めた全体を渡す（足す分だけを取り出して保存する）。
+            updates[(section, key)] = merge_additive_override(section, key, info.default_value, new_value)[0]
             added[f"{section}.{key}"] = new_items
     if not updates:
         return {"instance": instance, "added": {}}

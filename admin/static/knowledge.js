@@ -402,7 +402,8 @@ function knowledgeJobCell(job, maxFileMb, workers) {
     }
     parts.push(el("div", { class: "hint", text: _t(`{0} / {1} ファイル`, job.done, job.total || "?") }));
     parts.push(knowledgeJobWorkerIcons(workers));
-    if (job.current) parts.push(el("div", { class: "hint", text: job.current }));
+    // 取り込み中のファイルはワーカーのアイコンにカーソルを合わせると出るため、文字では出さない（コピーは枠を使わないため出す）。
+    if (job.current && job.kind === "copy") parts.push(el("div", { class: "hint", text: job.current }));
   }
   if (job.result && job.result.kind === "copy") {
     const r = job.result;

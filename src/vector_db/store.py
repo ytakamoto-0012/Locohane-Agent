@@ -138,6 +138,7 @@ def open_store(
     transport: httpx.BaseTransport | None = None,
     shared: bool = False,
     should_stop: Callable[[], bool] | None = None,
+    unstoppable: bool = False,
 ) -> VectorStore:
     """[vector_db].backend に応じた保存先を開く。使い終わったら close() すること。
 
@@ -146,22 +147,28 @@ def open_store(
         transport: backend=qdrant のとき、テスト用に差し替える httpx のトランスポート。
         shared: backend=qdrant のとき、Qdrant への接続をプロセス内で使い回す（検索用。
             qdrant_store.shared_client 参照）。transport を渡したときは使わない。
-            検索は止める手段が無いため、送り直しは [vector_db].qdrant_max_retries によらず
-            最大 qdrant_store.SEARCH_MAX_RETRIES 回にする。
+            検索は止める手段が無いため、unstoppable と同じく送り直しを抑え、1リクエストのタイムアウトも
+            最大 qdrant_store.SEARCH_TIMEOUT_SECONDS 秒にする。
         should_stop: backend=qdrant のとき、送り直しを待つ間に確かめ、True を返したら StoreStopped を投げてやめる。
+        unstoppable: 止める手段の無い処理（コレクションの削除等）。送り直しは [vector_db].qdrant_max_retries によらず
+            最大 qdrant_store.SEARCH_MAX_RETRIES 回、間隔は最大 SEARCH_RETRY_INTERVAL_SECONDS 秒にする
+            （-1（無制限）のままだと Qdrant が止まっている間いつまでも返らないため）。
     """
     if cfg.vector_db_backend == "qdrant":
-        from .qdrant_store import SEARCH_MAX_RETRIES, SEARCH_RETRY_INTERVAL_SECONDS, QdrantStore
+        from .qdrant_store import SEARCH_MAX_RETRIES, SEARCH_RETRY_INTERVAL_SECONDS, SEARCH_TIMEOUT_SECONDS, QdrantStore
 
         max_retries, interval = cfg.vector_db_qdrant_max_retries, cfg.vector_db_qdrant_retry_interval_seconds
-        if shared:
+        timeout = cfg.vector_db_qdrant_timeout_seconds
+        if shared or unstoppable:
             max_retries = SEARCH_MAX_RETRIES if max_retries < 0 else min(max_retries, SEARCH_MAX_RETRIES)
             interval = min(interval, SEARCH_RETRY_INTERVAL_SECONDS)
+        if shared:
+            timeout = min(timeout, SEARCH_TIMEOUT_SECONDS)
         return QdrantStore(
             cfg.vector_db_qdrant_url,
             prefix=cfg.vector_db_qdrant_collection_prefix,
             api_key=cfg.vector_db_qdrant_api_key,
-            timeout=cfg.vector_db_qdrant_timeout_seconds,
+            timeout=timeout,
             distance=cfg.vector_db_distance,
             preset=cfg.vector_db_qdrant_preset,
             transport=transport,
