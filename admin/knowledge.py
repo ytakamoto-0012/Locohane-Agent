@@ -689,7 +689,7 @@ def build_router(
         instances_root=instances_root, jobs=jobs, loader=loader, audit_log_path=audit_log_path, launch=_launch_ingest
     )
 
-    def _cfg(name: str) -> Config:
+    def _check_app_instance(name: str) -> None:
         try:
             inst.validate_name(name)
             meta = inst.read_instance(instances_root, name)
@@ -697,6 +697,9 @@ def build_router(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         if meta.is_skill_lab:
             raise HTTPException(status_code=400, detail=_t("スキル研究室のインスタンスにはナレッジを置けません。"))
+
+    def _cfg(name: str) -> Config:
+        _check_app_instance(name)
         try:
             return loader(name)
         except Exception as exc:  # noqa: BLE001
@@ -839,6 +842,16 @@ def build_router(
             # 全インスタンスで共有する取り込みの枠の状態（画面のワーカーのアイコン）。
             "workers": slots.snapshot(),
         }
+
+    @router.get("/api/instances/{name}/knowledge/jobs")
+    def get_knowledge_jobs(name: str, user: str = Depends(require_login)):
+        """name のジョブ（コレクション名 → IngestJob.to_dict()）と取り込みの枠の状態だけを返す（取り込み中の画面のポーリング用）。
+
+        GET /api/instances/{name}/knowledge と違い、設定・カタログ（ファイル数の集計）・ほかのインスタンスの参照を読まない
+        （大量の取り込みを同時に動かしている間も軽く返すため）。件数等は、ジョブが始まった・終わったときに画面が一覧を取り直す。
+        """
+        _check_app_instance(name)
+        return {"jobs": {c: j.to_dict() for c, j in jobs.for_instance(name).items()}, "workers": slots.snapshot()}
 
     @router.get("/api/knowledge/workers")
     def get_knowledge_workers(user: str = Depends(require_login)):

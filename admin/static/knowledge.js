@@ -309,15 +309,55 @@ async function renderKnowledgePanel(container, name) {
 
   // 取り込み・コピー・削除中（順番待ちを含む）のジョブか、ほかのインスタンスの取り込みが枠を使っている間（と、
   // 終わった直後の1回）だけ表示を更新する（編集中の追加フォームを描き直さないよう、一覧の表と枠の表示だけを差し替える）。
+  // ポーリングはジョブと枠の状態だけを返す軽い API で行い、ジョブが始まった・終わったときだけ一覧（ファイル数の集計・
+  // ほかのインスタンスの参照を読むため重い）を取り直す。状態が前回と同じなら描き直さない。
   const hasRunning = (d) =>
     d.collections.some((c) => knowledgeJobActive(c.job)) || (d.copy_jobs || []).some(knowledgeJobActive) || knowledgeWorkersBusy(d.workers);
   let wasRunning = hasRunning(data);
+  let activeKey = knowledgeActiveJobsKey(knowledgeDataJobs(data));
+  let lastStatus = "";
   startMonitorPolling(container, async () => {
     if (!wasRunning) return;
-    const latest = await api(knowledgePath(name));
+    const status = await api(knowledgePath(name, "/jobs"));
+    let latest;
+    if (knowledgeActiveJobsKey(Object.values(status.jobs)) !== activeKey) {
+      latest = await api(knowledgePath(name));
+      lastStatus = "";
+    } else {
+      const sig = JSON.stringify(status);
+      if (sig === lastStatus) return;
+      lastStatus = sig;
+      latest = knowledgeMergeJobs(latestData, status);
+    }
+    activeKey = knowledgeActiveJobsKey(knowledgeDataJobs(latest));
     wasRunning = hasRunning(latest);
     draw(latest);
   });
+}
+
+// 一覧（GET /api/instances/{name}/knowledge）に含まれるジョブ。
+function knowledgeDataJobs(d) {
+  return [...d.collections.map((c) => c.job).filter(Boolean), ...(d.copy_jobs || [])];
+}
+
+// 動いている（順番待ちを含む）ジョブの組み合わせ。変わったら（始まった・終わった）一覧を取り直す。
+function knowledgeActiveJobsKey(jobs) {
+  return jobs
+    .filter(knowledgeJobActive)
+    .map((j) => `${j.kind}:${j.collection}:${j.state}`)
+    .sort()
+    .join("|");
+}
+
+// 一覧 d のジョブ・枠の状態を、軽い API（GET /api/instances/{name}/knowledge/jobs）の status で置き換える。
+function knowledgeMergeJobs(d, status) {
+  const names = new Set(d.collections.map((c) => c.name));
+  return {
+    ...d,
+    collections: d.collections.map((c) => ({ ...c, job: status.jobs[c.name] || null })),
+    copy_jobs: Object.values(status.jobs).filter((j) => j.kind === "copy" && !names.has(j.collection)),
+    workers: status.workers,
+  };
 }
 
 function knowledgeScheduleText(c) {

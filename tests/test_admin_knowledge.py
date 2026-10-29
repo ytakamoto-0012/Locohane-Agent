@@ -79,6 +79,22 @@ def test_collection_lifecycle(env):
     assert actions == ["knowledge_collection_create", "knowledge_ingest_start", "knowledge_collection_update", "knowledge_collection_delete"]
 
 
+def test_jobs_endpoint_returns_only_jobs_and_workers(env):
+    """取り込み中の画面のポーリング用の軽い API は、設定・カタログを読まずにジョブと枠の状態だけを返す。"""
+    client, docs, jobs = env["client"], env["docs"], env["router"].ingest_jobs
+    client.post("/api/instances/org_a/knowledge/collections", json={"name": "docs", "source_folder": str(docs)})
+    assert client.get("/api/instances/org_a/knowledge/jobs").json()["jobs"] == {}
+
+    assert jobs.start("org_a", knowledge.IngestJob(collection="docs", rebuild=False, actor="admin"))
+    # 設定が読めなくても（カタログを開かなくても）返せる。
+    env["configs"].pop("org_a")
+    res = client.get("/api/instances/org_a/knowledge/jobs").json()
+    assert set(res) == {"jobs", "workers"}
+    assert res["jobs"]["docs"]["state"] == "running" and res["workers"]["embed"] == [None]
+    assert client.get("/api/instances/lab1/knowledge/jobs").status_code == 400
+    assert client.get("/api/instances/nothing/knowledge/jobs").status_code == 404
+
+
 def test_rejects_bad_folder_skill_lab_and_disabled_ingest(env):
     client, docs = env["client"], env["docs"]
     assert client.post("/api/instances/org_a/knowledge/collections", json={"name": "a", "source_folder": "relative/path"}).status_code == 400
