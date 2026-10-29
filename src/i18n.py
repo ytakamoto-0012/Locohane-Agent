@@ -83,7 +83,9 @@ def response_language_directive(lang: str | None = None) -> str:
     return (
         "\n\n## Response language\n"
         f"The user's display language is {name}. Always write your replies to the user in {name}, "
-        "even though these instructions, tool descriptions and skills are written in English. Keep code "
+        "even though these instructions, tool descriptions and skills are written in English. This also "
+        "applies to tool arguments shown to the user: the steps (content/activeForm) and detail_markdown of "
+        "create_plan, and the questions and choices of ask_user_choice/AskUserQuestion. Keep code "
         "identifiers, tool names, tool argument names and file paths unchanged. If the user explicitly asks for "
         "another language, follow that."
     )

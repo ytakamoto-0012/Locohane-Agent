@@ -24,6 +24,10 @@ async def create_plan(steps: list[dict[str, str]], detail_markdown: str | None =
     steps with this tool. Creating it does not lift the block on the write tools.
     To get approval, call approve_plan next.
 
+    steps and detail_markdown are shown to the user as is, so write them in the language specified in
+    the "Response language" section of the system prompt (not necessarily English like the examples
+    below).
+
     Write steps/detail_markdown based on concrete facts found in your investigation.
     Do not make up step text (including concrete numbers such as line numbers or cell positions)
     from memory or guesswork alone.
