@@ -589,7 +589,7 @@ cmd:
 
 ## Admin settings
 
-Settings shared by all instances (`[vector_db] ingest_workers`, `ingest_processes`, `ingest_embed_requests`, `[admin] assistant_llm_instance`, `assistant_embedding_instance`).
+Settings shared by all instances (`[vector_db] ingest_workers`, `ingest_processes`, `ingest_embed_requests`, `qdrant_max_retries` (`-1` is unlimited), `[admin] assistant_llm_instance`, `assistant_embedding_instance`).
 Saved to `<instances_dir>/admin_settings.json`; they take precedence over config.ini (and apply without a restart).
 
 ```bash

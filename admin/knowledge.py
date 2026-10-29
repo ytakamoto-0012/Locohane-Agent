@@ -39,6 +39,7 @@ from src.vector_db import catalog as vcat
 from src.vector_db.collection_copy import CopyError, check_compatible, copy_collection
 from src.vector_db.embeddings import EmbeddingError, embedding_model
 from src.vector_db.ingest import IngestError, IngestSlots, effective_extensions, ingest_collection
+from src.vector_db.journal import open_journal
 from src.vector_db.keyword_index import open_keyword_index
 from src.vector_db.store import StoreError, open_store, path_collection_name, storage_collection_names
 
@@ -348,8 +349,11 @@ def run_delete_job(cfg: Config, instance: str, job: IngestJob, jobs: _JobRegistr
     started = datetime.now()
     logger.info("Knowledge: delete %s/%s started (actor=%s).", instance, job.collection, job.actor)
     try:
-        with vcat.open_catalog(cfg.vector_db_dir) as catalog:
+        with vcat.open_catalog(cfg.vector_db_dir) as catalog, open_journal(cfg.vector_db_dir) as journal:
             catalog.get(job.collection)
+            # 途中で止まって一覧に残ったコレクションは、記録はあるのにベクターが消えているため、
+            # 次の取り込みで作り直させる（journal.begin_drop。削除をやり直しても消える）。
+            journal.begin_drop(job.collection)
             store = open_store(cfg, transport=store_transport)
             try:
                 for storage in storage_collection_names(job.collection):
@@ -360,6 +364,7 @@ def run_delete_job(cfg: Config, instance: str, job: IngestJob, jobs: _JobRegistr
                 keywords.drop_collection(job.collection)
                 keywords.drop_collection(path_collection_name(job.collection))
             catalog.delete(job.collection)
+            journal.clear(job.collection)
         job.state = "done"
     except StoreError as exc:
         logger.warning("Knowledge: delete %s/%s error: %s", instance, job.collection, exc, exc_info=True)

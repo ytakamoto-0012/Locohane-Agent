@@ -441,6 +441,8 @@ Locohane/
 │   │   ├── store.py / sqlite_vec_store.py / qdrant_store.py # where vectors are stored (sqlite-vec / Qdrant)
 │   │   ├── keyword_index.py  # keyword index of the text (keywords.sqlite, BM25 of SQLite FTS5)
 │   │   ├── sqlite_batch.py   # batched commits of SQLite writes (for ingestion; WAL, synchronous=NORMAL)
+│   │   ├── journal.py        # ingestion journal (ingest_journal.sqlite; cleans up files left half-written by a forced termination)
+│   │   ├── gc_pacer.py       # periodic collection of cyclic garbage (httpx responses) during ingestion and copying
 │   │   └── ingest.py / search.py # differential ingestion (CLI: python -m src.vector_db.ingest), search
 │   ├── project_instructions.py # loading .locohane/LOCOHANE.md
 │   ├── graph.py             # ReAct loop (switches between handwritten / prebuilt)
@@ -573,7 +575,7 @@ and WAL cannot be used). Use "Data backup" (in the settings dashboard section) t
 | `data/chat_threads.sqlite` | Metadata for the conversation thread list (left sidebar) and resuming (thread names, owners, Chainlit Step history). A separate file from `checkpoints.sqlite` (see `[thread_store]`) | When the list/resume feature is no longer needed | Delete the file (while the app is stopped; `checkpoints.sqlite` itself remains, so conversation state is not lost) |
 | `data/logs/app.log` | App operation log | Any time | Delete the file |
 | `data/memory/` | Persistent memory (`user`/`feedback`/`project`/`reference` subfolders + the `MEMORY.md` index) | When the accumulated memories are no longer needed | Delete the folder contents (`MEMORY.md` is regenerated on the next save) |
-| `data/vector_db/` | The vector DB's `catalog.sqlite` (collection definitions, records of ingested files), the vectors `vectors.sqlite` with `backend = sqlite_vec`, and the keyword index of the text `keywords.sqlite` (`[vector_db] dir`). `catalog.sqlite` also holds references to collections of other instances (the `collection_refs` table). The source documents themselves are not copied | When a collection is no longer needed | Delete the collection on the Knowledge screen of the settings dashboard (to delete the whole folder, stop the app and the admin tool's ingestion first; with `backend = qdrant` the vectors remain on the Qdrant side) |
+| `data/vector_db/` | The vector DB's `catalog.sqlite` (collection definitions, records of ingested files), the vectors `vectors.sqlite` with `backend = sqlite_vec`, the keyword index of the text `keywords.sqlite`, and the ingestion journal `ingest_journal.sqlite` that records files left half-written by a forced termination (`[vector_db] dir`). `catalog.sqlite` also holds references to collections of other instances (the `collection_refs` table). The source documents themselves are not copied | When a collection is no longer needed | Delete the collection on the Knowledge screen of the settings dashboard (to delete the whole folder, stop the app and the admin tool's ingestion first; with `backend = qdrant` the vectors remain on the Qdrant side) |
 | `data/plans/` | Detailed plan Markdown when `create_plan` is passed the `detail_markdown` argument (`[paths] plans_dir`) | When old plans are no longer needed | Delete the folder contents |
 | `data/skill_drafts/<username>/` | Per-user draft skills created by skill-creator (`<skill name>/`) and their evaluation results (`_workspace/`). `[skill_creator] draft_dir`. Rejected drafts also remain as records (not shown in the list) | When there are unneeded drafts | Delete the draft folder (the creator can also delete it with `delete_draft.py` of skill-creator). Not deleted automatically |
 | `data/<instance name>/skill_drafts_archive/<username>/<skill name>_<date time>/` | Where promoted drafts are moved (together with `_workspace/`; `[skill_creator] archive_dir`) | When the records are no longer needed | Delete the folder |
@@ -1363,6 +1365,29 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
   are always saved (files not recorded are processed in the next ingestion).
   Even while waiting for embedding/preparation to finish, it commits when the commit deadline (about 2 seconds) comes, and does not keep holding the write lock (so that
   ingestion of another collection running at the same time, or editing collections on the settings dashboard, does not fail with "database is locked").
+- **Files with many chunks**: a file with more than 1024 text chunks (business data such as CSVs or logs with hundreds of thousands of lines) does not wait
+  for all of its vectors; the chunks are added to the storage as soon as their numbers are complete in order (`_Job.stream` in `src/vector_db/ingest.py`).
+  Vectors are not accumulated in memory, so even a single file with 200,000 chunks uses memory almost independent of the file size (only up to about
+  1024 vectors waiting for earlier numbers are kept; while a batch with earlier numbers does not return because of retries etc., later batches of that file are not sent).
+  The old chunks are deleted when writing starts, so the half-written chunks of that file appear in searches during ingestion. Files with 1024 chunks or fewer
+  are still replaced at once after everything is complete. Copying ("Copying between instances") also reads and writes the vectors and keyword index a few hundred at a time.
+  Text extraction and chunking are done for the whole file, so the text (a few hundred MB for 200,000 chunks) is kept in memory.
+- **Consistency after a forced termination**: Qdrant sends updates every 256 points without waiting for the commit, and files with many chunks are written in parts,
+  so a forced termination of the process or a PC shutdown can leave half-written (or rewritten) chunks in the storage while the catalog still has the previous record
+  (or no record for a new file). Therefore, before writing to the storage, the file is recorded immediately in the ingestion journal
+  (`ingest_journal.sqlite` in `[vector_db] dir`, `src/vector_db/journal.py`) and removed after its catalog record is committed.
+  Files left there at the start of the next ingestion are always ingested again if the catalog has a record (a file whose content was reverted is not left
+  half-written as "same content"), and are removed from the storage and keyword index if there is no record (they do not remain even if the file was deleted from the folder).
+  Rebuilding and deleting a collection also record "deleting" before deleting the storage and clear it after the catalog is deleted. A collection that stopped midway
+  is rebuilt by the next "Ingest (diff)" (a deletion is completed by running it again).
+- **Retrying requests to Qdrant**: when Qdrant cannot be reached, closes the connection, times out or returns a temporary error (5xx, 408, 429),
+  the same request is sent again after waiting `[vector_db] qdrant_retry_interval_seconds` (default 10) seconds, up to
+  `qdrant_max_retries` times (default 5; `-1` retries without limit until it succeeds, `0` does not retry; shared by all instances and changed in "Admin settings").
+  "Stop" also works while waiting for a retry; it then stops without an error, discarding what was not committed (processed in the next ingestion).
+  Updates to Qdrant are idempotent so that a retry does not change the result (point IDs are derived from the file path and chunk number,
+  deletes filter by file path, and if creating a collection is retried after a timeout and returns "already exists", it checks that it was created).
+  Searches cannot be stopped and would leave the AI without a response, so they are retried at most once (with an interval of at most 1 second) regardless of this setting.
+  Deleting a collection cannot be stopped once started, so with `-1` it keeps waiting until Qdrant is back (consistency is kept as above even if the admin tool is stopped).
 - **Stop**: pressing "Stop" starts no new files or batches (even after preparation of all files has started, the remaining embeddings are not sent),
   waits for the embeddings in flight to return, records only the files whose embedding finished, and stops (the button becomes "Stopping…" when pressed).
 - **Shared parallelism**: `ingest_workers`, `ingest_processes` and `ingest_embed_requests` are shared by all instances (they cannot be overridden per instance; change
@@ -1676,7 +1701,9 @@ The comments in config.ini are written in Japanese (authoritative). The settings
 | `[vector_db]` | `dir` | Where `catalog.sqlite` (collection definitions, records of ingested files), `vectors.sqlite` with `sqlite_vec`, and the keyword index `keywords.sqlite` are saved (default `${common_data_dir}/vector_db`) | `VECTOR_DB_DIR` |
 | `[vector_db]` | `qdrant_url` | URL of the Qdrant server with `backend = qdrant` (e.g. `http://localhost:6333`). The API key is `QDRANT_API_KEY` in `.env` | `VECTOR_DB_QDRANT_URL` |
 | `[vector_db]` | `qdrant_collection_prefix` | Prefix of collection names on Qdrant (default `locohane_${instance}_`). Collections without this prefix are not touched | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
-| `[vector_db]` | `qdrant_timeout_seconds` | Timeout in seconds per request to Qdrant (default 30) | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
+| `[vector_db]` | `qdrant_timeout_seconds` | Timeout in seconds per request to Qdrant (default 120) | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
+| `[vector_db]` | `qdrant_max_retries` | Number of retries when Qdrant cannot be reached, closes the connection, times out or returns 5xx, 408 or 429 (default 5; `-1` is unlimited, `0` does not retry; ingestion and copying can be stopped with "Stop" while waiting for a retry; searches are retried at most once regardless). **Shared by all instances** (cannot be overridden per instance; can be changed in "Admin settings" of the settings dashboard) | `VECTOR_DB_QDRANT_MAX_RETRIES` |
+| `[vector_db]` | `qdrant_retry_interval_seconds` | Interval in seconds between the retries above (default 10; at most 1 for searches) | `VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS` |
 | `[vector_db]` | `qdrant_preset` | Settings of Qdrant collections by scale of chunk count (`none` default = Qdrant's default / `1m` / `2m` / ... / `10m` = for up to 1-10 million. HNSW, int8 quantization, putting vectors on disk, number of segments, `hnsw_ef` when searching). Applied to existing collections on the next ingestion (no rebuild needed). See "Using Qdrant" | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | Endpoints that compute embeddings (`/v1/embeddings`). Same format as `[llm] main_url`; all elements must have the same `model`, and `start`/`end` cannot be specified. Required when `enabled = true` (`[]` means not set) | `VECTOR_DB_EMBEDDING_URL` |
 | `[vector_db]` | `embedding_routing_strategy` | How to choose when `embedding_url` has several entries (`round_robin` / `random` / `priority_failover` default; no check with GET /slots). With any strategy, an error makes it resend to the next endpoint (see "Preparing and configuring the embedding server") | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
@@ -2154,6 +2181,7 @@ change history (`admin_settings_save`).
 | Ingestion parallelism | `[vector_db] ingest_workers` | Number of files prepared at the same time, in total across the ingestions of all instances and collections (see "Ingesting documents") |
 | Child processes for text extraction and rendering | `[vector_db] ingest_processes` | 0 uses threads. With 1 or more, this is also the number of files prepared at the same time. The screen shows the number of cores of this PC |
 | Embedding request parallelism | `[vector_db] ingest_embed_requests` | Number of embedding requests sent at the same time, in total across the ingestions of all instances and collections. 0 means the same as the ingestion parallelism |
+| Qdrant request retries | `[vector_db] qdrant_max_retries` | With `backend = qdrant`, number of retries when Qdrant cannot be reached, closes the connection, times out or returns a temporary error. `-1` is unlimited (ingestion and copying can be stopped with "Stop"), `0` does not retry. Searches are retried at most once |
 | LLM used for answers | `[admin] assistant_llm_instance` | Which instance's `[llm] main_url` provides the LLM that writes the answers of "Ask AI". If empty, the instance being asked about. Select an instance and press "Check connection" to send `GET /models` to each endpoint of its `main_url` and see whether it can be reached (the model is not run) |
 | Embedding used to find related settings | `[admin] assistant_embedding_instance` | Which instance's `[vector_db] embedding_url` provides the embedding server used to choose the settings and descriptions close to the question. Automatic if empty |
 

@@ -202,6 +202,24 @@ def test_ingest_embed_requests_default_and_validation(tmp_path, monkeypatch):
         load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
 
 
+def test_qdrant_retries_and_timeout_defaults_and_validation(tmp_path, monkeypatch):
+    for name in ("VECTOR_DB_QDRANT_MAX_RETRIES", "VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS", "VECTOR_DB_QDRANT_TIMEOUT_SECONDS"):
+        monkeypatch.delenv(name, raising=False)
+    cfg = load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    assert (cfg.vector_db_qdrant_max_retries, cfg.vector_db_qdrant_retry_interval_seconds, cfg.vector_db_qdrant_timeout_seconds) == (5, 10, 120)
+    monkeypatch.setenv("VECTOR_DB_QDRANT_MAX_RETRIES", "-1")
+    assert load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1").vector_db_qdrant_max_retries == -1
+    monkeypatch.setenv("VECTOR_DB_QDRANT_MAX_RETRIES", "-2")
+    with pytest.raises(ValueError, match="qdrant_max_retries"):
+        load_config(overrides_path=tmp_path / "missing.json", instance_name="inst1")
+    monkeypatch.delenv("VECTOR_DB_QDRANT_MAX_RETRIES")
+    # 全インスタンス共通のため、config_overrides.json の値は使わない（送り直しの間隔はインスタンス別に変えられる）。
+    cfg = _load(tmp_path, {"qdrant_max_retries": "-1", "qdrant_retry_interval_seconds": "3"})
+    assert (cfg.vector_db_qdrant_max_retries, cfg.vector_db_qdrant_retry_interval_seconds) == (5, 3)
+    with pytest.raises(ValueError, match="qdrant_retry_interval_seconds"):
+        _load(tmp_path, {"qdrant_retry_interval_seconds": "0"})
+
+
 def test_ingest_parallelism_ignores_instance_overrides(tmp_path):
     """取り込みの並列数は全インスタンス共通のため、config_overrides.json の値は使わない（admin/knowledge.py 参照）。"""
     cfg = _load(tmp_path, {"ingest_workers": "4", "ingest_processes": "2", "ingest_embed_requests": "8", "chunk_size": "300"})

@@ -17,8 +17,10 @@ import httpx
 from ..config import Config
 from .catalog import CatalogError, open_catalog
 from .embeddings import embedding_model
+from .gc_pacer import GcPacer
+from .journal import open_journal
 from .keyword_index import open_keyword_index
-from .store import open_store, path_collection_name, storage_collection_names
+from .store import StoreStopped, open_store, path_collection_name, storage_collection_names
 
 logger = logging.getLogger(__name__)
 
@@ -114,12 +116,30 @@ def copy_collection(
             return result
         dst_catalog.set_model(dst_name, src.model, src.dim, src.document_prefix)
 
-        src_store = open_store(src_cfg, transport=src_store_transport)
-        dst_store = open_store(dst_cfg, transport=dst_store_transport)
+        # Qdrant へ送り直しを待つ間も「停止」に応じる（[vector_db].qdrant_max_retries = -1 なら無制限に待つため）。
+        src_store = open_store(src_cfg, transport=src_store_transport, should_stop=should_stop)
+        dst_store = open_store(dst_cfg, transport=dst_store_transport, should_stop=should_stop)
         src_keywords = open_keyword_index(src_cfg.vector_db_dir)
         dst_keywords = open_keyword_index(dst_cfg.vector_db_dir)
+        # 強制終了等で書きかけになったファイルは、コピー先での次の取り込みが片付ける（journal 参照）。
+        journal = open_journal(dst_cfg.vector_db_dir)
+        # 同じ名前の前のコレクションの削除が途中で止まった印が残っていても、今作ったコレクションには関係しない。
+        journal.clear(dst_name)
         parts = (dst_store, dst_keywords, dst_catalog)
         ready: set[str] = set()
+        # カタログへ記録したが、まだコミットしていないファイルと、そのチャンク数。
+        recorded: list[str] = []
+        recorded_chunks = 0
+        # Qdrant の応答（httpx）の循環参照のゴミがたまり続けないよう、間隔を空けて回収する（gc_pacer 参照）。
+        pacer = GcPacer()
+
+        def commit() -> None:
+            nonlocal recorded, recorded_chunks
+            for part in parts:
+                part.commit()
+            journal.discard(dst_name, recorded)
+            recorded, recorded_chunks = [], 0
+
         try:
             for part in parts:
                 part.begin_batch()
@@ -130,41 +150,56 @@ def copy_collection(
                     break
                 if progress:
                     progress(i - 1, len(records), source)
+                journal.add(dst_name, source)
+                chunk_count = 0
                 for src_storage, dst_storage in zip(storage_collection_names(src_name), storage_collection_names(dst_name), strict=True):
-                    chunks, vectors = src_store.get_source(src_storage, source)
-                    if not chunks:
-                        continue
-                    if dst_storage not in ready:
-                        dst_store.ensure_collection(dst_storage, len(vectors[0]))
-                        ready.add(dst_storage)
-                    dst_store.replace_source(dst_storage, source, chunks, vectors)
+                    # 数十万チャンクの1ファイルでもメモリーを使い切らないよう、数百件ずつ読んで足す。
+                    start = 0
+                    for chunks, vectors in src_store.iter_source(src_storage, source):
+                        pacer.tick()
+                        if dst_storage not in ready:
+                            dst_store.ensure_collection(dst_storage, len(vectors[0]))
+                            ready.add(dst_storage)
+                        if start == 0:
+                            dst_store.delete_source(dst_storage, source)
+                        dst_store.append_source(dst_storage, source, start, chunks, vectors)
+                        start += len(chunks)
                     if src_storage == src_name:
-                        result["chunks"] += len(chunks)
+                        chunk_count = start
                 for src_kw, dst_kw in ((src_name, dst_name), (path_collection_name(src_name), path_collection_name(dst_name))):
-                    rows = src_keywords.source_rows(src_kw, source)
+                    rows = src_keywords.iter_source_rows(src_kw, source)
                     if rows is not None:
                         dst_keywords.replace_source_rows(dst_kw, source, rows)
                 dst_catalog.upsert_file(dst_name, record)
+                recorded.append(source)
+                recorded_chunks += chunk_count
                 result["files"] += 1
+                result["chunks"] += chunk_count
                 if time.monotonic() - last_commit >= _COMMIT_INTERVAL_SECONDS:
-                    for part in parts:
-                        part.commit()
+                    commit()
                     last_commit = time.monotonic()
             for part in parts:
                 part.end_batch()
-        except BaseException:
+            journal.discard(dst_name, recorded)
+        except BaseException as exc:
             for part in parts:
                 try:
                     part.rollback()
                 except Exception:  # noqa: BLE001 - 元のエラーを優先する
                     logger.exception("vector_db copy: rollback failed")
                 part._batching = False
-            raise
+            if not isinstance(exc, StoreStopped):
+                raise
+            # Qdrant への送り直しを待つ間に停止を求められた。コミットしていない分は記録しない（コピー先の取り込みで補われる）。
+            result["stopped"] = True
+            result["files"] -= len(recorded)
+            result["chunks"] -= recorded_chunks
         finally:
             src_store.close()
             dst_store.close()
             src_keywords.close()
             dst_keywords.close()
+            journal.close()
         if progress:
             progress(result["files"], len(records), "")
         if not result["stopped"]:

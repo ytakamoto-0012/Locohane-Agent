@@ -35,9 +35,11 @@ from .chunking import split_text
 from .embedded_images import EMBEDDED_IMAGE_EXTENSIONS, extract_embedded_images
 from .embeddings import EmbeddingStopped, embed_images, embed_texts, embedding_model, open_client
 from .extract import SUPPORTED_EXTENSIONS, ExtractError, extract_segments
+from .gc_pacer import GcPacer
+from .journal import IngestJournal, open_journal
 from .keyword_index import KeywordIndex, open_keyword_index
 from .render import IMAGE_FILE_EXTENSIONS, PageImage, close_office_apps, keep_office_apps, render_pages
-from .store import ChunkRecord, image_collection_name, open_store, path_collection_name, storage_collection_names
+from .store import ChunkRecord, StoreStopped, image_collection_name, open_store, path_collection_name, storage_collection_names
 
 logger = logging.getLogger(__name__)
 
@@ -659,11 +661,15 @@ def ingest_collection(
         "vector_db ingest: start instance=%s collection=%s rebuild=%s model=%s workers=%d processes=%d",
         instance or "-", name, rebuild, model, slots.workers, slots.processes,
     )
-    with open_catalog(cfg.vector_db_dir) as catalog:
+    with open_catalog(cfg.vector_db_dir) as catalog, open_journal(cfg.vector_db_dir) as journal:
         try:
             collection = catalog.get(name)
         except CatalogError as e:
             raise IngestError(str(e)) from e
+        if not rebuild and journal.drop_pending(name):
+            # 前回の再構築・削除が保存先を消している途中で止まった。カタログの記録と保存先の中身が合わないため、作り直す。
+            logger.warning("vector_db ingest: collection=%s a previous rebuild or deletion was interrupted, so rebuilding it", name)
+            rebuild = True
         folders = [Path(f) for f in collection.source_folders]
         for folder in folders:
             # 1つでも見えなければ、そのフォルダのファイルを「消えた」と誤って削除しないよう取り込まない。
@@ -680,29 +686,37 @@ def ingest_collection(
                 f"Collection {name} was ingested with document_prefix {collection.document_prefix!r} (current setting: {prefix!r}). "
                 "Mixing prefixes lowers search accuracy, so rebuild it."
             )
-        store = open_store(cfg, transport=store_transport)
+        # Qdrant へ送り直しを待つ間も「停止」に応じる（[vector_db].qdrant_max_retries = -1 なら無制限に待つため）。
+        store = open_store(cfg, transport=store_transport, should_stop=should_stop)
         keywords = open_keyword_index(cfg.vector_db_dir)
         # 埋め込みサーバーへの接続は取り込み全体で使い回す（embeddings.open_client 参照）。
         embedding_client = open_client(cfg, transport=embedding_transport)
         try:
             if rebuild:
+                # 保存先を消した後・カタログの記録を消す前に止まると、次の差分取り込みが記録を見て「変わっていない」と
+                # 埋め込まないため、先に「消している途中」と記録し、カタログまで消し終えたら外す（drop_pending）。
+                journal.begin_drop(name)
                 for storage in storage_collection_names(name):
                     store.drop_collection(storage)
                 keywords.drop_collection(name)
                 keywords.drop_collection(path_collection_name(name))
                 catalog.clear_files(name)
                 catalog.set_model(name, None, None)
+                journal.clear(name)
                 collection = catalog.get(name)
             else:
                 # qdrant_preset を変えた後は、変わったファイルが無くても既存のコレクションへ反映する。
                 for storage in storage_collection_names(name):
                     store.apply_preset(storage)
             _ingest(
-                cfg, catalog, store, keywords, name, collection.dim, model, folders, collection.recursive,
+                cfg, catalog, store, keywords, journal, name, collection.dim, model, folders, collection.recursive,
                 result, progress, should_stop, embedding_client, slots, instance,
                 exclude_keywords=collection.exclude_keywords, include_keywords=collection.include_keywords,
                 progress_bytes=progress_bytes,
             )
+        except StoreStopped:
+            # コミットしていない書き込みは _ingest が捨てている（記録されていないファイルは次回の取り込みで処理する）。
+            logger.info("vector_db ingest: instance=%s collection=%s stopped while retrying the request to Qdrant", instance or "-", name)
         finally:
             embedding_client.close()
             keywords.close()
@@ -728,6 +742,8 @@ class _Prepared:
 
     path_vector はファイルパス（path_text）のベクター。"embed" では常に、"unchanged"・"touch" では
     パスのベクターがまだ無いファイル（FileRecord.path_indexed = False）だけ埋め込む。
+
+    streamed は、本文のチャンクを埋め込みが返るたびに保存先へ書き込み済み（_Job.stream）で、vectors を持たないもの。
     """
 
     path: Path
@@ -747,6 +763,7 @@ class _Prepared:
     path_vector: list[float] | None = None
     # pages の PNG を書き出した一時フォルダ（書き込みが終わったら消す。_Pipeline._finish_job）。
     page_dir: Path | None = None
+    streamed: bool = False
 
     def texts_to_embed(self) -> list[str]:
         """埋め込むテキスト（本文のチャンク、続けてファイルパス）。"""
@@ -936,13 +953,19 @@ class _Writer:
     書き込みは begin() から finish() まで、_COMMIT_INTERVAL_SECONDS 秒・_COMMIT_EVERY_FILES ファイルごとに
     まとめてコミットする。保存先 → キーワード索引 → カタログの順にコミットするため、途中で止まっても
     カタログに記録されたファイルのベクターは必ず保存されている（記録されていないファイルは次回取り込み直す）。
+
+    本文・ページ画像を書き換えるファイルは、保存先へ書く前に journal へ記録し、カタログへの記録までコミットしたら
+    消す。強制終了等で書きかけのまま残ったファイルは、次の取り込みの _reconcile_journal が片付ける。
     """
 
     _COMMIT_INTERVAL_SECONDS = 2.0
     _COMMIT_EVERY_FILES = 500
 
-    def __init__(self, cfg: Config, catalog: Catalog, store, keywords: KeywordIndex, name: str, dim, model: str, result: IngestResult):
-        self.cfg, self.catalog, self.store, self.keywords = cfg, catalog, store, keywords
+    def __init__(
+        self, cfg: Config, catalog: Catalog, store, keywords: KeywordIndex, journal: IngestJournal, name: str, dim, model: str,
+        result: IngestResult,
+    ):
+        self.cfg, self.catalog, self.store, self.keywords, self.journal = cfg, catalog, store, keywords, journal
         self.name, self.dim, self.model, self.result = name, dim, model, result
         self.image_collection_ready = False
         self.path_collection_ready = False
@@ -951,6 +974,8 @@ class _Writer:
         self.path_keyword_sources = keywords.sources(path_collection_name(name))
         self._uncommitted = 0
         self._last_commit = time.monotonic()
+        # カタログへ記録したが、まだコミットしていないファイル（コミットしたら journal から消す）。
+        self._recorded: list[str] = []
 
     def _parts(self):
         # コミットの順（保存先 → キーワード索引 → カタログ）。
@@ -963,9 +988,15 @@ class _Writer:
     def finish(self) -> None:
         for part in self._parts():
             part.end_batch()
+        self._discard_recorded()
+
+    def _discard_recorded(self) -> None:
+        if self._recorded:
+            self.journal.discard(self.name, self._recorded)
+            self._recorded = []
 
     def abort(self) -> None:
-        """コミットしていない書き込みを捨てる（エラーで止めるとき）。"""
+        """コミットしていない書き込みを捨てる（エラーで止めるとき。journal の記録は次の取り込みで片付けるため残す）。"""
         for part in self._parts():
             try:
                 part.rollback()
@@ -983,6 +1014,7 @@ class _Writer:
     def _commit(self) -> None:
         for part in self._parts():
             part.commit()
+        self._discard_recorded()
         self._uncommitted = 0
         self._last_commit = time.monotonic()
 
@@ -1073,10 +1105,13 @@ class _Writer:
         self._ensure_dim((vectors or image_vectors or [prepared.path_vector])[0])
         # 本文と画像は別のコレクションに入れる（store.image_collection_name 参照）。
         # 画像の無いファイルも、image_input を切り替える前の画像のベクターが残らないよう消す。
-        if chunks:
-            store.replace_source(name, source, chunks, vectors)
-        else:
-            store.delete_source(name, source)
+        if not prepared.streamed:
+            # 本文のチャンクは append_chunks で書き込み済み（journal への記録も済み）でなければ、ここで入れ替える。
+            self.journal.add(name, source)
+            if chunks:
+                store.replace_source(name, source, chunks, vectors)
+            else:
+                store.delete_source(name, source)
         if pages:
             if not self.image_collection_ready:
                 store.ensure_collection(image_collection_name(name), self.dim)
@@ -1092,6 +1127,7 @@ class _Writer:
         chunk_count = len(chunks) + len(pages)
         st = prepared.stat
         catalog.upsert_file(name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, chunk_count, mode, True))
+        self._recorded.append(source)
         result.chunks += chunk_count
         if record is None:
             result.added += 1
@@ -1104,6 +1140,7 @@ class _Writer:
         以前に本文・ページ画像を埋め込んだファイル（image_input を切り替えた等）なら、それらを消す。
         """
         self._ensure_dim(prepared.path_vector)
+        self.journal.add(self.name, source)
         for storage in (self.name, image_collection_name(self.name)):
             self.store.delete_source(storage, source)
         self._write_path(source, prepared)
@@ -1113,12 +1150,32 @@ class _Writer:
         self._write_path_keywords(source, prepared, only_missing=False)
         st = prepared.stat
         self.catalog.upsert_file(self.name, FileRecord(source, st.st_size, st.st_mtime, prepared.sha, 0, prepared.mode, True))
+        self._recorded.append(source)
         logger.info("vector_db ingest: registered the path only (%s): %s", prepared.reason, source)
         self.result.path_only += 1
         if prepared.record is None:
             self.result.added += 1
         else:
             self.result.updated += 1
+
+    def append_chunks(self, job: "_Job") -> None:
+        """job（_Job.stream）の、埋め込みが番号順にそろった本文のチャンクを保存先へ足す。
+
+        最初に足す前に journal へ記録してから古いチャンクを消す。Qdrant は commit() を待たずに送る（rollback() で
+        戻らない）ため、途中で止まって・エラーになって書きかけのまま残っても、次の取り込みの _reconcile_journal が
+        取り込み直させる（カタログに記録が無ければ書きかけのチャンクを消す）。
+        """
+        start, chunks, vectors = job.pop_ready_chunks()
+        if not chunks:
+            return
+        prepared = job.prepared
+        source = str(prepared.path)
+        if start == 0:
+            self._ensure_dim(vectors[0])
+            self.journal.add(self.name, source)
+            self.store.delete_source(self.name, source)
+        self.store.append_source(self.name, source, start, chunks, vectors)
+        self._maybe_commit()
 
     def remove(self, source: str) -> None:
         """フォルダから消えたファイルのチャンク・記録を消す。"""
@@ -1131,12 +1188,23 @@ class _Writer:
         self._maybe_commit()
 
 
+# 本文のチャンクがこの件数を超えるファイルは、ベクターをためずに分けて書き込む（_Job.stream）。
+# 超えないファイルは従来どおり全部そろってから1回で入れ替える（検索に書きかけのファイルが出ない）。
+_STREAM_MIN_CHUNKS = 1024
+# stream のファイルで、書き込み済みの位置より先に送ってよい本文のチャンク数（_Pipeline._texts_held）。
+# 番号順にそろわず書き込めないベクターは、1ファイルあたりおおむねこの件数までしかためない。
+_STREAM_WINDOW = 1024
+
+
 class _Job:
     """埋め込みを待っている1ファイル。texts_to_embed()・pages の各埋め込みが返るたびに埋め、全部そろったら書き込む。
 
     requests: このファイルの分を含む、送信中の埋め込みのリクエストの数。
     changed_at: 最後に進んだ（埋め込みを待ち始めた・リクエストが返った）時刻（time.monotonic()）。
         送信中なのに長く進まないファイルを、設定ダッシュボードで詰まっているものとして見せるため。
+    stream: 本文のチャンクが _STREAM_MIN_CHUNKS 件を超えるファイル。本文のベクターは全部そろうのを待たず、
+        番号順にそろった分から保存先へ書き込み（_Writer.append_chunks）、メモリーにはためない
+        （業務データの数十万チャンクの1ファイルでも、ベクターでメモリーを使い切らないため）。
     """
 
     def __init__(self, prepared: _Prepared):
@@ -1148,9 +1216,39 @@ class _Job:
         self.remaining = self.total
         self.requests = 0
         self.changed_at = time.monotonic()
+        self.stream = prepared.kind == "embed" and len(prepared.chunks) > _STREAM_MIN_CHUNKS
+        # stream のとき、書き込んだ本文のチャンクの数と、返ったが前の番号がまだそろわず書き込めないベクター。
+        self.streamed = 0
+        self._stream_buffer: dict[int, list[float]] = {}
+
+    def receive(self, kind: str, index: int, vector: list[float]) -> None:
+        """リクエストの1件分の埋め込みを受け取る（kind は "text"・"image"、index は texts・pages の番号）。"""
+        if kind == "image":
+            self.image_vectors[index] = vector
+        elif self.stream and index < len(self.prepared.chunks):
+            self._stream_buffer[index] = vector
+        else:
+            self.text_vectors[index] = vector
+        self.remaining -= 1
+
+    def pop_ready_chunks(self) -> tuple[int, list[ChunkRecord], list[list[float]]]:
+        """stream のとき、まだ書き込んでいない本文のチャンクのうち、番号順にベクターがそろった分を取り出す。
+
+        Returns: (最初のチャンクの番号, チャンク, ベクター)。そろった分が無ければチャンクは空。
+        """
+        start = end = self.streamed
+        vectors = []
+        while end in self._stream_buffer:
+            vectors.append(self._stream_buffer.pop(end))
+            end += 1
+        self.streamed = end
+        return start, self.prepared.chunks[start:end], vectors
 
     def finish(self) -> _Prepared:
         self.prepared.set_vectors(self.text_vectors, self.image_vectors)
+        if self.stream:
+            self.prepared.vectors = []
+            self.prepared.streamed = True
         return self.prepared
 
 
@@ -1211,6 +1309,8 @@ class _Pipeline:
         # 埋め込みを待っている・埋め込み中のファイル（書き込んだら外す）。embedding_files() は別のスレッドから呼ばれる。
         self._jobs: dict[int, _Job] = {}
         self._jobs_lock = threading.Lock()
+        # 埋め込み・Qdrant の応答（httpx）の循環参照のゴミがたまり続けないよう、間隔を空けて回収する（gc_pacer 参照）。
+        self._gc = GcPacer()
 
     def embedding_files(self) -> list[dict]:
         """埋め込みを待っている・埋め込み中のファイルの状態（IngestSlots.snapshot() の "files"）。
@@ -1293,6 +1393,7 @@ class _Pipeline:
                         self._embedded(future, *self.embeds.pop(future))
                     # どちらでもなければ、異常終了した子プロセスの準備で、_pool_broken で準備し直しに回したもの。
                 self.writer.commit_if_due()
+                self._gc.tick()
         except BaseException:
             # 埋め込みサーバーに接続できない等で止めるときは、まだ始まっていない処理を始めない。
             for future in list(self.loads) + list(self.embeds):
@@ -1389,13 +1490,25 @@ class _Pipeline:
         self.text_queue.extend((job, i) for i in range(len(job.texts)))
         self.image_queue.extend((job, i) for i in range(len(prepared.pages)))
 
+    def _texts_held(self) -> bool:
+        """次に送るテキストが、書き込み済みの位置より _STREAM_WINDOW 件以上先の stream のファイル（_Job.stream）のものか。
+
+        前の番号のリクエストが再試行等で返らない間に後ろの番号だけが返り続けると、番号順に書き込めないベクターが
+        たまり続けるため、そのファイルの本文は前の番号が返るまで送らない（前の番号は必ず送信中のため、待てば進む）。
+        """
+        if not self.text_queue:
+            return False
+        job, index = self.text_queue[0]
+        return job.stream and index - job.streamed >= _STREAM_WINDOW
+
     def _start_embeds(self, pool) -> None:
         while not self.stopped and len(self.embeds) < self.embed_limit:
-            if len(self.text_queue) >= self.batch_size:
+            held = self._texts_held()
+            if not held and len(self.text_queue) >= self.batch_size:
                 started = self._submit_texts(pool, self.batch_size)
             elif self.image_queue:
                 started = self._submit_image(pool)
-            elif self.text_queue and (not self.embeds or not self.loads):
+            elif not held and self.text_queue and (not self.embeds or not self.loads):
                 started = self._submit_texts(pool, len(self.text_queue))
             else:
                 return
@@ -1455,8 +1568,10 @@ class _Pipeline:
                     job.requests -= 1
                     job.changed_at = now
         for (job, index), vector in zip(items, vectors, strict=True):
-            (job.text_vectors if kind == "text" else job.image_vectors)[index] = vector
-            job.remaining -= 1
+            job.receive(kind, index, vector)
+        for job in _jobs_of(items):
+            if job.stream:
+                self.writer.append_chunks(job)
             if not job.remaining:
                 self.waiting -= 1
                 self._write(job)
@@ -1488,15 +1603,46 @@ def _embed_page(cfg: Config, page: PageImage, client, should_stop) -> list[list[
     return embed_images(cfg, [page.read_png()], client=client, should_stop=should_stop)
 
 
+def _reconcile_journal(catalog: Catalog, store, keywords: KeywordIndex, journal: IngestJournal, name: str) -> None:
+    """前回の取り込み・コピーが強制終了等で書きかけのまま残したファイル（journal 参照）を片付ける。
+
+    カタログに記録があるファイルは、保存先の中身が記録と合っている保証が無いため、記録のサイズ・SHA-256 を
+    消して必ず取り込み直させる（フォルダから消えていれば remove で消える）。記録が無いファイルは、保存先・
+    キーワード索引から消す（記録が無いと、フォルダから消えても消す手がかりが無いため）。
+    まとめ書き（begin_batch）の前に呼び、1件ずつその場でコミットする。途中で止まっても次回やり直せるよう、
+    ジャーナルからは最後に消す。
+    """
+    sources = journal.sources(name)
+    if not sources:
+        return
+    files = catalog.files(name)
+    for source in sources:
+        record = files.get(source)
+        if record is None:
+            for storage in storage_collection_names(name):
+                store.delete_source(storage, source)
+            keywords.delete_source(name, source)
+            keywords.delete_source(path_collection_name(name), source)
+        else:
+            catalog.upsert_file(name, replace(record, size=-1, sha256=""))
+    logger.warning(
+        "vector_db ingest: collection=%s found %d files left half-written by an interrupted ingestion or copy; "
+        "re-ingesting the recorded ones and removing the chunks of the unrecorded ones",
+        name, len(sources),
+    )
+    journal.discard(name, sources)
+
+
 def _ingest(
-    cfg, catalog: Catalog, store, keywords: KeywordIndex, name, dim, model, folders, recursive, result, progress, should_stop, embedding_client,
-    slots: IngestSlots, instance: str, *, exclude_keywords: Sequence[str] = (), include_keywords: Sequence[str] = (),
-    progress_bytes: Callable[[int], None] | None = None,
+    cfg, catalog: Catalog, store, keywords: KeywordIndex, journal: IngestJournal, name, dim, model, folders, recursive, result, progress,
+    should_stop, embedding_client, slots: IngestSlots, instance: str, *, exclude_keywords: Sequence[str] = (),
+    include_keywords: Sequence[str] = (), progress_bytes: Callable[[int], None] | None = None,
 ) -> None:
     """取り込み元のファイルを _Pipeline で処理し、フォルダから消えたファイル（除外・対象キーワードで外れたものも）を消す。
 
     停止したときは、埋め込みまで終わったファイルだけを記録する（途中のファイルは次回の取り込みで処理する）。
     """
+    _reconcile_journal(catalog, store, keywords, journal, name)
     known = catalog.files(name)
     max_files = cfg.vector_db_max_files_per_collection
     scan = scan_source_files(
@@ -1511,7 +1657,7 @@ def _ingest(
     )
     if scan.over_limit:
         logger.warning("vector_db ingest: collection=%s %s", name, _over_limit_hint(result))
-    writer = _Writer(cfg, catalog, store, keywords, name, dim, model, result)
+    writer = _Writer(cfg, catalog, store, keywords, journal, name, dim, model, result)
     writer.begin()
     try:
         pipeline = _Pipeline(cfg, folders, known, writer, embedding_client, should_stop, progress, slots, instance, progress_bytes)

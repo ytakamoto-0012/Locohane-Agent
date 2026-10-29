@@ -131,6 +131,10 @@ class FakeQdrant:
         if rest == ["points"] and request.method == "PUT":
             self._upsert(coll, body["points"])
             return httpx.Response(200, json={"result": {}})
+        if rest == ["points"] and request.method == "POST":
+            # ID を指定した取り出し（無い ID は返さない。順序は保証しない実際の Qdrant に合わせて逆順で返す）。
+            found = [{"id": i, **coll["points"][i]} for i in body["ids"] if i in coll["points"]]
+            return httpx.Response(200, json={"result": found[::-1]})
         if rest == ["points", "delete"]:
             self._delete(coll, body["filter"])
             return httpx.Response(200, json={"result": {}})

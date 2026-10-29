@@ -52,6 +52,7 @@ ADMIN_SETTING_KEYS = frozenset(
         ("vector_db", "ingest_workers"),
         ("vector_db", "ingest_processes"),
         ("vector_db", "ingest_embed_requests"),
+        ("vector_db", "qdrant_max_retries"),
         ("admin", "assistant_llm_instance"),
         ("admin", "assistant_embedding_instance"),
     }
@@ -501,6 +502,11 @@ class Config:
         vector_db_qdrant_collection_prefix: Qdrant のコレクション名の接頭辞
             （${instance} 展開済み）。
         vector_db_qdrant_timeout_seconds: Qdrant への1リクエストのタイムアウト秒数。
+        vector_db_qdrant_max_retries: Qdrant へ接続できない・接続を切られた・タイムアウトした・5xx・408・429 が返ったときに、
+            vector_db_qdrant_retry_interval_seconds 秒待って同じリクエストを送り直す回数。-1 なら成功するまで無制限
+            （取り込みは「停止」で止められる）。0 なら送り直さない。管理者設定（全インスタンス共通）。
+            検索は止める手段が無いため、この値によらず最大1回だけ送り直す（qdrant_store.SEARCH_MAX_RETRIES）。
+        vector_db_qdrant_retry_interval_seconds: 上記の送り直しの間隔（秒）。
         vector_db_qdrant_preset: Qdrant のコレクションの規模別の設定（VECTOR_DB_QDRANT_PRESETS
             のいずれか。none は Qdrant の既定のまま）。
         vector_db_distance: コレクションを作るときの距離関数（VECTOR_DB_DISTANCES の
@@ -1092,6 +1098,8 @@ class Config:
     vector_db_qdrant_api_key: str
     vector_db_qdrant_collection_prefix: str
     vector_db_qdrant_timeout_seconds: float
+    vector_db_qdrant_max_retries: int
+    vector_db_qdrant_retry_interval_seconds: float
     vector_db_qdrant_preset: str
     vector_db_distance: str
     vector_db_embedding_endpoints: tuple[LLMEndpoint, ...]
@@ -2418,6 +2426,21 @@ def _non_negative_int(value: object, key: str) -> int:
     return number
 
 
+def _retry_count(value: object, key: str) -> int:
+    """再試行の回数（-1 は無制限、0 は再試行しない）として解釈して返す。
+
+    Raises:
+        ValueError: 整数として解釈できない、または -1 未満の場合。
+    """
+    try:
+        number = int(str(value).strip())
+    except ValueError as e:
+        raise ValueError(f"{key} must be an integer of -1 (unlimited) or more: {value!r}") from e
+    if number < -1:
+        raise ValueError(f"{key} must be an integer of -1 (unlimited) or more: {value!r}")
+    return number
+
+
 def _positive_int(value: object, key: str) -> int:
     """1以上の整数として解釈して返す。
 
@@ -3279,7 +3302,14 @@ def load_config(
             resolved_instance_name,
         ),
         vector_db_qdrant_timeout_seconds=_positive_float(
-            os.getenv("VECTOR_DB_QDRANT_TIMEOUT_SECONDS", vector_db.get("qdrant_timeout_seconds", 30)), "[vector_db].qdrant_timeout_seconds"
+            os.getenv("VECTOR_DB_QDRANT_TIMEOUT_SECONDS", vector_db.get("qdrant_timeout_seconds", 120)), "[vector_db].qdrant_timeout_seconds"
+        ),
+        vector_db_qdrant_max_retries=_retry_count(
+            os.getenv("VECTOR_DB_QDRANT_MAX_RETRIES", vector_db.get("qdrant_max_retries", 5)), "[vector_db].qdrant_max_retries"
+        ),
+        vector_db_qdrant_retry_interval_seconds=_positive_float(
+            os.getenv("VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS", vector_db.get("qdrant_retry_interval_seconds", 10)),
+            "[vector_db].qdrant_retry_interval_seconds",
         ),
         vector_db_qdrant_preset=_as_vector_db_qdrant_preset(os.getenv("VECTOR_DB_QDRANT_PRESET", vector_db.get("qdrant_preset", "none"))),
         vector_db_distance=_as_vector_db_distance(os.getenv("VECTOR_DB_DISTANCE", vector_db.get("distance", "Cosine"))),

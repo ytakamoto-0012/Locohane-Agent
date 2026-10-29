@@ -589,7 +589,7 @@ cmd:
 
 ## 管理者設定
 
-全インスタンス共通の設定（`[vector_db] ingest_workers`・`ingest_processes`・`ingest_embed_requests`、`[admin] assistant_llm_instance`・`assistant_embedding_instance`）。
+全インスタンス共通の設定（`[vector_db] ingest_workers`・`ingest_processes`・`ingest_embed_requests`・`qdrant_max_retries`（`-1` は無制限）、`[admin] assistant_llm_instance`・`assistant_embedding_instance`）。
 `<instances_dir>/admin_settings.json` に保存し、config.ini より優先する（再起動なしで効く）。
 
 ```bash

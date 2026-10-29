@@ -66,6 +66,12 @@ async function renderAdminSettings(notice = "") {
       _t("埋め込みサーバー（llama-server なら --parallel）が同時に処理できる数を目安にしてください。"),
     ])
   );
+  container.append(
+    field("vector_db.qdrant_max_retries", _t("Qdrant への送り直しの回数"), number("vector_db.qdrant_max_retries", -1), [
+      _t("[vector_db] backend = qdrant のとき、Qdrant へ接続できない・接続を切られた・タイムアウトした・一時的なエラー（5xx・408・429）が返ったときに、[vector_db] qdrant_retry_interval_seconds 秒待って同じリクエストを送り直す回数です。-1 なら成功するまで無制限に送り直し（取り込み・コピーはナレッジ画面の「停止」で止められます）、0 なら送り直しません。"),
+      _t("検索（AI が文書を探すとき）は止める手段が無いため、この値によらず最大1回だけ送り直します。"),
+    ])
+  );
 
   // --- AIに相談 ---
   container.append(el("h3", { text: _t("AIに相談（管理アシスタント）") }));

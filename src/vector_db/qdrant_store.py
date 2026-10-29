@@ -9,17 +9,30 @@ apply_preset() で反映でき、埋め込み直しは要らない）。
 
 from __future__ import annotations
 
+import logging
 import threading
+import time
 import uuid
 from dataclasses import dataclass
+from typing import Callable, Iterator
 
 import httpx
 
-from .store import DISTANCE_METRICS, ChunkRecord, Hit, StoreError, distance_to_score
+from .store import DISTANCE_METRICS, ChunkRecord, Hit, StoreError, StoreStopped, distance_to_score
+
+logger = logging.getLogger(__name__)
 
 # ポイント ID（UUID）を source_path とチャンク番号から決めるための名前空間。
 _POINT_NAMESPACE = uuid.UUID("6b7f2f0e-3c1d-4f5a-9a51-1f0c2d7e8b90")
 _UPSERT_BATCH = 256
+# 検索（store.open_store の shared=True）で送り直す回数の上限と間隔の上限（秒）。検索は止める手段が無く、
+# [vector_db].qdrant_max_retries = -1（無制限）のままだと AI の応答が返らなくなるため。
+SEARCH_MAX_RETRIES = 1
+SEARCH_RETRY_INTERVAL_SECONDS = 1.0
+# 送り直しを待つ間に should_stop() を確かめる間隔（秒）。
+_STOP_POLL_SECONDS = 0.5
+# 送り直しの待ちに使う sleep（テストで差し替える）。
+_sleep = time.sleep
 
 
 @dataclass(frozen=True)
@@ -117,6 +130,35 @@ def _delete_operation(source_path: str) -> dict:
     return {"delete": {"filter": {"must": [{"key": "source_path", "match": {"value": source_path}}]}}}
 
 
+def _upsert_operations(source_path: str, start: int, chunks: list[ChunkRecord], vectors: list[list[float]]) -> list[dict]:
+    """chunks を start 番目からのポイントにし、_UPSERT_BATCH 件ずつの upsert にする。"""
+    points = [
+        {
+            "id": str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")),
+            "vector": vector,
+            "payload": {"source_path": source_path, "locator": chunk.locator, "text": chunk.text},
+        }
+        for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True), start)
+    ]
+    return [{"upsert": {"points": points[i : i + _UPSERT_BATCH]}} for i in range(0, len(points), _UPSERT_BATCH)]
+
+
+def _chunks_of(points: list[dict]) -> list[ChunkRecord]:
+    return [
+        ChunkRecord(locator=str((p.get("payload") or {}).get("locator", "")), text=str((p.get("payload") or {}).get("text", "")))
+        for p in points
+    ]
+
+
+def _vectors_of(points: list[dict]) -> list[list[float]]:
+    return [[float(x) for x in p.get("vector") or []] for p in points]
+
+
+def _retryable_status(status: int) -> bool:
+    """時間を置いて送り直す意味のある HTTP ステータスか（5xx・408・429。それ以外の 4xx は要求・設定の誤り）。"""
+    return status >= 500 or status in (408, 429)
+
+
 def _point_count(operation: dict) -> int:
     return len(operation["upsert"]["points"]) if "upsert" in operation else 0
 
@@ -138,11 +180,19 @@ class QdrantStore:
         preset: str = "none",
         transport: httpx.BaseTransport | None = None,
         shared: bool = False,
+        max_retries: int = 0,
+        retry_interval: float = 10.0,
+        should_stop: Callable[[], bool] | None = None,
     ):
         """shared=True なら shared_client() を使い、close() でも閉じない（transport は使わない）。
 
         preset は [vector_db].qdrant_preset（QDRANT_PRESETS のキー。"none" なら Qdrant の既定のまま）。
+        max_retries・retry_interval は送り直しの回数（-1 は無制限、0 は送り直さない）と間隔（秒）。_request 参照。
+        should_stop は送り直しを待つ間に確かめ、True を返したら StoreStopped を投げる。
         """
+        self._max_retries = max_retries
+        self._retry_interval = retry_interval
+        self._should_stop = should_stop
         if not url:
             raise StoreError("[vector_db].qdrant_url is not set.")
         self._owns_client = not shared
@@ -167,38 +217,83 @@ class QdrantStore:
         return self._prefix + name
 
     def _request(self, method: str, path: str, *, allow_404: bool = False, **kwargs) -> dict | None:
-        try:
-            response = self._client.request(method, path, **kwargs)
-        except httpx.TransportError as e:
-            raise StoreError(f"Cannot connect to Qdrant ({self._client.base_url}): {e}") from e
-        if allow_404 and response.status_code == 404:
-            return None
-        if response.status_code >= 400:
-            raise StoreError(f"Qdrant returned an error ({method} {path}, HTTP {response.status_code}): {response.text[:300]}")
-        return response.json()
+        """Qdrant へ1リクエストを送る。
+
+        接続できない・接続を切られた・タイムアウトした（httpx.TransportError）・5xx・408・429 が返ったときは、
+        retry_interval 秒待って同じリクエストを送り直す（max_retries 回まで。-1 なら成功するまで）。
+        送り直しても結果が変わらないよう、更新は冪等なものだけにしている（ポイントの ID は source_path と連番から決まり、
+        削除は source_path の絞り込み、コレクションの作成は ensure_collection が作成済みを確かめる）。
+        それ以外の 4xx は要求・設定の誤りのため、送り直さずに StoreError を投げる。
+        """
+        retries = 0
+        while True:
+            try:
+                response = self._client.request(method, path, **kwargs)
+            except httpx.TransportError as e:
+                error = f"Cannot connect to Qdrant ({self._client.base_url}, {method} {path}): {type(e).__name__}: {e}"
+            else:
+                if allow_404 and response.status_code == 404:
+                    return None
+                if response.status_code < 400:
+                    return response.json()
+                error = f"Qdrant returned an error ({method} {path}, HTTP {response.status_code}): {response.text[:300]}"
+                if not _retryable_status(response.status_code):
+                    raise StoreError(error)
+            if 0 <= self._max_retries <= retries:
+                raise StoreError(error + (f" (retried {retries} times)" if retries else ""))
+            retries += 1
+            logger.warning(
+                "qdrant: %s. Retrying in %g seconds (%d/%s).",
+                error, self._retry_interval, retries, "unlimited" if self._max_retries < 0 else self._max_retries,
+            )
+            self._wait_retry()
+
+    def _wait_retry(self) -> None:
+        """retry_interval 秒待つ。待つ間に should_stop() が True を返したら StoreStopped を投げる。"""
+        remaining = self._retry_interval
+        while True:
+            if self._should_stop is not None and self._should_stop():
+                raise StoreStopped("Stopped retrying the request to Qdrant because a stop was requested.")
+            if remaining <= 0:
+                return
+            step = min(remaining, _STOP_POLL_SECONDS)
+            _sleep(step)
+            remaining -= step
 
     def ensure_collection(self, name: str, dim: int) -> None:
         qname = self._name(name)
         info = self._request("GET", f"/collections/{qname}", allow_404=True)
-        if info is not None:
-            vectors = info.get("result", {}).get("config", {}).get("params", {}).get("vectors", {})
-            size = vectors.get("size") if isinstance(vectors, dict) else None
-            if size is not None and size != dim:
-                raise StoreError(f"The vector dimension ({size}) of Qdrant collection {qname} differs from the embedding dimension ({dim}). Rebuild it.")
-            distance = _collection_distance(info)
-            if distance is not None and distance != self._distance:
-                raise StoreError(
-                    f"The distance ({distance}) of Qdrant collection {qname} differs from [vector_db].distance ({self._distance}). Rebuild it."
-                )
-            self._apply_preset(qname, info)
-            return
-        body: dict = {"vectors": {"size": dim, "distance": self._distance}}
-        if self._preset is not None:
-            body["vectors"]["on_disk"] = self._preset.vectors_on_disk
-            body.update(_preset_config(self._preset), on_disk_payload=True)
-        self._request("PUT", f"/collections/{qname}", json=body)
-        # source_path での削除（再取り込み・ファイル削除時）を速くするための索引。
-        self._request("PUT", f"/collections/{qname}/index", params={"wait": "true"}, json={"field_name": "source_path", "field_schema": "keyword"})
+        if info is None:
+            body: dict = {"vectors": {"size": dim, "distance": self._distance}}
+            if self._preset is not None:
+                body["vectors"]["on_disk"] = self._preset.vectors_on_disk
+                body.update(_preset_config(self._preset), on_disk_payload=True)
+            try:
+                self._request("PUT", f"/collections/{qname}", json=body)
+            except StoreStopped:
+                raise
+            except StoreError:
+                # タイムアウト・切断の後に送り直した作成は、1回目で作れていれば「既にある」エラーになる。
+                # 作れていたなら下で次元・距離関数を確かめて続け、無ければ元のエラーのまま。
+                info = self._request("GET", f"/collections/{qname}", allow_404=True)
+                if info is None:
+                    raise
+            # source_path での削除（再取り込み・ファイル削除時）を速くするための索引（作成済みでも送ってよい）。
+            self._request(
+                "PUT", f"/collections/{qname}/index", params={"wait": "true"}, json={"field_name": "source_path", "field_schema": "keyword"}
+            )
+            if info is None:
+                return
+        vectors = info.get("result", {}).get("config", {}).get("params", {}).get("vectors", {})
+        size = vectors.get("size") if isinstance(vectors, dict) else None
+        if size is not None and size != dim:
+            raise StoreError(f"The vector dimension ({size}) of Qdrant collection {qname} differs from the embedding dimension ({dim}). Rebuild it.")
+        distance = _collection_distance(info)
+        if distance is not None and distance != self._distance:
+            raise StoreError(
+                f"The distance ({distance}) of Qdrant collection {qname} differs from [vector_db].distance ({self._distance}). Rebuild it."
+            )
+        self._apply_preset(qname, info)
 
     def apply_preset(self, name: str) -> None:
         """既存のコレクション name の設定を [vector_db].qdrant_preset に合わせる（無い・preset が none なら何もしない）。
@@ -285,17 +380,11 @@ class QdrantStore:
         self._queue(name, [_delete_operation(source_path)])
 
     def replace_source(self, name: str, source_path: str, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
-        points = [
-            {
-                "id": str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")),
-                "vector": vector,
-                "payload": {"source_path": source_path, "locator": chunk.locator, "text": chunk.text},
-            }
-            for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True))
-        ]
-        operations = [_delete_operation(source_path)]
-        operations += [{"upsert": {"points": points[i : i + _UPSERT_BATCH]}} for i in range(0, len(points), _UPSERT_BATCH)]
-        self._queue(name, operations)
+        self._queue(name, [_delete_operation(source_path)] + _upsert_operations(source_path, 0, chunks, vectors))
+
+    def append_source(self, name: str, source_path: str, start: int, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
+        # ポイントの ID は replace_source と同じく "<source_path>#<連番>" から作る（get_source で元の順に戻せる）。
+        self._queue(name, _upsert_operations(source_path, start, chunks, vectors))
 
     def dim(self, name: str) -> int | None:
         info = self._request("GET", f"/collections/{self._name(name)}", allow_404=True)
@@ -336,11 +425,30 @@ class QdrantStore:
         # ポイントの ID は "<source_path>#<連番>" から作る（replace_source）ため、ID から元の順番に戻せる。
         order = {str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")): i for i in range(len(points))}
         points.sort(key=lambda p: order.get(str(p.get("id")), len(points)))
-        chunks = [
-            ChunkRecord(locator=str((p.get("payload") or {}).get("locator", "")), text=str((p.get("payload") or {}).get("text", "")))
-            for p in points
-        ]
-        return chunks, [[float(x) for x in p.get("vector") or []] for p in points]
+        return _chunks_of(points), _vectors_of(points)
+
+    def iter_source(self, name: str, source_path: str) -> Iterator[tuple[list[ChunkRecord], list[list[float]]]]:
+        """source_path のチャンクとベクターを、入れた順に _UPSERT_BATCH 件ずつ返す（コレクションが無ければ何も返さない）。
+
+        ポイントの ID は "<source_path>#<連番>" から決まる（replace_source・append_source）ため、連番の順に
+        ID を指定して取り出す（scroll で全件を読んでから並べ替えない）。返った件数が求めた数より少なければ終わり。
+        """
+        qname = self._name(name)
+        start = 0
+        while True:
+            ids = [str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")) for i in range(start, start + _UPSERT_BATCH)]
+            result = self._request(
+                "POST", f"/collections/{qname}/points", allow_404=True, json={"ids": ids, "with_payload": True, "with_vector": True}
+            )
+            if result is None:
+                return
+            order = {point_id: i for i, point_id in enumerate(ids)}
+            points = sorted(result.get("result") or [], key=lambda p: order.get(str(p.get("id")), len(ids)))
+            if points:
+                yield _chunks_of(points), _vectors_of(points)
+            if len(points) < len(ids):
+                return
+            start += _UPSERT_BATCH
 
     def _search_distance(self, name: str) -> str | None:
         """コレクション name の距離関数（無ければ None）。同じストアでは1回だけ問い合わせる。"""

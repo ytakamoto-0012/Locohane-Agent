@@ -445,6 +445,8 @@ Locohane/
 │   │   ├── store.py / sqlite_vec_store.py / qdrant_store.py # ベクターの保存先（sqlite-vec / Qdrant）
 │   │   ├── keyword_index.py  # 本文のキーワード索引（keywords.sqlite、SQLite FTS5 の BM25）
 │   │   ├── sqlite_batch.py   # SQLite の書き込みのまとめコミット（取り込み用。WAL・synchronous=NORMAL）
+│   │   ├── journal.py        # 取り込みジャーナル（ingest_journal.sqlite。強制終了で書きかけになったファイルの片付け用）
+│   │   ├── gc_pacer.py       # 取り込み・コピー中の循環参照のゴミ（httpx の応答）の定期回収
 │   │   └── ingest.py / search.py # 差分取り込み（CLI: python -m src.vector_db.ingest）・検索
 │   ├── project_instructions.py # .locohane/LOCOHANE.md の読込
 │   ├── graph.py             # ReAct ループ（handwritten / prebuilt を切替）
@@ -578,7 +580,7 @@ Locohane/
 | `data/chat_threads.sqlite` | 会話スレッド一覧（画面左サイドバー）・再開用のメタデータ（スレッド名・所有者・Chainlitの Step 履歴）。`checkpoints.sqlite` とは別ファイル（`[thread_store]`参照） | 一覧・再開機能が不要になったとき | ファイルを削除（アプリ停止中に。`checkpoints.sqlite` 自体は消えないため会話状態は失われない） |
 | `data/logs/app.log` | アプリの動作ログ | いつでも | ファイルを削除 |
 | `data/memory/` | 永続メモリー（`user`/`feedback`/`project`/`reference` サブフォルダ＋`MEMORY.md`索引） | 蓄積した記憶が不要になったとき | フォルダ内を削除（`MEMORY.md`は次回保存時に再生成される） |
-| `data/vector_db/` | ベクターDB の `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`backend = sqlite_vec` 時のベクター `vectors.sqlite`、本文のキーワード索引 `keywords.sqlite`（`[vector_db] dir`）。`catalog.sqlite` には別のインスタンスのコレクションの参照（`collection_refs` 表）も入る。取り込み元の文書そのものは複製しない | コレクションが不要になったとき | 設定ダッシュボードのナレッジ画面でコレクションを削除する（フォルダごと消す場合はアプリと管理ツールの取り込みを止めてから。`backend = qdrant` のベクターは Qdrant 側に残る） |
+| `data/vector_db/` | ベクターDB の `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`backend = sqlite_vec` 時のベクター `vectors.sqlite`、本文のキーワード索引 `keywords.sqlite`、強制終了で書きかけになったファイルを記録する取り込みジャーナル `ingest_journal.sqlite`（`[vector_db] dir`）。`catalog.sqlite` には別のインスタンスのコレクションの参照（`collection_refs` 表）も入る。取り込み元の文書そのものは複製しない | コレクションが不要になったとき | 設定ダッシュボードのナレッジ画面でコレクションを削除する（フォルダごと消す場合はアプリと管理ツールの取り込みを止めてから。`backend = qdrant` のベクターは Qdrant 側に残る） |
 | `data/plans/` | `create_plan` が `detail_markdown` 引数を渡した場合の詳細計画Markdown（`[paths] plans_dir`） | 古い計画が不要になったとき | フォルダ内を削除 |
 | `data/skill_drafts/<ユーザー名>/` | skill-creator が作ったユーザー別ドラフトスキル（`<スキル名>/`）と、その評価結果（`_workspace/`）。`[skill_creator] draft_dir`。不採用のドラフトも記録として残る（一覧には出ない） | 不要なドラフトがあるとき | ドラフトのフォルダを削除（作成者は skill-creator の `delete_draft.py` でも消せる）。自動削除はされない |
 | `data/<インスタンス名>/skill_drafts_archive/<ユーザー名>/<スキル名>_<日時>/` | 昇格したドラフトの退避先（`_workspace/` ごと移る。`[skill_creator] archive_dir`） | 記録が不要になったとき | フォルダを削除 |
@@ -1384,6 +1386,29 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
   記録されたファイルのベクターは必ず保存されている（記録されていないファイルは次回の取り込みで処理する）。
   埋め込み・準備の完了を待つ間もコミットの期限（約2秒）が来たらコミットし、書き込みのロックを持ち続けない（同時に動く別の
   コレクションの取り込みや、設定ダッシュボードでのコレクションの編集が「database is locked」で失敗しないように）。
+- **チャンクの多いファイル**: 本文のチャンクが1024件を超えるファイル（業務データの数十万行の CSV・ログ等）は、全部の
+  ベクターがそろうのを待たず、番号順にそろった分から保存先へ足していく（`src/vector_db/ingest.py` の `_Job.stream`）。
+  ベクターをメモリーにためないため、20万チャンクの1ファイルでもメモリーはファイルの大きさにほぼよらない（ためるのは
+  番号のそろわないベクター 1024件程度まで。前の番号のバッチが再試行等で返らない間は、そのファイルの先のバッチを送らない）。
+  古いチャンクは書き始めに消すため、取り込みの間はそのファイルの書きかけのチャンクが検索に出る。1024件以下のファイルは
+  従来どおり全部そろってから1回で入れ替える。コピー（「インスタンス間のコピー」）も、ベクター・キーワード索引を数百件ずつ
+  読んで書く。本文の抽出・チャンク分割はファイル全体で行うため、本文の文字列（20万チャンクで数百 MB 程度）はメモリーに持つ。
+- **強制終了の後の整合性**: Qdrant はコミットを待たずに256件ごとに送り、チャンクの多いファイルは分けて書くため、
+  プロセスの強制終了・PC の停止で、保存先には書きかけ（または書き換えた）チャンクがあるのにカタログは前の記録のまま
+  （新しいファイルなら記録が無い）、ということが起こりうる。そこで保存先へ書く前にファイルを取り込みジャーナル
+  （`[vector_db] dir` の `ingest_journal.sqlite`、`src/vector_db/journal.py`）へ即時に記録し、カタログへの記録までコミットしたら消す。
+  次の取り込みの開始時に残っているファイルは、カタログに記録があれば必ず取り込み直し（内容を元に戻したファイルも
+  「内容が同じ」として書きかけのまま残さない）、記録が無ければ保存先・キーワード索引から消す（フォルダから消えていても残らない）。
+  再構築・コレクションの削除も、保存先を消す前に「消している途中」と記録し、カタログまで消し終えたら外す。途中で止まった
+  コレクションは、次の「取り込み（差分）」が再構築として作り直す（削除はやり直せば消える）。
+- **Qdrant への送り直し**: Qdrant へ接続できない・接続を切られた・タイムアウトした・一時的なエラー（5xx・408・429）が
+  返ったときは、`[vector_db] qdrant_retry_interval_seconds`（既定10）秒待って同じリクエストを送り直す。回数は
+  `qdrant_max_retries`（既定5。`-1` なら成功するまで無制限、`0` なら送り直さない。全インスタンス共通で「管理者設定」で変える）。
+  送り直しを待つ間も「停止」で止められ、そのときはエラーにせずコミットしていない分を捨てて止まる（次回の取り込みで処理する）。
+  送り直しても結果が変わらないよう、Qdrant への更新は冪等にしている（ポイントの ID はファイルのパスとチャンクの番号から決まり、
+  削除はファイルのパスで絞り込む。コレクションの作成は、タイムアウトの後に送り直して「既にある」と返ったら作成済みを確かめる）。
+  検索は止める手段が無く AI の応答が返らなくなるため、この設定によらず最大1回（間隔は最大1秒）だけ送り直す。
+  コレクションの削除は始まると止められないため、`-1` のときは Qdrant が戻るまで待ち続ける（管理ツールを止めても上記のとおり整合は保たれる）。
 - **停止**: 「停止」を押すと新しいファイル・バッチを始めず（全ファイルの準備を始めた後でも、残りの埋め込みを送らない）、
   送信中の埋め込みが返るのを待って、埋め込みまで終わったファイルだけを記録して止まる（ボタンは押した時点で「停止中…」になる）。
 - **並列数の共有**: `ingest_workers`・`ingest_processes`・`ingest_embed_requests` は全インスタンス共通の設定で（インスタンス別の上書きはできず、
@@ -1696,7 +1721,9 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `dir` | `catalog.sqlite`（コレクション定義・取り込み済みファイルの記録）と、`sqlite_vec` 時の `vectors.sqlite`、キーワード索引 `keywords.sqlite` の保存先（既定 `${common_data_dir}/vector_db`） | `VECTOR_DB_DIR` |
 | `[vector_db]` | `qdrant_url` | `backend = qdrant` 時の Qdrant サーバー URL（例 `http://localhost:6333`）。API キーは `.env` の `QDRANT_API_KEY` | `VECTOR_DB_QDRANT_URL` |
 | `[vector_db]` | `qdrant_collection_prefix` | Qdrant 上のコレクション名の接頭辞（既定 `locohane_${instance}_`）。この接頭辞以外のコレクションには触れない | `VECTOR_DB_QDRANT_COLLECTION_PREFIX` |
-| `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定30） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
+| `[vector_db]` | `qdrant_timeout_seconds` | Qdrant への1リクエストのタイムアウト秒数（既定120） | `VECTOR_DB_QDRANT_TIMEOUT_SECONDS` |
+| `[vector_db]` | `qdrant_max_retries` | Qdrant へ接続できない・接続を切られた・タイムアウトした・5xx・408・429 が返ったときに送り直す回数（既定5。`-1` は無制限、`0` は送り直さない。取り込み・コピーは送り直しの待ち中も「停止」で止められる。検索はこの値によらず最大1回）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_QDRANT_MAX_RETRIES` |
+| `[vector_db]` | `qdrant_retry_interval_seconds` | 上記の送り直しの間隔（秒。既定10。検索は最大1秒） | `VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS` |
 | `[vector_db]` | `qdrant_preset` | Qdrant のコレクションのチャンク件数の規模別の設定（`none` 既定＝Qdrant の既定 / `1m` / `2m` / … / `10m`＝〜100万〜1000万件向け。HNSW・int8 量子化・ベクターのディスク配置・セグメント数・検索時の `hnsw_ef`）。既存のコレクションには次の取り込み時に反映（再構築不要）。「Qdrant を使う」参照 | `VECTOR_DB_QDRANT_PRESET` |
 | `[vector_db]` | `embedding_url` | 埋め込みを計算する接続先（`/v1/embeddings`）。`[llm] main_url` と同じ形式で、全要素同じ `model`・`start`/`end` 指定不可。`enabled = true` のとき必須（`[]` は未設定） | `VECTOR_DB_EMBEDDING_URL` |
 | `[vector_db]` | `embedding_routing_strategy` | `embedding_url` が複数件のときの選び方（`round_robin` / `random` / `priority_failover` 既定。GET /slots の確認はしない）。どの戦略でもエラーが返れば次の接続先へ送り直す（「埋め込みサーバーの準備と設定」参照） | `VECTOR_DB_EMBEDDING_ROUTING_STRATEGY` |
@@ -2207,6 +2234,7 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 | 取り込みの並列数 | `[vector_db] ingest_workers` | 全インスタンス・全コレクションの取り込みの合計で、同時に準備するファイル数（「文書の取り込み」参照） |
 | 本文の抽出・画像化の子プロセス数 | `[vector_db] ingest_processes` | 0 ならスレッドで行う。1 以上なら同時に準備するファイル数もこの値。画面にこの PC のコア数を出す |
 | 埋め込みのリクエストの並列数 | `[vector_db] ingest_embed_requests` | 全インスタンス・全コレクションの取り込みの合計で、同時に送る埋め込みのリクエスト数。0 なら取り込みの並列数と同じ |
+| Qdrant への送り直しの回数 | `[vector_db] qdrant_max_retries` | `backend = qdrant` で接続できない・接続を切られた・タイムアウトした・一時的なエラーが返ったときに送り直す回数。`-1` なら無制限（取り込み・コピーは「停止」で止められる）、`0` なら送り直さない。検索は最大1回 |
 | 回答に使う LLM | `[admin] assistant_llm_instance` | 「AIに相談」の回答を作る LLM を、どのインスタンスの `[llm] main_url` から取るか。空なら相談対象のインスタンス自身。インスタンスを選んで「接続を確認」を押すと、その `main_url` の各接続先へ `GET /models` を送ってつながるかを確かめる（モデルは動かさない） |
 | 関係する設定を探す埋め込み | `[admin] assistant_embedding_instance` | 相談内容に近い設定・説明を選ぶ埋め込みサーバーを、どのインスタンスの `[vector_db] embedding_url` から取るか。空なら自動 |
 

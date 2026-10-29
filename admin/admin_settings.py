@@ -7,6 +7,8 @@ config.ini の後・インスタンス別の上書きの前に重ねる（src/co
 
 - [vector_db] ingest_workers・ingest_processes・ingest_embed_requests: ナレッジの取り込みの並列数（全インスタンス・全コレクションの合計。
   admin/knowledge.py は取り込みを始めるたびに読み直す）。
+- [vector_db] qdrant_max_retries: Qdrant へ接続できない・接続を切られたときに送り直す回数（-1 は無制限。取り込み・コピー・削除を
+  始めるたびに読み直す。検索は最大1回）。
 - [admin] assistant_llm_instance・assistant_embedding_instance: 「AIに相談」が回答・検索に使うインスタンス
   （admin/assistant.py は相談のたびに読み直す）。
 """
@@ -40,13 +42,17 @@ class SettingSpec:
     section: str
     key: str
     env: str
-    kind: str  # positive_int / non_negative_int / instance（空はなし）
+    kind: str  # positive_int / non_negative_int / retry_count（-1 は無制限）/ instance（空はなし）
 
+
+# 整数の項目の下限。
+_INT_MINIMUMS = {"positive_int": 1, "non_negative_int": 0, "retry_count": -1}
 
 SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("vector_db", "ingest_workers", "VECTOR_DB_INGEST_WORKERS", "positive_int"),
     SettingSpec("vector_db", "ingest_processes", "VECTOR_DB_INGEST_PROCESSES", "non_negative_int"),
     SettingSpec("vector_db", "ingest_embed_requests", "VECTOR_DB_INGEST_EMBED_REQUESTS", "non_negative_int"),
+    SettingSpec("vector_db", "qdrant_max_retries", "VECTOR_DB_QDRANT_MAX_RETRIES", "retry_count"),
     SettingSpec("admin", "assistant_llm_instance", "ADMIN_ASSISTANT_LLM_INSTANCE", "instance"),
     SettingSpec("admin", "assistant_embedding_instance", "ADMIN_ASSISTANT_EMBEDDING_INSTANCE", "instance"),
 )
@@ -93,12 +99,12 @@ def validate(values: dict[str, Any], instance_names: list[str]) -> dict[tuple[st
         if name not in values:
             continue
         raw = values[name]
-        if spec.kind in ("positive_int", "non_negative_int"):
+        if spec.kind in _INT_MINIMUMS:
             try:
                 number = int(str(raw).strip())
             except ValueError as exc:
                 raise ValueError(_t("[{0}].{1} は整数にしてください。", spec.section, spec.key)) from exc
-            minimum = 1 if spec.kind == "positive_int" else 0
+            minimum = _INT_MINIMUMS[spec.kind]
             if number < minimum:
                 raise ValueError(_t("[{0}].{1} は {2} 以上にしてください。", spec.section, spec.key, minimum))
             result[(spec.section, spec.key)] = str(number)
@@ -182,6 +188,7 @@ def build_router(
             ("vector_db", "ingest_workers"): str(effective.vector_db_ingest_workers),
             ("vector_db", "ingest_processes"): str(effective.vector_db_ingest_processes),
             ("vector_db", "ingest_embed_requests"): str(effective.vector_db_ingest_embed_requests),
+            ("vector_db", "qdrant_max_retries"): str(effective.vector_db_qdrant_max_retries),
             ("admin", "assistant_llm_instance"): effective.admin_assistant_llm_instance,
             ("admin", "assistant_embedding_instance"): effective.admin_assistant_embedding_instance,
         }

@@ -113,12 +113,24 @@ def test_get_save_and_reset(env):
         {"vector_db.ingest_workers": 0},
         {"vector_db.ingest_workers": "x"},
         {"vector_db.ingest_processes": -1},
+        {"vector_db.qdrant_max_retries": -2},
+        {"vector_db.qdrant_max_retries": "unlimited"},
         {"admin.assistant_llm_instance": "missing"},
     ],
 )
 def test_invalid_values_are_rejected(env, values):
     assert env["client"].put("/api/admin-settings", json={"values": values}).status_code == 400
     assert not env["file"].exists()
+
+
+def test_qdrant_max_retries_accepts_unlimited(env, monkeypatch):
+    monkeypatch.delenv("VECTOR_DB_QDRANT_MAX_RETRIES", raising=False)
+    client = env["client"]
+    s = _setting(client.get("/api/admin-settings").json(), "vector_db.qdrant_max_retries")
+    assert (s["value"], s["default"], s["kind"]) == ("5", "5", "retry_count")
+    data = client.put("/api/admin-settings", json={"values": {"vector_db.qdrant_max_retries": -1}}).json()
+    assert _setting(data, "vector_db.qdrant_max_retries")["value"] == "-1"
+    assert admin_settings.current_admin_config(DEFAULT_CONFIG_PATH).vector_db_qdrant_max_retries == -1
 
 
 def test_env_override_is_reported(env, monkeypatch):

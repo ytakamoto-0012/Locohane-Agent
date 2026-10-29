@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Callable, Iterator, Protocol
 
 import httpx
 
@@ -12,6 +12,10 @@ from ..config import Config
 
 class StoreError(Exception):
     """ベクターの保存先を操作できなかった（接続できない・次元・距離関数が合わない等）。"""
+
+
+class StoreStopped(StoreError):
+    """保存先への送り直しを待っている間に should_stop() が True を返した（取り込み・コピーの「停止」）。"""
 
 
 # 値が小さいほど近い距離関数（[vector_db].distance）。Hit.score を「大きいほど近い」に
@@ -100,6 +104,13 @@ class VectorStore(Protocol):
     def replace_source(self, name: str, source_path: str, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
         """source_path のチャンクを丸ごと入れ替える。"""
 
+    def append_source(self, name: str, source_path: str, start: int, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
+        """source_path の start 番目からのチャンクを足す（既存のチャンクは消さない）。
+
+        チャンクの多いファイルを、全部のベクターをメモリーにためずに分けて書き込む用（ingest._Writer.append_chunks）。
+        先に delete_source() で古いチャンクを消し、start は 0 から順に続けて渡すこと。
+        """
+
     def delete_source(self, name: str, source_path: str) -> None:
         """source_path のチャンクを消す。"""
 
@@ -110,12 +121,24 @@ class VectorStore(Protocol):
         """コレクションのベクターの次元（無ければ None）。"""
 
     def get_source(self, name: str, source_path: str) -> tuple[list[ChunkRecord], list[list[float]]]:
-        """source_path のチャンクとベクターを入れた順に返す（インスタンス間のコピー用。無ければ空）。"""
+        """source_path のチャンクとベクターを入れた順に返す（無ければ空）。チャンクの多いファイルでは iter_source を使うこと。"""
+
+    def iter_source(self, name: str, source_path: str) -> Iterator[tuple[list[ChunkRecord], list[list[float]]]]:
+        """source_path のチャンクとベクターを、入れた順に数百件ずつ返す（インスタンス間のコピー用。無ければ何も返さない）。
+
+        数十万チャンクの1ファイルでも、全部のベクターを一度にメモリーに読まない。
+        """
 
     def close(self) -> None: ...
 
 
-def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None, shared: bool = False) -> VectorStore:
+def open_store(
+    cfg: Config,
+    *,
+    transport: httpx.BaseTransport | None = None,
+    shared: bool = False,
+    should_stop: Callable[[], bool] | None = None,
+) -> VectorStore:
     """[vector_db].backend に応じた保存先を開く。使い終わったら close() すること。
 
     Args:
@@ -123,10 +146,17 @@ def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None, sha
         transport: backend=qdrant のとき、テスト用に差し替える httpx のトランスポート。
         shared: backend=qdrant のとき、Qdrant への接続をプロセス内で使い回す（検索用。
             qdrant_store.shared_client 参照）。transport を渡したときは使わない。
+            検索は止める手段が無いため、送り直しは [vector_db].qdrant_max_retries によらず
+            最大 qdrant_store.SEARCH_MAX_RETRIES 回にする。
+        should_stop: backend=qdrant のとき、送り直しを待つ間に確かめ、True を返したら StoreStopped を投げてやめる。
     """
     if cfg.vector_db_backend == "qdrant":
-        from .qdrant_store import QdrantStore
+        from .qdrant_store import SEARCH_MAX_RETRIES, SEARCH_RETRY_INTERVAL_SECONDS, QdrantStore
 
+        max_retries, interval = cfg.vector_db_qdrant_max_retries, cfg.vector_db_qdrant_retry_interval_seconds
+        if shared:
+            max_retries = SEARCH_MAX_RETRIES if max_retries < 0 else min(max_retries, SEARCH_MAX_RETRIES)
+            interval = min(interval, SEARCH_RETRY_INTERVAL_SECONDS)
         return QdrantStore(
             cfg.vector_db_qdrant_url,
             prefix=cfg.vector_db_qdrant_collection_prefix,
@@ -136,6 +166,9 @@ def open_store(cfg: Config, *, transport: httpx.BaseTransport | None = None, sha
             preset=cfg.vector_db_qdrant_preset,
             transport=transport,
             shared=shared and transport is None,
+            max_retries=max_retries,
+            retry_interval=interval,
+            should_stop=should_stop,
         )
     from .sqlite_vec_store import SqliteVecStore
 

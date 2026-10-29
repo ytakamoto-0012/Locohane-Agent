@@ -10,6 +10,7 @@ from __future__ import annotations
 from array import array
 from pathlib import Path
 import sqlite3
+from typing import Iterator
 
 import sqlite_vec
 
@@ -17,6 +18,8 @@ from .sqlite_batch import SqliteBatchMixin, configure_connection
 from .store import DISTANCE_METRICS, ChunkRecord, Hit, StoreError, distance_to_score
 
 VECTORS_FILENAME = "vectors.sqlite"
+# iter_source() で1回に読むチャンク数。
+_PAGE_SIZE = 256
 
 # [vector_db].distance → vec0 の distance_metric（Dot は vec0 に無い。config.py で backend=sqlite_vec との組み合わせを拒否する）。
 _METRICS = {"Cosine": "cosine", "Euclid": "l2", "Manhattan": "l1"}
@@ -119,30 +122,49 @@ class SqliteVecStore(SqliteBatchMixin):
         if existing is None:
             raise StoreError(f"Collection {name} does not exist.")
         cid, dim, _ = existing
-        pairs = list(zip(chunks, vectors, strict=True))
-        for _chunk, vector in pairs:
-            if len(vector) != dim:
-                raise StoreError(f"The embedding dimension ({len(vector)}) differs from the dimension ({dim}) of collection {name}.")
+        self._check_dim(name, dim, chunks, vectors)
         with self._transaction():
             self._delete_source(cid, source_path)
-            if not pairs:
-                return
-            # まとめて（executemany で）入れるため、chunks の ID を AUTOINCREMENT の続きから自分で振る
-            # （明示した ID は sqlite_sequence にも反映される）。読んでから入れるまでに他の接続が書き込まないよう、
-            # まだ書き込みのトランザクションを始めていなければここで始める。
-            if not self._conn.in_transaction:
-                self._conn.execute("BEGIN IMMEDIATE")
-            row = self._conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'chunks'").fetchone()
-            start = (row[0] if row else 0) + 1
-            ids = range(start, start + len(pairs))
-            self._conn.executemany(
-                "INSERT INTO chunks (id, collection_id, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
-                [(i, cid, source_path, chunk.locator, chunk.text) for i, (chunk, _v) in zip(ids, pairs)],
-            )
-            self._conn.executemany(
-                f"INSERT INTO vec_c{cid} (rowid, embedding) VALUES (?, ?)",
-                [(i, sqlite_vec.serialize_float32(vector)) for i, (_c, vector) in zip(ids, pairs)],
-            )
+            self._insert(cid, source_path, chunks, vectors)
+
+    def append_source(self, name: str, source_path: str, start: int, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
+        # ID は AUTOINCREMENT の続きから振るため、start 順に呼べば get_source() は入れた順に返す（start 自体は使わない）。
+        existing = self._collection(name)
+        if existing is None:
+            raise StoreError(f"Collection {name} does not exist.")
+        cid, dim, _ = existing
+        self._check_dim(name, dim, chunks, vectors)
+        with self._transaction():
+            self._insert(cid, source_path, chunks, vectors)
+
+    @staticmethod
+    def _check_dim(name: str, dim: int, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
+        if len(chunks) != len(vectors):
+            raise ValueError(f"chunks ({len(chunks)}) and vectors ({len(vectors)}) differ in length")
+        for vector in vectors:
+            if len(vector) != dim:
+                raise StoreError(f"The embedding dimension ({len(vector)}) differs from the dimension ({dim}) of collection {name}.")
+
+    def _insert(self, cid: int, source_path: str, chunks: list[ChunkRecord], vectors: list[list[float]]) -> None:
+        if not chunks:
+            return
+        # まとめて（executemany で）入れるため、chunks の ID を AUTOINCREMENT の続きから自分で振る
+        # （明示した ID は sqlite_sequence にも反映される）。読んでから入れるまでに他の接続が書き込まないよう、
+        # まだ書き込みのトランザクションを始めていなければここで始める。
+        if not self._conn.in_transaction:
+            self._conn.execute("BEGIN IMMEDIATE")
+        row = self._conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'chunks'").fetchone()
+        start = (row[0] if row else 0) + 1
+        ids = range(start, start + len(chunks))
+        # 行はジェネレーターで渡し、チャンクの多いファイルでも全行（シリアライズしたベクター）の複製をメモリーに作らない。
+        self._conn.executemany(
+            "INSERT INTO chunks (id, collection_id, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
+            ((i, cid, source_path, chunk.locator, chunk.text) for i, chunk in zip(ids, chunks)),
+        )
+        self._conn.executemany(
+            f"INSERT INTO vec_c{cid} (rowid, embedding) VALUES (?, ?)",
+            ((i, sqlite_vec.serialize_float32(vector)) for i, vector in zip(ids, vectors)),
+        )
 
     def dim(self, name: str) -> int | None:
         existing = self._collection(name)
@@ -150,23 +172,42 @@ class SqliteVecStore(SqliteBatchMixin):
 
     def get_source(self, name: str, source_path: str) -> tuple[list[ChunkRecord], list[list[float]]]:
         """source_path のチャンクとベクターを、replace_source() で入れた順に返す（コレクションが無ければ空）。"""
-        existing = self._collection(name)
-        if existing is None:
-            return [], []
-        cid = existing[0]
-        rows = self._conn.execute(
-            "SELECT id, locator, text FROM chunks WHERE collection_id = ? AND source_path = ? ORDER BY id", (cid, source_path)
-        ).fetchall()
         chunks: list[ChunkRecord] = []
         vectors: list[list[float]] = []
-        for rowid, locator, text in rows:
-            # vec0 は rowid の一致（=）でしか索引を使わないため、1件ずつ読む。
-            row = self._conn.execute(f"SELECT embedding FROM vec_c{cid} WHERE rowid = ?", (rowid,)).fetchone()
-            if row is None:
-                continue
-            chunks.append(ChunkRecord(locator=locator, text=text))
-            vectors.append(array("f", row[0]).tolist())
+        for page_chunks, page_vectors in self.iter_source(name, source_path):
+            chunks.extend(page_chunks)
+            vectors.extend(page_vectors)
         return chunks, vectors
+
+    def iter_source(self, name: str, source_path: str) -> Iterator[tuple[list[ChunkRecord], list[list[float]]]]:
+        """source_path のチャンクとベクターを、入れた順に _PAGE_SIZE 件ずつ返す（コレクションが無ければ何も返さない）。
+
+        ページごとに読み切る（カーソルを開いたままにしない）ため、返したページを別の接続へ書き込んでもよい。
+        """
+        existing = self._collection(name)
+        if existing is None:
+            return
+        cid = existing[0]
+        last = -1
+        while True:
+            rows = self._conn.execute(
+                "SELECT id, locator, text FROM chunks WHERE collection_id = ? AND source_path = ? AND id > ? ORDER BY id LIMIT ?",
+                (cid, source_path, last, _PAGE_SIZE),
+            ).fetchall()
+            if not rows:
+                return
+            last = rows[-1][0]
+            chunks: list[ChunkRecord] = []
+            vectors: list[list[float]] = []
+            for rowid, locator, text in rows:
+                # vec0 は rowid の一致（=）でしか索引を使わないため、1件ずつ読む。
+                row = self._conn.execute(f"SELECT embedding FROM vec_c{cid} WHERE rowid = ?", (rowid,)).fetchone()
+                if row is None:
+                    continue
+                chunks.append(ChunkRecord(locator=locator, text=text))
+                vectors.append(array("f", row[0]).tolist())
+            if chunks:
+                yield chunks, vectors
 
     def search(self, name: str, vector: list[float], top_k: int) -> list[Hit]:
         """Hit.score は、Cosine では 1 - コサイン距離（コサイン類似度）、Euclid・Manhattan では 1 / (1 + 距離)。"""

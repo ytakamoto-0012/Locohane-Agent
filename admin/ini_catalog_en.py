@@ -836,7 +836,19 @@ DESCRIPTIONS: dict[str, str] = {
         'Qdrant collections that do not start with this prefix are never touched.'
     ),
     'vector_db.qdrant_timeout_seconds': (
-        'Timeout (seconds) per request to Qdrant.'
+        'Timeout (seconds) per request to Qdrant. Ingestion waits until writes are applied (wait=true),\n'
+        'so it can take time while indexes are being rebuilt or with large collections.'
+    ),
+    'vector_db.qdrant_max_retries': (
+        'Number of times the same request is sent again after waiting qdrant_retry_interval_seconds seconds when Qdrant cannot be reached,\n'
+        'closes the connection, times out or returns a temporary error (5xx, 408, 429). -1 retries without limit until it succeeds\n'
+        '(for waiting for Qdrant to restart; ingestion and copying can be stopped with "Stop" on the Knowledge screen). 0 does not retry.\n'
+        '4xx other than 408 and 429 (mistakes in the request or settings that waiting does not fix) are not retried and give an error.\n'
+        'Searches (search_documents, etc.) cannot be stopped and would leave the AI without a response, so they are retried at most once (with an interval of at most 1 second) regardless of this value.\n'
+        'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
+    ),
+    'vector_db.qdrant_retry_interval_seconds': (
+        'Interval (seconds) between the retries above.'
     ),
     'vector_db.qdrant_preset': (
         'With backend = qdrant, Qdrant collection settings matched to the expected scale of the number of chunks (body text or images of one collection). One of these 11 values:\n'

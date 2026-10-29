@@ -14,6 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 import re
 import sqlite3
+from typing import Iterable, Iterator
 import unicodedata
 
 from .sqlite_batch import SqliteBatchMixin, configure_connection
@@ -115,11 +116,14 @@ class KeywordIndex(SqliteBatchMixin):
         （検索結果の text はチャンクの text のまま）。
         """
         texts = index_texts if index_texts is not None else [c.text for c in chunks]
+        if len(texts) != len(chunks):
+            raise ValueError(f"index_texts ({len(texts)}) and chunks ({len(chunks)}) differ in length")
         with self._transaction():
             self._delete_source(collection, source_path)
+            # 行はジェネレーターで渡し、チャンクの多いファイルでも全チャンクの語の一覧を一度にメモリーに作らない。
             self._conn.executemany(
                 "INSERT INTO keyword_chunks (tokens, collection, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
-                [(" ".join(_tokens(t)), collection, source_path, c.locator, c.text) for c, t in zip(chunks, texts, strict=True)],
+                ((" ".join(_tokens(t)), collection, source_path, c.locator, c.text) for c, t in zip(chunks, texts)),
             )
             self._conn.execute("INSERT INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
 
@@ -133,13 +137,27 @@ class KeywordIndex(SqliteBatchMixin):
         ).fetchall()
         return [(r[0], r[1], r[2]) for r in rows]
 
-    def replace_source_rows(self, collection: str, source_path: str, rows: list[tuple[str, str, str]]) -> None:
-        """source_rows() で読んだ行で source_path を丸ごと入れ替える（語に区切り直さない）。"""
+    def iter_source_rows(self, collection: str, source_path: str) -> Iterator[tuple[str, str, str]] | None:
+        """source_rows() と同じ行を、全部をリストにせず順に返す（索引に無ければ None）。
+
+        数十万チャンクの1ファイルでも、語の一覧をまとめてメモリーに読まないためのもの（インスタンス間のコピー用）。
+        返したイテレーターは、この接続で書き込む前に読み切ること（replace_source_rows には別の接続のものを渡す）。
+        """
+        if not self.has_source(collection, source_path):
+            return None
+        cursor = self._conn.execute(
+            "SELECT tokens, locator, text FROM keyword_chunks WHERE collection = ? AND source_path = ? ORDER BY rowid",
+            (collection, source_path),
+        )
+        return ((r[0], r[1], r[2]) for r in cursor)
+
+    def replace_source_rows(self, collection: str, source_path: str, rows: Iterable[tuple[str, str, str]]) -> None:
+        """source_rows()・iter_source_rows() で読んだ行で source_path を丸ごと入れ替える（語に区切り直さない）。"""
         with self._transaction():
             self._delete_source(collection, source_path)
             self._conn.executemany(
                 "INSERT INTO keyword_chunks (tokens, collection, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
-                [(tokens, collection, source_path, locator, text) for tokens, locator, text in rows],
+                ((tokens, collection, source_path, locator, text) for tokens, locator, text in rows),
             )
             self._conn.execute("INSERT INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
 
