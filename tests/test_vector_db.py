@@ -422,6 +422,23 @@ def test_extract_xlsx_drops_numbers_inside_tables(tmp_path, monkeypatch, reader)
     ]
 
 
+def test_extract_csv_drops_numbers_inside_tables(tmp_path):
+    """CSV も Excel と同じく表の中に縦に並ぶ数値を除き、引用符の中の区切り・改行はそのまま1つのセルとして読む。"""
+    path = tmp_path / "a.csv"
+    path.write_bytes(
+        "No,品番,品名,4月,5月,納期\r\n"
+        '1,A-001,"ボルト, M8",120,"1,350",2024/04/01\r\n'
+        '2,007,"ナット\nM8",300,280,2024/05/01\r\n'
+        ",,,420,\"1,630\"\r\n".encode("cp932")
+    )
+    assert extract_segments(path)[0].text.split("\n") == [
+        "No\t品番\t品名\t4月\t5月\t納期",
+        "1\tA-001\tボルト, M8\t\t\t2024/04/01",
+        "2\t007\tナット",
+        "M8\t\t\t2024/05/01",
+    ]
+
+
 def test_extract_xlsx_reads_far_apart_cells_without_calamine(tmp_path, monkeypatch):
     import zipfile
 

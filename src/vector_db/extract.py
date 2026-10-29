@@ -8,6 +8,7 @@ skills/ 配下の読み取りスクリプト（read_pdf.py 等）は CLI とし�
 from __future__ import annotations
 
 from contextlib import contextmanager
+import csv
 from dataclasses import dataclass
 import io
 import locale
@@ -114,7 +115,9 @@ def extract_segments(path: Path, data: bytes | None = None, text_extensions: Col
             segments = _extract_xlsx(source)
         elif ext == ".pptx":
             segments = _extract_pptx(source)
-        elif ext in (".md", ".txt", ".csv"):
+        elif ext == ".csv":
+            segments = [Segment("", _csv_text(_decode_text(path.read_bytes() if data is None else data)))]
+        elif ext in (".md", ".txt"):
             segments = [Segment("", _decode_text(path.read_bytes() if data is None else data))]
         elif ext in text_extensions:
             raw = path.read_bytes() if data is None else data
@@ -158,6 +161,18 @@ def _decode_text(data: bytes) -> str:
         except (UnicodeDecodeError, LookupError):
             continue
     return data.decode("utf-8", errors="replace")
+
+
+def _csv_text(text: str) -> str:
+    """CSV を Excel のセルと同じく、表の中の数値のセルを除いて（_without_table_numbers）1行ずつタブでつなぐ。
+
+    CSV として読めない（csv モジュールの上限を超える長さのフィールド等）ときは、従来どおりテキストのまま返す。
+    """
+    try:
+        rows = list(csv.reader(io.StringIO(text, newline="")))
+    except csv.Error:
+        return text
+    return "\n".join(line for row in _without_table_numbers(rows) if (line := _row_text(row)))
 
 
 def _extract_pdf(source: str | bytes) -> list[Segment]:
