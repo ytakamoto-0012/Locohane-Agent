@@ -271,11 +271,15 @@ async def test_progress_is_pushed_without_llm_and_stops_after_completion(monkeyp
     fake_process = _FakeProcess(started_running=True)
     _install_fake_subprocess(monkeypatch, fake_process)
 
-    async def _release_after_delay():
-        await asyncio.sleep(0.08)  # 複数回 push が発火するのを待つ
+    async def _release_after_updates():
+        # 1回目の .send() の後、.update() が実際に届くのを待ってから終わらせる（固定時間だけ待つと、
+        # Windows のタイマーの粒度（約15.6ms）で .update() の前に終わることがある。test_tools_dispatch_agent と同じ）。
+        deadline = asyncio.get_running_loop().time() + 5
+        while not updated and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
         fake_process.finish(0)
 
-    release_task = asyncio.create_task(_release_after_delay())
+    release_task = asyncio.create_task(_release_after_updates())
     result = await tools.run_script_background.ainvoke({"skill_name": "demo", "script_filename": "count.py"})
     await release_task
 

@@ -244,11 +244,16 @@ async def test_progress_is_pushed_without_llm_and_stops_after_completion(monkeyp
 
     monkeypatch.setattr(tools._dispatch_agent_job.subagent, "run_subagent", fake_run_subagent)
 
-    async def _release_after_delay():
-        await asyncio.sleep(0.08)  # 複数回 push が発火するのを待つ
+    async def _release_after_updates():
+        # 1回目の .send() の後、.update() が実際に届くのを待ってからジョブを終わらせる。
+        # 固定時間（以前は 0.08 秒）だけ待つと、Windows ではタイマーの粒度（約15.6ms）のため
+        # asyncio.sleep(0.02) が約31msかかり、.update() の前にジョブが終わってしまうことがあった。
+        deadline = asyncio.get_running_loop().time() + 5
+        while not updated and asyncio.get_running_loop().time() < deadline:
+            await asyncio.sleep(0.01)
         gate.set()
 
-    release_task = asyncio.create_task(_release_after_delay())
+    release_task = asyncio.create_task(_release_after_updates())
     result = await _invoke_dispatch_agent(task="t", agent_type="explore")
     await release_task
 
