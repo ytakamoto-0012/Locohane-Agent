@@ -223,6 +223,11 @@ select.le-type { width: auto; padding: 4px; font-size: 12px; flex-shrink: 0; }
 .le-group-head { display: flex; align-items: center; gap: 8px; }
 .le-group-head input { width: 16em; font-weight: 600; }
 .le-group-head .le-btn { margin-left: auto; }
+.le-source { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.le-source select, .le-source input { flex: 1 1 auto; min-width: 0; }
+.le-source .le-btn { flex: none; white-space: nowrap; }
+.le-group-head .le-source { width: 16em; font-weight: 600; }
+.le-group-head .le-source .le-btn { margin-left: 0; }
 .le-group .le-list .le-item { background: var(--panel-2); }
 
 .config-footer { display: flex; align-items: center; gap: 10px; position: sticky; bottom: 0; background: var(--bg); padding: 10px 0; }
@@ -461,7 +466,7 @@ input.narrow { width: 80px; }
   .key-input-wrap .choice-select { min-width: 0; width: 100%; }
   .le-field { flex-wrap: wrap; }
   .le-field-name { width: 100%; padding-top: 0; }
-  .le-group-head input { width: auto; flex: 1; min-width: 0; }
+  .le-group-head input, .le-group-head .le-source { width: auto; flex: 1; min-width: 0; }
 
   .inline-form, .filter-row input[type=search] { max-width: 100%; width: 100%; }
   .inline-form { flex-wrap: wrap; }

@@ -85,6 +85,35 @@ def test_instance_locohane_dir_survives_project_locohane_dir_override(lab_env):
     assert cfg.project_instructions_paths[-1] == cfg.instance_locohane_dir / "LOCOHANE.md"
 
 
+def test_config_candidates_lists_skills_with_scripts_and_agents_of_the_instance(lab_env):
+    """設定画面の候補は、project_locohane_dir とインスタンス専用の置き場のスキル・スクリプト・agent_type を含む。"""
+    from admin.skill_lab import sources
+
+    shared = lab_env["tmp"] / "shared_locohane"
+    (shared / "skills" / "team-tool" / "scripts").mkdir(parents=True)
+    (shared / "skills" / "team-tool" / "SKILL.md").write_text(_skill_md("team-tool"), encoding="utf-8")
+    for script in ("b_write.py", "a_read.py", "_common.py", "notes.txt"):
+        (shared / "skills" / "team-tool" / "scripts" / script).write_text("", encoding="utf-8")
+    path = lab_env["root"] / "org_a" / "config_overrides.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["paths"]["project_locohane_dir"] = json.dumps([str(shared)])
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (lab_env["root"] / "org_a" / "agents").mkdir(parents=True)
+    (lab_env["root"] / "org_a" / "agents" / "org-reviewer.md").write_text(_agent_md("org-reviewer"), encoding="utf-8")
+
+    result = sources.config_candidates(_cfg(lab_env, "org_a"))
+    skills = {s["name"]: s for s in result["skills"]}
+    assert skills["team-tool"]["scripts"] == ["a_read.py", "b_write.py"]
+    assert skills["team-tool"]["origin"] == "shared"
+    assert "read_pdf.py" in skills["pdf-tools"]["scripts"]
+    agents = {a["name"]: a for a in result["agent_types"]}
+    assert agents["org-reviewer"]["origin"] == "instance"
+    assert "explore" in agents
+    # 他のインスタンスには出ない
+    other = sources.config_candidates(_cfg(lab_env, "org_b"))
+    assert "org-reviewer" not in {a["name"] for a in other["agent_types"]}
+
+
 # --- 設定パッチ・研究室の LLM 接続先 -----------------------------------------------
 
 

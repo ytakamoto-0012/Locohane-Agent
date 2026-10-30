@@ -800,7 +800,7 @@ async function renderConfigEditor(container) {
   container.appendChild(clone("tpl-config-editor"));
   dirtyEdits = {};
   resetKeys = new Set();
-  await loadConfigKeys();
+  await Promise.all([loadConfigKeys(), loadConfigCandidates()]);
   buildPresetList();
   buildSectionList();
   renderKeyList();
@@ -820,6 +820,19 @@ async function loadConfigKeys() {
   if (note) {
     note.textContent = data.scope_note || "";
     note.classList.toggle("hidden", !data.scope_note);
+  }
+}
+
+// スキル名・スクリプト名・agent_type を選ぶ欄の候補（admin/ini_catalog.py の "source"）。
+// 保存済みの設定でこのインスタンスが認識しているもの（[paths] project_locohane_dir 等を走査）。
+let configCandidates = null;
+
+async function loadConfigCandidates() {
+  try {
+    const data = await api(`/api/instances/${encodeURIComponent(currentInstanceName)}/config/candidates`);
+    configCandidates = data.error ? null : data;
+  } catch (e) {
+    configCandidates = null;
   }
 }
 
@@ -1473,9 +1486,100 @@ function schemaMatches(schema, v) {
   }
 }
 
+/* --- 候補から選ぶ欄（スキーマの "source"） ---
+ * スキル名・スクリプトファイル名・agent_type・ツール名を、このインスタンスが認識している
+ * もの（configCandidates）から選ばせる。一覧に無い名前も「手入力」で入れられる。 */
+
+const SOURCE_MANUAL = "\u0000manual";
+const SOURCE_ORIGIN_LABELS = {
+  instance: () => _t("インスタンス専用"),
+  shared: () => "project_locohane_dir",
+};
+
+// source の候補 [{value, title, origin}]。候補が取れていなければ null（手入力の欄にする）。
+// ctx.skill() は同じ tuple 内で選ばれているスキル名（"script" の候補の絞り込みに使う）。
+function sourceOptions(source, ctx = {}) {
+  if (!configCandidates) return null;
+  if (source === "skill") {
+    return configCandidates.skills.map((s) => ({ value: s.name, title: s.description, origin: s.origin }));
+  }
+  if (source === "agent_type") {
+    return configCandidates.agent_types.map((a) => ({ value: a.name, title: a.description, origin: a.origin }));
+  }
+  if (source === "script") {
+    const skill = ctx.skill ? configCandidates.skills.find((s) => s.name === ctx.skill()) : null;
+    return (skill ? skill.scripts : []).map((name) => ({ value: name, title: "", origin: null }));
+  }
+  if (source === "tool") {
+    // ツール名が取れなかったときは手入力の欄にする（MCP の動的ツールは一覧に無いので「手入力」で入れる）
+    const tools = configCandidates.tools || [];
+    return tools.length ? tools.map((name) => ({ value: name, title: "", origin: null })) : null;
+  }
+  return null;
+}
+
+function buildSourceField(current, options, set, placeholder) {
+  const box = document.createElement("span");
+  box.className = "le-source";
+  let value = current ?? "";
+  let manual = false;
+  const render = () => {
+    box.innerHTML = "";
+    if (manual) {
+      const input = document.createElement("input");
+      input.type = "text";
+      input.placeholder = placeholder || "";
+      input.value = value;
+      input.addEventListener("input", () => {
+        value = input.value;
+        set(value);
+      });
+      box.append(
+        input,
+        smallBtn(_t("一覧から選ぶ"), _t("一覧から選ぶ"), false, () => {
+          manual = false;
+          render();
+        })
+      );
+      return input;
+    }
+    const select = document.createElement("select");
+    const addOption = (v, text, title = "") => {
+      const opt = document.createElement("option");
+      opt.value = v;
+      opt.textContent = text;
+      if (title) opt.title = title;
+      select.appendChild(opt);
+    };
+    if (!options.some((o) => o.value === value)) {
+      addOption(value, value === "" ? _t("（未指定）") : _t(`{0}（一覧にない現在値）`, value));
+    }
+    for (const o of options) {
+      const originLabel = SOURCE_ORIGIN_LABELS[o.origin];
+      addOption(o.value, originLabel ? `${o.value}（${originLabel()}）` : o.value, o.title);
+    }
+    addOption(SOURCE_MANUAL, _t("（手入力…）"));
+    select.value = value;
+    select.addEventListener("change", () => {
+      if (select.value === SOURCE_MANUAL) {
+        manual = true;
+        render().focus();
+        return;
+      }
+      value = select.value;
+      set(value);
+    });
+    box.append(select);
+    return select;
+  };
+  render();
+  return box;
+}
+
 // set(v) は親に「この値が v に変わった」ことを伝える。リスト・タプル・辞書は
 // 自分自身の中身を書き換えてから同じ参照で set する。
-function buildSchemaEditor(value, schema, set, optional = false) {
+// ctx は "source" 付きの欄へ渡す文脈（buildSchemaTuple の ctx.skill 参照）。
+function buildSchemaEditor(value, schema, set, optional = false, ctx = {}) {
   switch (schema.type) {
     case "list":
       return buildSchemaList(value, schema, set);
@@ -1510,6 +1614,8 @@ function buildSchemaEditor(value, schema, set, optional = false) {
       return input;
     }
     default: {
+      const options = schema.source ? sourceOptions(schema.source, ctx) : null;
+      if (options) return buildSourceField(value, options, set, schema.placeholder);
       const text = value ?? "";
       const long = text.length > 60 || text.includes("\n");
       const input = document.createElement(long ? "textarea" : "input");
@@ -1597,14 +1703,21 @@ function buildSchemaGrouped(arr, schema, set) {
       const label = document.createElement("span");
       label.className = "le-sfield-label";
       label.textContent = schema.group_label;
-      const nameInput = document.createElement("input");
-      nameInput.type = "text";
-      nameInput.placeholder = schema.group_placeholder || "";
-      nameInput.value = g.name;
-      nameInput.addEventListener("input", () => {
-        g.name = nameInput.value;
+      const setName = (v) => {
+        g.name = v;
         flush();
-      });
+      };
+      const nameOptions = schema.group_source ? sourceOptions(schema.group_source) : null;
+      let nameInput;
+      if (nameOptions) {
+        nameInput = buildSourceField(g.name, nameOptions, setName, schema.group_placeholder);
+      } else {
+        nameInput = document.createElement("input");
+        nameInput.type = "text";
+        nameInput.placeholder = schema.group_placeholder || "";
+        nameInput.value = g.name;
+        nameInput.addEventListener("input", () => setName(nameInput.value));
+      }
       const count = document.createElement("span");
       count.className = "hint";
       count.textContent = _t(`{0} 件`, g.items.length);
@@ -1643,19 +1756,48 @@ function buildSchemaGrouped(arr, schema, set) {
 function buildSchemaTuple(arr, schema, set) {
   const box = document.createElement("div");
   box.className = "le-tuple";
+  // [スキル名, スクリプトファイル名] は、選んだスキルの scripts/*.py をスクリプト欄の候補にする
+  const skillIdx = schema.items.findIndex((it) => it.schema.source === "skill");
+  const ctx = skillIdx >= 0 ? { skill: () => arr[skillIdx] } : {};
+  const scriptFields = []; // [idx, 作り直す関数]
+  const refreshScripts = () => {
+    const skill = configCandidates && configCandidates.skills.find((s) => s.name === arr[skillIdx]);
+    for (const [idx, rerender] of scriptFields) {
+      // 認識しているスキルに無いスクリプト名は消す（1つしか無ければそれを選ぶ）。手入力中の未知のスキルでは触らない
+      if (skill && !skill.scripts.includes(arr[idx])) arr[idx] = skill.scripts.length === 1 ? skill.scripts[0] : "";
+      rerender();
+    }
+  };
   schema.items.forEach((it, idx) => {
     const fieldEl = document.createElement("div");
     fieldEl.className = it.schema.type === "number" ? "le-sfield le-sfield-narrow" : "le-sfield";
     const label = document.createElement("span");
     label.className = "le-sfield-label";
     label.textContent = it.label;
-    fieldEl.append(
-      label,
-      buildSchemaEditor(arr[idx], it.schema, (v) => {
-        arr[idx] = v;
-        set(arr);
-      })
-    );
+    const build = () =>
+      buildSchemaEditor(
+        arr[idx],
+        it.schema,
+        (v) => {
+          arr[idx] = v;
+          if (idx === skillIdx) refreshScripts();
+          set(arr);
+        },
+        false,
+        ctx
+      );
+    let editor = build();
+    if (it.schema.source === "script") {
+      scriptFields.push([
+        idx,
+        () => {
+          const next = build();
+          editor.replaceWith(next);
+          editor = next;
+        },
+      ]);
+    }
+    fieldEl.append(label, editor);
     box.appendChild(fieldEl);
   });
   return box;
@@ -1715,11 +1857,16 @@ function buildSchemaOneOf(value, schema, set) {
   };
   const initial = Math.max(0, schema.variants.findIndex((variant) => schemaMatches(variant.schema, value)));
   select.value = String(initial);
+  // 先頭の欄の候補の種類（"source"）。ツール名 ↔ スキル名のように種類が違えば値を引き継がない
+  const headSource = (s) => (s.type === "tuple" ? s.items[0].schema.source : s.type === "string" ? s.source : undefined);
+  let shown = initial;
   select.addEventListener("change", () => {
     // 形を切り替えても、入力済みの先頭の文字列（スキル名・ディレクトリ等）は引き継ぐ
     const firstOf = (v) => (Array.isArray(v) ? v[0] : v && typeof v === "object" ? Object.values(v)[0] : v);
-    const head = typeof firstOf(current) === "string" ? firstOf(current) : "";
     const nextSchema = schema.variants[Number(select.value)].schema;
+    const sameKind = headSource(schema.variants[shown].schema) === headSource(nextSchema);
+    shown = Number(select.value);
+    const head = sameKind && typeof firstOf(current) === "string" ? firstOf(current) : "";
     const next = schemaDefault(nextSchema);
     if (typeof next === "string") setCurrent(head);
     else {
@@ -2078,7 +2225,8 @@ async function doSave() {
     });
     dirtyEdits = {};
     resetKeys = new Set();
-    await loadConfigKeys();
+    // [paths] project_locohane_dir 等の変更で認識するスキルが変わるため、候補も取り直す
+    await Promise.all([loadConfigKeys(), loadConfigCandidates()]);
     renderKeyList();
     updateFooter();
     const banner = $("#restart-banner");

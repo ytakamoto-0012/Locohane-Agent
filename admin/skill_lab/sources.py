@@ -99,6 +99,21 @@ def list_official_agents(cfg: Config) -> list[dict]:
     return result
 
 
+def config_candidates(cfg: Config) -> dict:
+    """設定画面でスキル名・スクリプト名・agent_type を選ばせる候補（admin/ini_catalog.py の "source"）。
+
+    スクリプトは run_script の実行対象と同じ scripts/*.py（src/skills.py の _skill_has_scripts 参照）。
+    "_" で始まるもの（_common.py 等、スクリプト同士で共用する補助モジュール）は候補に出さない（画面の手入力では指定できる）。
+    """
+    skills = []
+    for s in list_official_skills(cfg):
+        scripts_dir = Path(s["path"]) / "scripts"
+        scripts = sorted(p.name for p in scripts_dir.glob("*.py") if not p.name.startswith("_")) if scripts_dir.is_dir() else []
+        skills.append({"name": s["name"], "description": s["description"], "origin": s["origin"], "scripts": scripts})
+    agents = [{"name": a["name"], "description": a["description"], "origin": a["origin"]} for a in list_official_agents(cfg)]
+    return {"skills": skills, "agent_types": agents}
+
+
 def find_official_skill_dir(cfg: Config, name: str) -> Path | None:
     for root in reversed([cfg.skills_dir, *cfg.locohane_skills_dirs]):
         if (root / name / "SKILL.md").is_file():
@@ -108,11 +123,22 @@ def find_official_skill_dir(cfg: Config, name: str) -> Path | None:
 
 @functools.lru_cache(maxsize=1)
 def subagent_tool_names() -> tuple[str, ...]:
-    """サブエージェントに割り当てられるツール名（frontmatter の tools に書けるもの）。
+    """サブエージェントに割り当てられるツール名（frontmatter の tools に書けるもの）。"""
+    return _registry_tool_names("_SUBAGENT_TOOLS")
+
+
+@functools.lru_cache(maxsize=1)
+def main_agent_tool_names() -> tuple[str, ...]:
+    """メインエージェントのビルトインツール名（[main_agent_tool_guard] allow_entries に書けるもの。MCP の動的ツールは含まない）。"""
+    return _registry_tool_names("_BASE_TOOLS")
+
+
+def _registry_tool_names(attr: str) -> tuple[str, ...]:
+    """src/tools/registry.py の attr に並ぶツールの名前。
 
     src.tools は chainlit 等を読み込むため、管理ツールのプロセスには持ち込まず別プロセスで求める。
     """
-    code = "import json; from src.tools import registry; print(json.dumps([t.name for t in registry._SUBAGENT_TOOLS]))"
+    code = f"import json; from src.tools import registry; print(json.dumps([t.name for t in registry.{attr}]))"
     out = subprocess.run(
         [sys.executable, "-c", code], cwd=str(PROJECT_ROOT), capture_output=True, text=True, encoding="utf-8", timeout=120
     )

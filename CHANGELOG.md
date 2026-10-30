@@ -12,6 +12,14 @@
 
 ## [Unreleased]
 
+### 追加
+
+- 設定ダッシュボードの設定画面で、`[subagent] agent_type_run_script_allowlist`・`[plan] plan_approval_exempt_scripts`・
+  `[main_agent_tool_guard] allow_entries`・`[default_workdir] allow_sandbox_dir` のスキル名・スクリプトファイル名・agent_type を、
+  そのインスタンスが認識しているもの（同梱・`[paths] project_locohane_dir`・インスタンス専用の拡張ディレクトリ）の一覧から選べるようにしました。
+  スクリプトファイル名は選んだスキルの `scripts/*.py` から選びます。`allow_entries`・`allow_sandbox_dir` のツール名は
+  メインエージェントのビルトインツールから選びます。一覧に無い名前（MCP の動的ツール等）は「（手入力…）」で入力できます。
+
 ## [0.4.6] - 2026-10-30
 
 ### 追加

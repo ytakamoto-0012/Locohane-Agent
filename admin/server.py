@@ -46,6 +46,7 @@ from . import admin_settings as admin_settings_api
 from . import data_backup as data_backup_api
 from . import knowledge as knowledge_api
 from .skill_lab import api as skill_lab_api
+from .skill_lab import sources as skill_lab_sources
 from .ini_catalog import parse_file as parse_ini_file
 from admin import i18n as admin_i18n
 from admin.i18n import t as _t
@@ -506,6 +507,28 @@ def _config_key_view(name: str, kind: str) -> dict[str, Any]:
 def get_instance_config(name: str, user: str = Depends(require_login)):
     meta = _require_instance(name)
     return _config_key_view(name, meta.kind)
+
+
+@app.get("/api/instances/{name}/config/candidates")
+def get_instance_config_candidates(name: str, user: str = Depends(require_login)):
+    """スキル名・スクリプト名・agent_type・ツール名を選ぶ欄の候補（保存済みの設定でこのインスタンスが認識するもの）。
+
+    同梱の skills/・agents/ に加え、[paths] project_locohane_dir とインスタンス専用の拡張ディレクトリを走査する。
+    ツール名はメインエージェントのビルトインツール（MCP の動的ツールは接続しないと分からないため含まない）。
+    設定が読めない場合は error を返し、画面は手入力の欄にする。
+    """
+    _require_instance(name)
+    try:
+        tools = list(skill_lab_sources.main_agent_tool_names())
+    except Exception as exc:  # noqa: BLE001 - ツール名が取れなくてもスキル等の候補は出す（ツール名の欄は手入力になる）
+        logger.warning("Cannot list built-in tool names: %s", exc)
+        tools = []
+    try:
+        cfg = load_config(config_path=CONFIG_INI_PATH, overrides_path=inst.overrides_path(INSTANCES_ROOT, name), instance_name=name)
+        return {**skill_lab_sources.config_candidates(cfg), "tools": tools, "error": None}
+    except Exception as exc:  # noqa: BLE001 - 候補が出せなくても設定画面自体は使えるようにする
+        logger.warning("Cannot list skill/agent candidates for %s: %s", name, exc)
+        return {"skills": [], "agent_types": [], "tools": tools, "error": str(exc)}
 
 
 class ConfigUpdateBody(BaseModel):

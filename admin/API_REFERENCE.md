@@ -243,6 +243,25 @@ $C $BASE/api/instances/default/config
 本体のインスタンスには `[skill_lab_worker]` が入らない。`scope_note` はワーカーのときだけ説明文が入る（本体は null）。
 出していないキーを `updates` に入れると、事前確認・保存とも `400`。
 
+### スキル名・agent_type の候補の取得
+
+```bash
+$C $BASE/api/instances/default/config/candidates
+```
+
+```bat
+%C% %BASE%/api/instances/default/config/candidates
+```
+
+保存済みの設定でそのインスタンスが認識するスキル・サブエージェント（同梱の `skills/`・`agents/`、
+`[paths] project_locohane_dir`、インスタンス専用の拡張ディレクトリ）を返す。設定画面で
+`[subagent] agent_type_run_script_allowlist` 等のスキル名・スクリプトファイル名・agent_type・ツール名を選ぶ欄の候補に使う。
+
+- `skills`: `name`, `description`, `origin`（`builtin` / `shared` / `instance`）, `scripts`（`scripts/*.py` のファイル名）
+- `agent_types`: `name`, `description`, `origin`
+- `tools`: メインエージェントのビルトインツール名（`[main_agent_tool_guard] allow_entries` のツール名の候補。MCP の動的ツールは含まない。取得できなければ空）
+- `error`: 設定が読めず一覧を作れなかったときの理由（このとき `skills`・`agent_types` は空）。通常は null
+
 ### 変更内容の事前確認（保存しない）
 
 ```bash

@@ -141,6 +141,20 @@ def test_schema_accepts_documented_allow_sandbox_dir_example():
     assert _schema_matches(info.schema, example)
 
 
+def test_tool_choices_cover_default_allow_entries_tool_names():
+    """設定画面のツール名の候補（ビルトインツール）に、既定の allow_entries のツール名がすべてある
+    （無いと既定値の欄が「一覧にない現在値」になる。ツールの改名で既定値の更新漏れも見つかる）。"""
+    import ast
+
+    from admin.skill_lab.sources import main_agent_tool_names
+
+    catalog = parse_file(CONFIG_INI_PATH)
+    info = next(i for i in catalog.keys if (i.section, i.key) == ("main_agent_tool_guard", "allow_entries"))
+    names = [target for target, _ in ast.literal_eval(info.default_value.strip()) if isinstance(target, str)]
+    assert names
+    assert set(names) <= set(main_agent_tool_names())
+
+
 def test_choices_match_src_config_constants():
     """選択肢の集合が src/config.py の検証用定数と一致し、既定値が選択肢に含まれる。"""
     from src.config import (

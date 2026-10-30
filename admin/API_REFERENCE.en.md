@@ -243,6 +243,25 @@ $C $BASE/api/instances/default/config
 regular instances do not get `[skill_lab_worker]`. `scope_note` has an explanation only for workers (null otherwise).
 Putting a key that is not listed in `updates` gives `400` for both preview and save.
 
+### Getting the candidate skill names and agent_types
+
+```bash
+$C $BASE/api/instances/default/config/candidates
+```
+
+```bat
+%C% %BASE%/api/instances/default/config/candidates
+```
+
+Returns the skills and sub-agents that the instance recognizes with its saved settings (the bundled `skills/` and `agents/`,
+`[paths] project_locohane_dir`, and the instance-only extension directory). The settings screen uses them as the choices
+for the skill name, script file name, agent_type and tool name fields of `[subagent] agent_type_run_script_allowlist` and similar keys.
+
+- `skills`: `name`, `description`, `origin` (`builtin` / `shared` / `instance`), `scripts` (file names of `scripts/*.py`)
+- `agent_types`: `name`, `description`, `origin`
+- `tools`: built-in tool names of the main agent (the choices for tool names in `[main_agent_tool_guard] allow_entries`; MCP dynamic tools are not included; empty if they cannot be obtained)
+- `error`: the reason when the list could not be built because the settings could not be read (`skills` and `agent_types` are then empty). Normally null
+
 ### Previewing changes (without saving)
 
 ```bash

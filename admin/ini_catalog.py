@@ -109,19 +109,28 @@ _KEY_CHOICES: dict[tuple[str, str], tuple[str, ...]] = {
 #   {"type": "dict", "fields": [{"name", "schema", "optional"}]}
 #       optional=True のフィールドは空欄なら辞書から取り除く
 #   {"type": "oneof", "variants": [{"label", "schema"}]} いずれかの形を選ぶ
-#   {"type": "grouped", "group_label", "group_placeholder", "item": <schema>}
+#   {"type": "grouped", "group_label", "group_placeholder", "group_source", "item": <schema>}
 #       [[グループ名, item], ...] のリスト。画面ではグループ名ごとのパネルに
 #       まとめて表示し、保存時は同じ形のリストへ戻す（グループ順に並び替わる
 #       ため、要素の順序に意味が無い集合的なキーにだけ使う）
-def _str(placeholder: str = "") -> dict[str, Any]:
-    return {"type": "string", "placeholder": placeholder}
+# string の "source"（grouped は "group_source"）を付けた欄は、そのインスタンスが認識している
+# 候補（admin/server.py の /config/candidates）から選ばせる:
+#   "skill"      スキル名
+#   "script"     スクリプトファイル名（同じ tuple 内の "skill" 欄で選んだスキルの scripts/*.py）
+#   "agent_type" サブエージェント（agents/*.md）の名前
+#   "tool"       メインエージェントのビルトインツール名（MCP の動的ツールは手入力）
+def _str(placeholder: str = "", source: str | None = None) -> dict[str, Any]:
+    schema: dict[str, Any] = {"type": "string", "placeholder": placeholder}
+    if source:
+        schema["source"] = source
+    return schema
 
 
 _SKILL_SCRIPT = {
     "type": "tuple",
     "items": [
-        {"label": "スキル名", "schema": _str("例: excel-read")},
-        {"label": "スクリプトファイル名", "schema": _str("例: read_excel.py")},
+        {"label": "スキル名", "schema": _str("例: excel-read", "skill")},
+        {"label": "スクリプトファイル名", "schema": _str("例: read_excel.py", "script")},
     ],
 }
 # ビルトインツール名、または [スキル名, スクリプトファイル名]
@@ -129,7 +138,7 @@ _SKILL_SCRIPT = {
 _TOOL_OR_SKILL_SCRIPT = {
     "type": "oneof",
     "variants": [
-        {"label": "ツール名", "schema": _str("例: dispatch_agent")},
+        {"label": "ツール名", "schema": _str("例: dispatch_agent", "tool")},
         {"label": "スキルのスクリプト", "schema": _SKILL_SCRIPT},
     ],
 }
@@ -171,10 +180,11 @@ _KEY_SCHEMAS: dict[tuple[str, str], dict[str, Any]] = {
         "type": "grouped",
         "group_label": "agent_type",
         "group_placeholder": "例: explore",
+        "group_source": "agent_type",
         "item": {
             "type": "oneof",
             "variants": [
-                {"label": "スキル全体", "schema": _str("スキル名")},
+                {"label": "スキル全体", "schema": _str("スキル名", "skill")},
                 {"label": "スクリプト指定", "schema": _SKILL_SCRIPT},
             ],
         },
