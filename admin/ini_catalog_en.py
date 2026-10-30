@@ -1053,7 +1053,7 @@ DESCRIPTIONS: dict[str, str] = {
         'so increase it only within the memory you have to spare.\n'
         'Shared by all instances (cannot be changed per instance; the same goes for ingest_processes). Can be changed in "Admin settings" of the settings dashboard (the value is saved in <instances_dir>/admin_settings.json and takes precedence over this; it cannot be changed per instance). \n'
         'Ingestion from the settings dashboard runs\n'
-        'at most this many in total across all instances and collections, and the rest waits for a free worker (earlier ingestions take priority).\n'
+        'at most this many in total across all instances and collections, and the rest waits for a free worker (freed workers are split evenly among the collections being ingested).\n'
         'Changes take effect from the next ingestion started (no need to restart the admin tool).'
     ),
     'vector_db.ingest_processes': (

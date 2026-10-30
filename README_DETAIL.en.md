@@ -1410,7 +1410,8 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
 - **Shared parallelism**: `ingest_workers`, `ingest_processes` and `ingest_embed_requests` are shared by all instances (they cannot be overridden per instance; change
   them in "Admin settings" of the settings dashboard or in `config.ini`), and ingestion from the settings dashboard runs preparation and embedding at most this many **in total** across all
   instances and collections (ingesting several collections at once puts the same load on the embedding server and the PC as one).
-  The rest waits for a free worker, and freed workers go to the earliest started ingestion first (`IngestSlots` in `src/vector_db/ingest.py`).
+  The rest waits for a free worker, and freed workers go to the ingestion using the fewest workers of that kind (preparation or embedding) first, so that they are split evenly
+  among the collections being ingested (when no other ingestion is waiting, one ingestion can use them all. `IngestSlots` in `src/vector_db/ingest.py`).
   A change of the parallelism takes effect from the next ingestion started (no need to restart the admin tool).
 - **Worker display**: the top of the Knowledge screen shows the ingestion state shared by all instances for "Prepare" and "Embed".
   One icon is one file (idle preparation worker = gray ring, preparing = spinning blue ring, waiting = blinking dotted ring; files of

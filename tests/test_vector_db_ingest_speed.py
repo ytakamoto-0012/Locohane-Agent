@@ -440,36 +440,74 @@ def test_shared_slots_limit_concurrency_across_collections(env):
     assert snapshot["load"] == [None, None] and snapshot["embed"] == [None, None] and snapshot["waiting"] == []
 
 
-def test_slots_prefer_the_earlier_ingestion():
-    """枠が空いたら、先に始めた取り込みが空きを待っている間は後の取り込みに渡さない。"""
+def _attempt(slots, user, detail, kind="embed"):
+    slots.begin_round(user)
+    index = slots.try_acquire(user, kind, detail)
+    slots.end_round(user)
+    return index
+
+
+def _round(slots, user, prefix, kind="embed"):
+    """_Pipeline の1回の処理のように、取れなくなるまで枠を取る（取れた枠の番号の一覧）。"""
+    slots.begin_round(user)
+    acquired = []
+    while (index := slots.try_acquire(user, kind, f"{prefix}{len(acquired)}")) is not None:
+        acquired.append(index)
+    slots.end_round(user)
+    return acquired
+
+
+def test_slots_are_shared_evenly_between_ingestions():
+    """空いた枠は、使っている枠の少ない取り込みが空きを待っている間はほかの取り込みに渡さない（均等に分ける）。"""
+    slots = ingest.IngestSlots(1, 0, 4)
+    first, second = slots.join("inst1", "a"), slots.join("inst1", "b")
+    # ほかに空きを待つ取り込みが無ければ、1つの取り込みが全部を使える。
+    assert _round(slots, first, "a") == [0, 1, 2, 3] and first.hungry["embed"]
+    assert _round(slots, second, "b") == [] and second.hungry["embed"]
+    assert slots.snapshot()["waiting"] == [{"instance": "inst1", "collection": "b"}]
+    slots.release("embed", 0)
+    assert first.wakeup.done() and second.wakeup.done()
+    # 先に始めた取り込みが先に試しても、使っている枠の少ない後の取り込みが空きを待っているので取れない。
+    assert _round(slots, first, "a") == []
+    assert _round(slots, second, "b") == [0] and second.hungry["embed"]
+    # 2対2になるまで、空いた枠は後の取り込みへ回る。
+    slots.release("embed", 1)
+    assert _round(slots, first, "a") == []
+    assert _round(slots, second, "b") == [1]
+    # 2対2のまま、空いた枠はそれを返した取り込みへ戻る。
+    slots.release("embed", 2)
+    assert _round(slots, first, "a") == [2]
+    slots.release("embed", 0)
+    assert _round(slots, first, "a") == []
+    assert _round(slots, second, "b") == [0]
+    assert sorted(s["collection"] for s in slots.snapshot()["embed"]) == ["a", "a", "b", "b"]
+
+
+def test_slots_available_for_is_the_even_share():
+    """available_for は、空きと、その種類の枠を使っている・空きを待っている取り込みで均等に分けた取り分の残りの少ない方。"""
+    slots = ingest.IngestSlots(1, 0, 4)
+    first, second, third = slots.join("inst1", "a"), slots.join("inst1", "b"), slots.join("inst1", "c")
+    assert slots.available_for(first, "embed") == 4
+    assert _attempt(slots, first, "a0") == 0
+    # 2つで分けると 2 ずつ（first は 1 使用中）。third は枠を使わず空きも待っていないので数えない。
+    assert slots.available_for(second, "embed") == 2
+    assert slots.available_for(first, "embed") == 3
+    _attempt(slots, second, "b0")
+    assert slots.available_for(first, "embed") == 1
+
+
+def test_slots_wake_and_resize():
+    """空きを待っていた取り込みが空きを待たなくなれば（終わる等）ほかの取り込みが使え、並列数を増やすと空きを待つ取り込みを起こす。"""
     slots = ingest.IngestSlots(1)
     first, second = slots.join("inst1", "a"), slots.join("inst1", "b")
-
-    def attempt(user, detail):
-        slots.begin_round(user)
-        index = slots.try_acquire(user, "embed", detail)
-        slots.end_round(user)
-        return index
-
-    held = attempt(first, "a1")
-    assert held == 0
-    assert attempt(first, "a2") is None and first.hungry["embed"]
-    assert attempt(second, "b1") is None
-    assert slots.snapshot()["embed"] == [{"instance": "inst1", "collection": "a", "detail": "a1"}]
-    assert slots.snapshot()["waiting"] == [{"instance": "inst1", "collection": "b"}]
-    slots.release("embed", held)
-    assert first.wakeup.done() and second.wakeup.done()
-    # 後の取り込みが先に試しても、先の取り込みが空きを待っているので取れない。
-    assert attempt(second, "b1") is None
-    assert attempt(first, "a2") == 0
-    # 先の取り込みが空きを待たなくなれば（終わる等）、後の取り込みが使える。
+    assert _attempt(slots, first, "a1") == 0
+    assert _attempt(slots, second, "b1") is None
     slots.release("embed", 0)
     slots.leave(first)
-    assert attempt(second, "b1") == 0
-    # 並列数を増やすと、空きを待っていた取り込みを起こす。
-    assert attempt(second, "b2") is None
+    assert _attempt(slots, second, "b1") == 0
+    assert _attempt(slots, second, "b2") is None
     slots.resize(2, 0)
-    assert second.wakeup.done() and attempt(second, "b2") == 1
+    assert second.wakeup.done() and _attempt(slots, second, "b2") == 1
 
 
 def test_embed_requests_are_limited_separately_from_files():

@@ -203,8 +203,9 @@ class _IngestStats:
 class _SlotUser:
     """IngestSlots を使う1つの取り込み（_Pipeline）。
 
-    hungry: 種類ごとに、枠が空かずに始められない処理があるか。先に join() した取り込みが hungry の間は、
-        後の取り込みはその種類の枠を取らない（先に始めた取り込みを優先し、後の取り込みは空き待ちにする）。
+    hungry: 種類ごとに、枠が空かずに始められない処理があるか。その種類の枠を自分より少なく使っている取り込みが
+        hungry の間は、その種類の枠を取らない（空いた枠は使っている数の少ない取り込みへ回し、取り込み中の
+        コレクションに均等に分ける）。
     wakeup: 枠が空いたときに結果を入れる Future（_Pipeline は自分の処理の完了と一緒にこれを待つ）。
     embedding_files: 埋め込み中のファイルの状態の一覧を返す関数（_Pipeline.embedding_files。snapshot() の "files"）。
     """
@@ -223,7 +224,9 @@ class IngestSlots:
     同じ IngestSlots を渡した取り込み同士で共有する。管理ツール（admin/knowledge.py）は1つを全インスタンス・
     全コレクションの取り込みで共有し、config.ini の [vector_db] ingest_workers・ingest_processes・ingest_embed_requests を
     全体の並列数にする（コレクションごとに並列数分ずつ動くと、埋め込みサーバー・PC に負荷がかかりすぎるため）。
-    枠を超える処理は空き待ちになり、空いた枠は先に始めた取り込みから順に使う。
+    枠を超える処理は空き待ちになり、空いた枠はその種類の枠を使っている数の少ない取り込みから使う（取り込み中の
+    コレクションに均等に分ける。埋め込みサーバーのスループットが上限のとき、1つのコレクションが枠を占めて
+    ほかのコレクションが進まなくならないようにするため）。空きを待つ取り込みが無ければ、1つの取り込みが全部を使える。
 
     snapshot() は各枠の状態と埋め込み中のファイル（設定ダッシュボードのワーカーの表示用）。
     """
@@ -252,10 +255,30 @@ class IngestSlots:
         with self._lock:
             return max(0, self.capacity(kind) - len(self._used[kind]))
 
+    def available_for(self, user: _SlotUser, kind: str) -> int:
+        """user が kind の枠を均等な取り分の範囲で取れる数の目安（空きと、取り分の残りの少ない方）。
+
+        取り分は、その種類の枠を使っている・空きを待っている取り込み（user を含む）の数で枠を均等に分けた数。
+        """
+        with self._lock:
+            used = self._used[kind]
+            free = max(0, self.capacity(kind) - len(used))
+            counts = self._counts(kind)
+            sharing = {id(u) for u in self._users if u.hungry[kind] or counts.get(id(u))} | {id(user)}
+            share = -(-self.capacity(kind) // len(sharing))
+            return max(0, min(free, share - counts.get(id(user), 0)))
+
     def in_use(self, kind: str) -> int:
         """kind の使用中の枠の数。"""
         with self._lock:
             return len(self._used[kind])
+
+    def _counts(self, kind: str) -> dict[int, int]:
+        # 取り込み（id(_SlotUser)）ごとの kind の使用中の枠の数。
+        counts: dict[int, int] = {}
+        for u, _ in self._used[kind].values():
+            counts[id(u)] = counts.get(id(u), 0) + 1
+        return counts
 
     def join(self, instance: str, collection: str) -> _SlotUser:
         user = _SlotUser(instance, collection)
@@ -287,12 +310,17 @@ class IngestSlots:
                 self._wake_hungry()
 
     def try_acquire(self, user: _SlotUser, kind: str, detail: str) -> int | None:
-        """kind の枠を1つ取る（取れたら枠の番号、空きが無い・先の取り込みが空きを待っているなら None）。"""
+        """kind の枠を1つ取る（取れたら枠の番号、空きが無い・自分より使っている枠の少ない取り込みが空きを待っているなら None）。
+
+        使っている数が同じ取り込み同士は先に試した方が取る（取った方が多くなるため、次の空きは相手に回る）。
+        """
         with self._lock:
             used = self._used[kind]
             free = next((i for i in range(self.capacity(kind)) if i not in used), None)
-            earlier = self._users[: self._users.index(user)] if user in self._users else []
-            if free is None or any(u.hungry[kind] for u in earlier):
+            counts = self._counts(kind)
+            mine = counts.get(id(user), 0)
+            poorer = any(u is not user and u.hungry[kind] and counts.get(id(u), 0) < mine for u in self._users)
+            if free is None or poorer:
                 user.failed.add(kind)
                 user.hungry[kind] = True
                 return None
@@ -1839,11 +1867,11 @@ class _Pipeline:
     def _partial_batch_size(self) -> int:
         """embedding_batch_size 件に満たないテキストを、空いている枠で分けて送るときの1リクエストの件数。
 
-        件数がそろうのを待たずに、空いている枠（この取り込みの残りと、共有の枠の空きの少ない方）へ均等に分けて送る
-        （埋め込みサーバーを遊ばせないため）。サーバーが追いつかず枠が埋まっているときほど、キューにたまって
-        まとまったバッチになる。
+        件数がそろうのを待たずに、空いている枠（この取り込みの残りと、共有の枠のうちこの取り込みの取り分
+        （IngestSlots.available_for）の少ない方）へ均等に分けて送る（埋め込みサーバーを遊ばせないため）。
+        サーバーが追いつかず枠が埋まっているときほど、キューにたまってまとまったバッチになる。
         """
-        free = min(self.embed_limit - len(self.embeds), self.slots.available("embed"))
+        free = min(self.embed_limit - len(self.embeds), self.slots.available_for(self.slot_user, "embed"))
         return min(self.batch_size, max(1, -(-len(self.text_queue) // max(free, 1))))
 
     def _submit_embed(self, pool, kind: str, items: list[tuple[_Job, int]], detail: str, func, /, *args, **kwargs) -> bool:
