@@ -1038,10 +1038,11 @@ DESCRIPTIONS: dict[str, str] = {
     ),
     'vector_db.ingest_temp_dir': (
         'Folder for temporary files used only during ingestion (page image PNGs of image_input, images extracted by embedded_images, PDFs exported from Office).\n'
-        'Empty (default) means the system temporary folder (%TEMP%). Relative paths are based on the project root, and ${common_data_dir} and ${instance} can be used.\n'
+        'Empty (default) means the system temporary folder (%TEMP%). Relative paths are based on the project root (${common_data_dir} and ${instance} cannot be used).\n'
         'It is created if missing. A folder for each ingestion run (locohane_vdb_pages_*) is created under it and deleted when the ingestion ends.\n'
         'Page images of a PDF with hundreds of pages can take hundreds of MB, so specify another drive when the system drive is low on free space\n'
-        '(avoid network drives, which are slow).'
+        '(avoid network drives, which are slow).\n'
+        'Shared by all instances; change it on the "Admin settings" screen of the settings dashboard (it cannot be changed in config_overrides.json per instance).'
     ),
     'vector_db.ingest_workers': (
         'Ingestion parallelism (1 or more). The number of files prepared in parallel (reading, extracting text, rendering images; the value of ingest_processes when it is 1 or more).\n'

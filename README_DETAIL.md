@@ -1370,7 +1370,7 @@ llama-server.exe -m D:\models\Qwen3-VL-Embedding-2B-Q8_0.gguf --mmproj D:\models
   スレッドで複数のフォルダを同時に読む（ファイルサーバー上のフォルダは1フォルダごとの往復の待ち時間が大きいため）。
   見つかったファイルが `max_files_per_collection`（既定100万）を超えたら、上限までのファイルだけを取り込み、ナレッジ画面に
   警告（見つかった件数・取り込まなかった件数と、「管理者設定」の `max_files_per_collection` で上限を変えられること）を出す。
-  `scan_workers`・`max_files_per_collection` は全インスタンス共通で「管理者設定」で変える（`max_file_mb`・`office_timeout_seconds` も同じ）。
+  `scan_workers`・`max_files_per_collection` は全インスタンス共通で「管理者設定」で変える（`max_file_mb`・`office_timeout_seconds`・`ingest_temp_dir` も同じ）。
   選ぶファイルは取り込み済みのものを優先し、残りの枠は新しいファイルのパス順の先頭から埋めるため、取り込みのたびに入れ替わらない。
   上限を超えて取り込まなかったファイルは、フォルダにある限り削除扱いにしない。取り込み中は対象のファイル・取り込み済みの
   記録をメモリーに持つため（100万件で数 GB 程度）、大きな文書群はコレクションを取り込み元のフォルダごとに分けるとよい。
@@ -1757,7 +1757,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedded_image_min_px` | `embedded_images` で取り出す画像の幅・高さの下限（px、既定 128）。どちらかが下回る画像（アイコン等）は埋め込まない。0 なら大きさで除かない | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | `image_input = true` で Office ファイルを PDF に書き出す1回の上限秒数（既定180）。超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、そのファイルを失敗一覧に載せる。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
-| `[vector_db]` | `ingest_temp_dir` | 取り込みの間だけ使う一時ファイル（ページ画像の PNG・ファイルの中から取り出した画像・Office から書き出した PDF）を置くフォルダ。空（既定）ならシステムの一時フォルダ（`%TEMP%`）。相対パスはプロジェクトルート基準で、`${common_data_dir}`・`${instance}` も使える。無ければ作り、その下に取り込み1回ごとのフォルダ（`locohane_vdb_pages_*`）を作って終わったら消す。システムドライブの空きが少ないときに別のドライブを指定する | `VECTOR_DB_INGEST_TEMP_DIR` |
+| `[vector_db]` | `ingest_temp_dir` | 取り込みの間だけ使う一時ファイル（ページ画像の PNG・ファイルの中から取り出した画像・Office から書き出した PDF）を置くフォルダ。空（既定）ならシステムの一時フォルダ（`%TEMP%`）。相対パスはプロジェクトルート基準（`${common_data_dir}`・`${instance}` は使えない）。無ければ作り、その下に取り込み1回ごとのフォルダ（`locohane_vdb_pages_*`）を作って終わったら消す。システムドライブの空きが少ないときに別のドライブを指定する。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_INGEST_TEMP_DIR` |
 | `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数（`ingest_processes` が1以上ならそちらの値）。同時に送る埋め込みのリクエスト数は `ingest_embed_requests`（「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる。設定ダッシュボードの取り込みは全インスタンス・全コレクションの合計でこの並列数まで） | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | 取り込み元フォルダの走査で同時に読むフォルダの数（スレッド数、既定8）。ファイルサーバー上のフォルダで効く。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | 1コレクションで取り込む最大ファイル数（既定1000000）。超えた分は取り込まず、ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ。「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |
@@ -2012,7 +2012,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 - **並列数**: `[llm] max_concurrent_requests`・`[graph] max_parallel`・`[subagent] max_parallel`
 - **トークン制御**: `[graph] token_guard_soft_threshold`・`[subagent] token_guard_soft_threshold`・`token_guard_hard_threshold`・`[context_trim] enabled`・`trigger_total_tokens`・`[context_compaction] enabled`・`token_threshold`・`single_request_token_threshold`・`pre_note_threshold`・`[token_ratio]` の各キー
 - **スキル関係**: `[paths] project_locohane_dir`・`[subagent] agent_type_run_script_allowlist`・`[main_agent_tool_guard] allow_entries`・`[plan] plan_approval_exempt_scripts`・`[skill_creator]` の各キー・`[skill_lab] instance_locohane_dir`
-- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_input_extensions`・`embedded_images`・`embedded_image_min_px`・`image_dpi`・`office_timeout_seconds`・`ingest_workers`・`ingest_processes`・`ingest_embed_requests`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
+- **ベクターDB**: `[vector_db]` の `enabled`・`backend`・`distance`・`qdrant_url`・`qdrant_preset`・`embedding_url`・`embedding_routing_strategy`・`embedding_max_retries`・`search_embedding_max_retries`・`embedding_retry_interval_seconds`・`embedding_encoding_format`・`query_prefix`・`document_prefix`・`image_input`・`image_input_extensions`・`embedded_images`・`embedded_image_min_px`・`image_dpi`・`office_timeout_seconds`・`ingest_temp_dir`・`ingest_workers`・`ingest_processes`・`ingest_embed_requests`・`scan_workers`・`max_files_per_collection`・`chunk_size`・`chunk_overlap`・`max_file_mb`・`top_k`・`max_result_chars`・`min_score`・`image_min_score`・`path_min_score`・`rrf_weight_text`・`rrf_weight_keyword`・`rrf_weight_image`・`rrf_weight_path_keyword`
 
 その種類のインスタンスに出していないキーだけのプリセットは出さない（スキル調整ワーカーは出すキーが少ないため、プリセットは出ない）。
 
@@ -2267,6 +2267,7 @@ header.md・tab_title.md・welcome.md・icon・favicon は、トップの「表�
 | 1コレクションの最大ファイル数 | `[vector_db] max_files_per_collection` | 超えた分は取り込まず、ナレッジ画面に警告を出す（管理ツールのメモリーを使いすぎないための上限） |
 | 1ファイルの上限サイズ（MB） | `[vector_db] max_file_mb` | 超えるファイルは取り込まず、失敗一覧に理由を載せる |
 | Office の PDF 書き出しの上限秒数 | `[vector_db] office_timeout_seconds` | `image_input = true` で Office ファイルを PDF に書き出す1回の上限秒数。超えたら Office のプロセスを終了し、そのファイルを失敗一覧に載せる |
+| 取り込みの一時ファイルの置き場所 | `[vector_db] ingest_temp_dir` | 取り込みの間だけ使う一時ファイル（ページ画像・取り出した画像・Office から書き出した PDF）を置くフォルダ。空ならシステムの一時フォルダ（`%TEMP%`） |
 | Qdrant への送り直しの回数 | `[vector_db] qdrant_max_retries` | `backend = qdrant` で接続できない・接続を切られた・タイムアウトした・一時的なエラーが返ったときに送り直す回数。`-1` なら無制限（取り込み・コピーは「停止」で止められる）、`0` なら送り直さない。検索は最大1回 |
 | Qdrant への送り直しの間隔（秒） | `[vector_db] qdrant_retry_interval_seconds` | 上記の送り直しで次に送るまで待つ秒数（0 より大きい数）。検索は最大1秒 |
 | 回答に使う LLM | `[admin] assistant_llm_instance` | 「AIに相談」の回答を作る LLM を、どのインスタンスの `[llm] main_url` から取るか。空なら相談対象のインスタンス自身。インスタンスを選んで「接続を確認」を押すと、その `main_url` の各接続先へ `GET /models` を送ってつながるかを確かめる（モデルは動かさない） |

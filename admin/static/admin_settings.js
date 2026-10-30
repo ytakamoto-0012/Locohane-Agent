@@ -89,6 +89,17 @@ async function renderAdminSettings(notice = "") {
     ])
   );
   container.append(
+    field(
+      "vector_db.ingest_temp_dir",
+      _t("取り込みの一時ファイルの置き場所"),
+      el("input", { type: "text", value: byKey["vector_db.ingest_temp_dir"].value, placeholder: _t("（空ならシステムの一時フォルダ %TEMP%）") }),
+      [
+        _t("取り込みの間だけ使う一時ファイル（ページ画像の PNG・ファイルの中から取り出した画像・Office から書き出した PDF）を置くフォルダです。空ならシステムの一時フォルダ（%TEMP%）を使います。相対パスはプロジェクトルート基準です。"),
+        _t("無ければ作り、その下に取り込み1回ごとのフォルダ（locohane_vdb_pages_*）を作って、取り込みが終わったら消します。数百ページの PDF ではページ画像が数百 MB になることがあるため、システムドライブの空きが少ないときは別のドライブを指定してください（ネットワークドライブは遅くなるため避けてください）。"),
+      ]
+    )
+  );
+  container.append(
     field("vector_db.qdrant_max_retries", _t("Qdrant への送り直しの回数"), number("vector_db.qdrant_max_retries", -1), [
       _t("[vector_db] backend = qdrant のとき、Qdrant へ接続できない・接続を切られた・タイムアウトした・一時的なエラー（5xx・408・429）が返ったときに、[vector_db] qdrant_retry_interval_seconds 秒待って同じリクエストを送り直す回数です。-1 なら成功するまで無制限に送り直し（取り込み・コピーはナレッジ画面の「停止」で止められます）、0 なら送り直しません。"),
       _t("検索（AI が文書を探すとき）は止める手段が無いため、この値によらず最大1回だけ送り直します。"),

@@ -11,6 +11,8 @@ config.ini の後・インスタンス別の上書きの前に重ねる（src/co
   始めるたびに読み直す。検索は最大1回）。qdrant_retry_interval_seconds はその間隔。
 - [vector_db] scan_workers・max_files_per_collection・office_timeout_seconds・max_file_mb: 取り込み元の走査の並列数・
   1コレクションの最大ファイル数・Office の PDF 書き出しの上限秒数・1ファイルの上限サイズ（取り込みを始めるたびに読み直す）。
+- [vector_db] ingest_temp_dir: 取り込みの間だけ使う一時ファイル（ページ画像・Office から書き出した PDF）を置くフォルダ
+  （空ならシステムの一時フォルダ。取り込みを始めるたびに読み直す）。
 - [admin] assistant_llm_instance・assistant_embedding_instance: 「AIに相談」が回答・検索に使うインスタンス
   （admin/assistant.py は相談のたびに読み直す）。
 """
@@ -30,7 +32,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
-from src.config import ADMIN_SETTING_KEYS, Config, admin_settings_path, load_config
+from src.config import ADMIN_SETTING_KEYS, PROJECT_ROOT, Config, admin_settings_path, load_config
 
 from . import audit
 from . import instances as inst
@@ -45,7 +47,9 @@ class SettingSpec:
     section: str
     key: str
     env: str
-    kind: str  # positive_int / non_negative_int / retry_count（-1 は無制限）/ positive_float（0 より大きい数）/ instance（空はなし）
+    # positive_int / non_negative_int / retry_count（-1 は無制限）/ positive_float（0 より大きい数）/ instance（空はなし）/
+    # dir（フォルダのパス。空はなし）
+    kind: str
 
 
 # 整数の項目の下限。
@@ -59,6 +63,7 @@ SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("vector_db", "max_files_per_collection", "VECTOR_DB_MAX_FILES_PER_COLLECTION", "positive_int"),
     SettingSpec("vector_db", "max_file_mb", "VECTOR_DB_MAX_FILE_MB", "positive_float"),
     SettingSpec("vector_db", "office_timeout_seconds", "VECTOR_DB_OFFICE_TIMEOUT_SECONDS", "positive_float"),
+    SettingSpec("vector_db", "ingest_temp_dir", "VECTOR_DB_INGEST_TEMP_DIR", "dir"),
     SettingSpec("vector_db", "qdrant_max_retries", "VECTOR_DB_QDRANT_MAX_RETRIES", "retry_count"),
     SettingSpec("vector_db", "qdrant_retry_interval_seconds", "VECTOR_DB_QDRANT_RETRY_INTERVAL_SECONDS", "positive_float"),
     SettingSpec("admin", "assistant_llm_instance", "ADMIN_ASSISTANT_LLM_INSTANCE", "instance"),
@@ -129,6 +134,14 @@ def validate(values: dict[str, Any], instance_names: list[str]) -> dict[tuple[st
             if not math.isfinite(value) or value <= 0:
                 raise ValueError(_t("[{0}].{1} は 0 より大きい数にしてください。", spec.section, spec.key))
             result[(spec.section, spec.key)] = _format_float(value)
+        elif spec.kind == "dir":
+            text = str(raw or "").strip()
+            if "${" in text:
+                raise ValueError(_t("[{0}].{1} には ${{common_data_dir}}・${{instance}} を使えません（全インスタンス共通の設定のため）。", spec.section, spec.key))
+            # 相対パスは config.ini と同じくプロジェクトルート基準（src/config.py の _as_optional_dir）。
+            if text and (PROJECT_ROOT / text).exists() and not (PROJECT_ROOT / text).is_dir():
+                raise ValueError(_t("[{0}].{1} の {2} はフォルダではありません。", spec.section, spec.key, text))
+            result[(spec.section, spec.key)] = text
         else:
             text = str(raw or "").strip()
             if text and text not in instance_names:
@@ -213,6 +226,11 @@ def build_router(
             ("vector_db", "max_files_per_collection"): str(effective.vector_db_max_files_per_collection),
             ("vector_db", "max_file_mb"): _format_float(effective.vector_db_max_file_mb),
             ("vector_db", "office_timeout_seconds"): _format_float(effective.vector_db_office_timeout_seconds),
+            # 解決した絶対パスではなく、書いたとおりの値を出す（相対パスのまま保存し直せるように）。
+            ("vector_db", "ingest_temp_dir"): os.environ.get(
+                "VECTOR_DB_INGEST_TEMP_DIR",
+                saved.get("vector_db", {}).get("ingest_temp_dir", defaults.get(("vector_db", "ingest_temp_dir"), "")),
+            ).strip(),
             ("vector_db", "qdrant_max_retries"): str(effective.vector_db_qdrant_max_retries),
             ("vector_db", "qdrant_retry_interval_seconds"): _format_float(effective.vector_db_qdrant_retry_interval_seconds),
             ("admin", "assistant_llm_instance"): effective.admin_assistant_llm_instance,

@@ -45,10 +45,14 @@ def test_ingest_temp_dir_defaults_to_system_temp_and_resolves_paths(tmp_path, mo
     from src.config import PROJECT_ROOT
 
     monkeypatch.delenv("VECTOR_DB_INGEST_TEMP_DIR", raising=False)
+    monkeypatch.setenv("ADMIN_SETTINGS_PATH", str(tmp_path / "admin_settings.json"))
     assert _load(tmp_path, {}).vector_db_ingest_temp_dir == ""
-    cfg = _load(tmp_path, {"ingest_temp_dir": "${common_data_dir}/ingest_tmp"})
-    assert cfg.vector_db_ingest_temp_dir == str(tmp_path / "data" / "inst1" / "ingest_tmp")
-    assert _load(tmp_path, {"ingest_temp_dir": "work/tmp"}).vector_db_ingest_temp_dir == str((PROJECT_ROOT / "work" / "tmp").resolve())
+    # 全インスタンス共通の設定（管理者設定）のため、インスタンス別の config_overrides.json の値は使わない。
+    assert _load(tmp_path, {"ingest_temp_dir": str(tmp_path / "x")}).vector_db_ingest_temp_dir == ""
+    (tmp_path / "admin_settings.json").write_text(json.dumps({"vector_db": {"ingest_temp_dir": "work/tmp"}}), encoding="utf-8")
+    assert _load(tmp_path, {}).vector_db_ingest_temp_dir == str((PROJECT_ROOT / "work" / "tmp").resolve())
+    monkeypatch.setenv("VECTOR_DB_INGEST_TEMP_DIR", str(tmp_path / "env_tmp"))
+    assert _load(tmp_path, {}).vector_db_ingest_temp_dir == str(tmp_path / "env_tmp")
 
 
 def test_enabled_with_overrides(tmp_path, monkeypatch):

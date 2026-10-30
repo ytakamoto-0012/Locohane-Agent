@@ -57,6 +57,7 @@ ADMIN_SETTING_KEYS = frozenset(
         ("vector_db", "scan_workers"),
         ("vector_db", "max_files_per_collection"),
         ("vector_db", "office_timeout_seconds"),
+        ("vector_db", "ingest_temp_dir"),
         ("vector_db", "max_file_mb"),
         ("admin", "assistant_llm_instance"),
         ("admin", "assistant_embedding_instance"),
@@ -652,6 +653,7 @@ class Config:
             超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。管理者設定（全インスタンス共通）。
         vector_db_ingest_temp_dir: 取り込みの間だけ使う一時ファイル（ページ画像の PNG・Office から書き出した PDF）を置くフォルダ
             （絶対パスの文字列）。空ならシステムの一時フォルダ。この下に取り込み1回ごとのフォルダを作り、終わったら消す。
+            管理者設定（全インスタンス共通）。
         vector_db_ingest_workers: 取り込みで並列に準備するファイル数（ingest_processes が 1 以上ならその数）。
         vector_db_ingest_processes: 取り込みで本文の抽出・ページの画像化を行う子プロセスの数。
             0 なら子プロセスを使わず、ワーカースレッドで行う。
@@ -3480,11 +3482,8 @@ def load_config(
             os.getenv("VECTOR_DB_OFFICE_TIMEOUT_SECONDS", vector_db.get("office_timeout_seconds", 180)),
             "[vector_db].office_timeout_seconds",
         ),
-        vector_db_ingest_temp_dir=_as_optional_dir(
-            _sub_common_data_dir(
-                str(os.getenv("VECTOR_DB_INGEST_TEMP_DIR", vector_db.get("ingest_temp_dir", ""))), common_data_dir, resolved_instance_name
-            )
-        ),
+        # 全インスタンス共通の設定のため、インスタンスごとに変わる ${common_data_dir}・${instance} は置換しない。
+        vector_db_ingest_temp_dir=_as_optional_dir(str(os.getenv("VECTOR_DB_INGEST_TEMP_DIR", vector_db.get("ingest_temp_dir", "")))),
         vector_db_ingest_workers=_positive_int(
             os.getenv("VECTOR_DB_INGEST_WORKERS", vector_db.get("ingest_workers", 1)), "[vector_db].ingest_workers"
         ),

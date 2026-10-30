@@ -149,6 +149,8 @@ EN: dict[str, str] = {
     "[{0}].{1} は整数にしてください。": "[{0}].{1} must be an integer.",
     "[{0}].{1} は数値にしてください。": "[{0}].{1} must be a number.",
     "[{0}].{1} は 0 より大きい数にしてください。": "[{0}].{1} must be greater than 0.",
+    "[{0}].{1} には ${{common_data_dir}}・${{instance}} を使えません（全インスタンス共通の設定のため）。": "[{0}].{1} cannot use ${{common_data_dir}} or ${{instance}} (it is shared by all instances).",
+    "[{0}].{1} の {2} はフォルダではありません。": "{2} in [{0}].{1} is not a folder.",
     "設定を読めません: {0}": "Cannot read the settings: {0}",
     "（「管理者設定」の「回答に使う LLM」で、LLM に接続できるインスタンスを選べます）": " (you can select an instance whose LLM can be reached in \"LLM used for answers\" under \"Admin settings\")",
     "[{0}].{1} は全インスタンス共通の設定のため、インスタンス別には変更できません（「管理者設定」画面で変更してください）。": "[{0}].{1} is shared by all instances and cannot be changed per instance (change it on the \"Admin settings\" screen).",

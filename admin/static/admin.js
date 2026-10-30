@@ -901,6 +901,7 @@ const CONFIG_PRESETS = [
       "vector_db.embedded_image_min_px",
       "vector_db.image_dpi",
       "vector_db.office_timeout_seconds",
+      "vector_db.ingest_temp_dir",
       "vector_db.ingest_workers",
       "vector_db.ingest_processes",
       "vector_db.ingest_embed_requests",

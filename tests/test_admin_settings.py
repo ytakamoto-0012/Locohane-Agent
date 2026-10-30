@@ -165,6 +165,29 @@ def test_shared_ingest_limits_are_saved(env, monkeypatch):
     ) == (2.5, 16, 5000, 50, 300)
 
 
+def test_ingest_temp_dir_is_saved_as_written(env, monkeypatch):
+    monkeypatch.delenv("VECTOR_DB_INGEST_TEMP_DIR", raising=False)
+    client = env["client"]
+    s = _setting(client.get("/api/admin-settings").json(), "vector_db.ingest_temp_dir")
+    assert (s["value"], s["default"], s["kind"]) == ("", "", "dir")
+    # 相対パスは解決した絶対パスではなく、書いたとおりに保存・表示する。
+    data = client.put("/api/admin-settings", json={"values": {"vector_db.ingest_temp_dir": " work/tmp "}}).json()
+    assert _setting(data, "vector_db.ingest_temp_dir")["value"] == "work/tmp"
+    assert json.loads(env["file"].read_text(encoding="utf-8")) == {"vector_db": {"ingest_temp_dir": "work/tmp"}}
+    assert admin_settings.current_admin_config(DEFAULT_CONFIG_PATH).vector_db_ingest_temp_dir.endswith("tmp")
+    # 空に戻すと上書きとして持たない（システムの一時フォルダ）。
+    client.put("/api/admin-settings", json={"values": {"vector_db.ingest_temp_dir": ""}}).raise_for_status()
+    assert json.loads(env["file"].read_text(encoding="utf-8")) == {}
+
+
+@pytest.mark.parametrize("value", ["${common_data_dir}/tmp", "file"])
+def test_invalid_ingest_temp_dir_is_rejected(env, value):
+    (env["tmp"] / "file").write_text("x", encoding="utf-8")
+    path = value if value.startswith("$") else str(env["tmp"] / value)
+    assert env["client"].put("/api/admin-settings", json={"values": {"vector_db.ingest_temp_dir": path}}).status_code == 400
+    assert not env["file"].exists()
+
+
 def test_env_override_is_reported(env, monkeypatch):
     monkeypatch.setenv("VECTOR_DB_INGEST_WORKERS", "6")
     s = _setting(env["client"].get("/api/admin-settings").json(), "vector_db.ingest_workers")
