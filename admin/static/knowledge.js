@@ -25,16 +25,17 @@ const KNOWLEDGE_JOB_STATE_ORDER = ["error", "running", "queued", "stopped", "don
 const knowledgeTimeValue = (iso) => (iso ? Date.parse(iso) || null : null);
 const KNOWLEDGE_SORT_VALUES = [
   (c) => c.name,
+  null,
+  (c) => (c.job ? KNOWLEDGE_JOB_STATE_ORDER.indexOf(c.job.state) : null),
   (c) => c.source_folders[0] || null,
   (c) => c.file_count,
   (c) => c.model || null,
   (c) => knowledgeTimeValue(c.last_ingested_at),
   (c) => (c.schedule_enabled ? knowledgeTimeValue(c.next_scheduled_at) : null),
-  (c) => (c.job ? KNOWLEDGE_JOB_STATE_ORDER.indexOf(c.job.state) : null),
-  null,
 ];
 // 並べ替えの状態はブラウザに保存し、画面の描き直し（取り込み中の自動更新）や再読み込みでも保つ。
-const KNOWLEDGE_SORT_STORAGE_KEY = "la-knowledge-sort";
+// 列の順番を変えたときは、保存済みの列番号が別の列を指さないようキーを変える。
+const KNOWLEDGE_SORT_STORAGE_KEY = "la-knowledge-sort-v2";
 
 function knowledgeLoadSort() {
   try {
@@ -252,6 +253,8 @@ async function renderKnowledgePanel(container, name) {
     list.innerHTML = "";
     const rows = collections.map((c) => [
       el("div", {}, [el("strong", { text: c.name }), c.description ? el("div", { class: "hint", text: c.description }) : null]),
+      knowledgeActions(container, name, c, data.enabled),
+      knowledgeJobCell(c.job, data.max_file_mb, knowledgeJobWorkers(d.workers, name, c.name)),
       el("div", {}, [
         ...c.source_folders.map((p) => el("div", { text: p })),
         el("div", { class: "hint", text: c.recursive ? _t("サブフォルダも含む") : _t("直下のみ") }),
@@ -262,11 +265,9 @@ async function renderKnowledgePanel(container, name) {
       c.model ? _t(`{0}（{1} 次元）`, c.model, c.dim) : "-",
       fmtTime(c.last_ingested_at),
       knowledgeScheduleCell(c, data.enabled),
-      knowledgeJobCell(c.job, data.max_file_mb, knowledgeJobWorkers(d.workers, name, c.name)),
-      knowledgeActions(container, name, c, data.enabled),
     ]);
     list.append(
-      dataTable([_t("コレクション"), _t("取り込み元フォルダ"), _t("文書"), _t("埋め込みモデル"), _t("最終取り込み"), _t("自動取り込み"), _t("状態"), _t("操作")], rows, _t("まだコレクションはありません。"), {
+      dataTable([_t("コレクション"), _t("操作"), _t("状態"), _t("取り込み元フォルダ"), _t("文書"), _t("埋め込みモデル"), _t("最終取り込み"), _t("自動取り込み")], rows, _t("まだコレクションはありません。"), {
         sortable: KNOWLEDGE_SORT_VALUES.map(Boolean),
         index: sort.index,
         dir: sort.dir,
