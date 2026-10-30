@@ -1365,23 +1365,28 @@ Ingestion proceeds in `_Pipeline` of `src/vector_db/ingest.py` through scan -> p
   each thread (child process) starts one Word / PowerPoint / Excel, reuses it during ingestion, and closes it when done.
 - **Embed**: the texts of several files (text chunks and file paths) are grouped into batches of `embedding_batch_size` and
   up to `ingest_embed_requests` (default 0 = same as `ingest_workers`) are sent at the same time (chunks of a large file are also sent as several batches at the same time;
-  images one at a time; a file is split into several requests, so this may be larger than the number of files). When no embedding
-  request is in flight, or no files are being prepared, batches are sent even if not full, so the embedding server is never left idle,
-  and the more embedding falls behind, the larger the batches. Sending at the same time only gets faster if the inference server can process several
+  images one at a time; a file is split into several requests, so this may be larger than the number of files). When an embedding
+  slot is free, batches are sent even if not full, split evenly over the free slots, so the embedding server is never left idle,
+  and the more embedding falls behind, the larger the batches. As many connections to the embedding server as requests sent at the same time are kept open
+  and reused (closing and reopening them keeps exhausting the socket buffers on Windows, causing WinError 10055). Sending at the same time only gets faster if the inference server can process several
   requests at the same time; for llama-server, start it with `--parallel` (`-np`) at or above `ingest_embed_requests`.
   Embeddings are received as float32 bytes with `embedding_encoding_format = base64` (default) (smaller and faster to parse than numeric JSON;
   endpoints that do not support it switch to numeric arrays automatically).
-- **Write**: writes to the catalog, the vectors (sqlite-vec / Qdrant) and the keyword index are done on the main thread one file at a time,
+- **Write**: writes to the catalog, the vectors (sqlite-vec / Qdrant) and the keyword index are done on a dedicated writer thread one file at a time
+  (the main thread keeps sending embeddings without waiting for writes or Qdrant responses; when writing falls behind, up to 256 files are queued before it waits),
   committed together about every 2 seconds (or 500 files) (SQLite uses WAL and `synchronous=NORMAL`; Qdrant sends deletes and additions together with `points/batch`).
   Commits go in the order vectors -> keyword index -> catalog, so even if it stops midway, the vectors of files recorded in the catalog
   are always saved (files not recorded are processed in the next ingestion).
-  Even while waiting for embedding/preparation to finish, it commits when the commit deadline (about 2 seconds) comes, and does not keep holding the write lock (so that
+  Writes to SQLite (the catalog, the keyword index and sqlite-vec) are not done on the spot; at each commit they are written together in one short transaction per DB.
+  The write lock is held only while writing, not while sending to Qdrant or waiting for embeddings (so that
   ingestion of another collection running at the same time, or editing collections on the settings dashboard, does not fail with "database is locked").
-- **Files with many chunks**: a file with more than 1024 text chunks (business data such as CSVs or logs with hundreds of thousands of lines) does not wait
+  Writes to the DBs of the same instance are serialized within the process (`instance_write_lock` in `src/vector_db/sqlite_batch.py`),
+  and the SQLite busy timeout is 120 seconds. When a write fails because of another process's lock, it is retried at intervals for up to 10 minutes.
+- **Files with many chunks**: a file with more than 256 text chunks (business data such as CSVs or logs with hundreds of thousands of lines) does not wait
   for all of its vectors; the chunks are added to the storage as soon as their numbers are complete in order (`_Job.stream` in `src/vector_db/ingest.py`).
   Vectors are not accumulated in memory, so even a single file with 200,000 chunks uses memory almost independent of the file size (only up to about
   1024 vectors waiting for earlier numbers are kept; while a batch with earlier numbers does not return because of retries etc., later batches of that file are not sent).
-  The old chunks are deleted when writing starts, so the half-written chunks of that file appear in searches during ingestion. Files with 1024 chunks or fewer
+  The old chunks are deleted when writing starts, so the half-written chunks of that file appear in searches during ingestion. Files with 256 chunks or fewer
   are still replaced at once after everything is complete. Copying ("Copying between instances") also reads and writes the vectors and keyword index a few hundred at a time.
   Text extraction and chunking are done for the whole file, so the text (a few hundred MB for 200,000 chunks) is kept in memory.
 - **Consistency after a forced termination**: Qdrant sends updates every 256 points without waiting for the commit, and files with many chunks are written in parts,

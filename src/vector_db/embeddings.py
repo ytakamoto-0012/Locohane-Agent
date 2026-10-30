@@ -53,6 +53,8 @@ _float_only: set[str] = set()
 _STOP_POLL_SECONDS = 0.5
 # 再試行の待ちに使う sleep（テストで差し替える）。
 _sleep = time.sleep
+# open_client() の keep-alive の接続数に、同時に送るリクエストの数へ足す分（GET /slots で空きを確かめる接続の分）。
+_KEEPALIVE_MARGIN = 8
 
 
 def embedding_model(cfg: Config) -> str:
@@ -66,15 +68,22 @@ def embedding_model(cfg: Config) -> str:
     return cfg.vector_db_embedding_endpoints[0].model
 
 
-def open_client(cfg: Config, *, transport: httpx.BaseTransport | None = None) -> httpx.Client:
+def open_client(cfg: Config, *, transport: httpx.BaseTransport | None = None, concurrency: int = 0) -> httpx.Client:
     """埋め込みサーバー用の httpx クライアント（呼び出し側で close する）。
 
     取り込みのように何度も埋め込むときは、これを1つ作って embed_texts・embed_images の client に渡し、
     接続を使い回す。Windows では接続先が localhost だと新しく接続するたびに IPv6（::1）を試してから
     IPv4 へ戻るため約 2 秒かかり、ファイルごとにクライアントを作り直すとその分だけ遅くなる。
     httpx.Client はスレッド間で共有できる。
+
+    concurrency は同時に送るリクエストの数（取り込みの ingest_embed_requests）。使い終えた接続を閉じずに残す数
+    （keep-alive）をこれに合わせる。httpx の既定（20本）のままだと、それを超えて同時に送った分の接続が毎回
+    閉じて作り直され、閉じた接続（TIME_WAIT）がたまって Windows のソケットのバッファーが尽きる（WinError 10055）。
     """
-    return httpx.Client(timeout=httpx.Timeout(cfg.vector_db_embedding_timeout_seconds, connect=10.0), transport=transport)
+    limits = httpx.Limits(max_connections=None, max_keepalive_connections=max(concurrency + _KEEPALIVE_MARGIN, 20))
+    return httpx.Client(
+        timeout=httpx.Timeout(cfg.vector_db_embedding_timeout_seconds, connect=10.0), transport=transport, limits=limits
+    )
 
 
 # shared_client() のクライアント（タイムアウト秒ごと）。プロセスが終わるまで閉じない。

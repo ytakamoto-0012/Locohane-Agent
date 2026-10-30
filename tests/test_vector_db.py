@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 import os
+from pathlib import Path
 import threading
 
 import httpx
@@ -1455,7 +1456,7 @@ def test_scan_skips_source_folder_inside_another_when_recursive(tmp_path):
     other.mkdir()
     (other / "c.md").write_text("c", encoding="utf-8")
     for workers in (1, 4):
-        files = [p for p, _ in ingest.scan_source_files([tmp_path / "sub", tmp_path, other], True, (".md",), workers=workers).files]
+        files = [Path(p) for p, _ in ingest.scan_source_files([tmp_path / "sub", tmp_path, other], True, (".md",), workers=workers).files]
         assert files == sorted([tmp_path / "a.md", tmp_path / "sub" / "b.md", other / "c.md"], key=lambda p: str(p).lower())
     # 直下だけなら入れ子のフォルダもそれぞれの直下を取り込む。
     files = ingest.list_source_files([tmp_path, tmp_path / "sub"], False, (".md",))
@@ -1469,7 +1470,7 @@ def test_scan_skips_paths_matching_exclude_keywords(tmp_path):
         (tmp_path / rel).write_text("x", encoding="utf-8")
     for workers in (1, 4):
         # 大文字小文字は区別せず、フォルダ名・ファイル名・途中のパスのどこに含んでも除外する。
-        files = [p for p, _ in ingest.scan_source_files(tmp_path, True, (".md",), workers=workers, exclude_keywords=["OLD"]).files]
+        files = [Path(p) for p, _ in ingest.scan_source_files(tmp_path, True, (".md",), workers=workers, exclude_keywords=["OLD"]).files]
         assert files == [tmp_path / "a.md", tmp_path / "sub" / "d.md"]
     # / で囲むと名前がちょうどそれのフォルダだけ。区切りは \ でもよい。
     files = ingest.list_source_files(tmp_path, True, (".md",), exclude_keywords=["/old/", "sub\\d"])
@@ -1491,7 +1492,7 @@ def test_scan_keeps_only_paths_matching_include_keywords(tmp_path):
     for workers in (1, 4):
         # どれかに当てはまるファイルだけ（フォルダ名でもよい。フォルダは絞らずにたどる）。除外が優先。
         files = [
-            p for p, _ in ingest.scan_source_files(
+            Path(p) for p, _ in ingest.scan_source_files(
                 tmp_path, True, (".md", ".txt"), workers=workers, include_keywords=["MANUAL", "*.txt"], exclude_keywords=["/old/"]
             ).files
         ]

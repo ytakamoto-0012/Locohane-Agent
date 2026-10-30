@@ -10,17 +10,16 @@
 消す（discard）。次の取り込みの開始時に残っているファイルは書きかけのもので、ingest._reconcile_journal が
 カタログに記録があれば必ず取り込み直させ、無ければ保存先・キーワード索引から消す。
 
-カタログ等とは別のファイル・別の接続にするのは、取り込みがカタログの書き込みのトランザクションを開いたまま
-ここへコミットするため（同じ DB だと自分のロックで待ってしまう）。
+カタログ等とは別のファイル・別の接続にし、カタログ等へためた書き込み（sqlite_batch.DeferredWrites）とは別に、
+その場でコミットする。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-import sqlite3
 from typing import Iterable
 
-from .sqlite_batch import configure_connection
+from .sqlite_batch import configure_connection, connect, instance_write_lock, retry_locked
 
 JOURNAL_FILENAME = "ingest_journal.sqlite"
 
@@ -42,7 +41,7 @@ class IngestJournal:
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / JOURNAL_FILENAME
         # 自動コミット（isolation_level=None）。add() はその場でディスクへ書けていないと意味が無いため。
-        self._conn = sqlite3.connect(str(self.path), timeout=30, isolation_level=None)
+        self._conn = connect(self.path, isolation_level=None)
         configure_connection(self._conn)
         self._conn.executescript(_SCHEMA)
 
@@ -55,26 +54,45 @@ class IngestJournal:
     def __exit__(self, *exc) -> None:
         self.close()
 
+    def _write(self, what: str, statements: list[tuple[str, list[tuple]]]) -> None:
+        """statements（SQL とそのパラメーターの一覧）を1つのトランザクションでその場でコミットする。
+
+        インスタンスの書き込みロック（instance_write_lock）の中で書き、ほかのプロセスのロックで失敗したら
+        巻き戻して間隔を空けてやり直す（retry_locked）。
+        """
+
+        def attempt() -> None:
+            with instance_write_lock(self.path.parent):
+                self._conn.execute("BEGIN IMMEDIATE")
+                try:
+                    for sql, params in statements:
+                        self._conn.executemany(sql, params)
+                except BaseException:
+                    self._conn.execute("ROLLBACK")
+                    raise
+                self._conn.execute("COMMIT")
+
+        retry_locked(attempt, what=f"journal {what}")
+
     def add(self, collection: str, source_path: str) -> None:
         """source_path を保存先へ書き始める（その場でコミットする）。"""
-        self._conn.execute("INSERT OR IGNORE INTO writing (collection, source_path) VALUES (?, ?)", (collection, source_path))
+        self._write("add", [("INSERT OR IGNORE INTO writing (collection, source_path) VALUES (?, ?)", [(collection, source_path)])])
 
     def discard(self, collection: str, source_paths: Iterable[str]) -> None:
         """カタログへの記録までコミットしたファイルを消す（まとめて1回でコミットする）。"""
-        self._conn.execute("BEGIN")
-        try:
-            self._conn.executemany(
-                "DELETE FROM writing WHERE collection = ? AND source_path = ?", ((collection, s) for s in source_paths)
-            )
-        except BaseException:
-            self._conn.execute("ROLLBACK")
-            raise
-        self._conn.execute("COMMIT")
+        params = [(collection, s) for s in source_paths]
+        if params:
+            self._write("discard", [("DELETE FROM writing WHERE collection = ? AND source_path = ?", params)])
 
     def clear(self, collection: str) -> None:
         """collection の記録をすべて消す（再構築・コレクションの削除で、保存先・カタログまで消し終えたとき）。"""
-        self._conn.execute("DELETE FROM writing WHERE collection = ?", (collection,))
-        self._conn.execute("DELETE FROM dropping WHERE collection = ?", (collection,))
+        self._write(
+            "clear",
+            [
+                ("DELETE FROM writing WHERE collection = ?", [(collection,)]),
+                ("DELETE FROM dropping WHERE collection = ?", [(collection,)]),
+            ],
+        )
 
     def begin_drop(self, collection: str) -> None:
         """collection の保存先・キーワード索引・カタログの記録を消し始める（その場でコミットする）。
@@ -82,7 +100,7 @@ class IngestJournal:
         途中で止まると、カタログに記録が残ったまま保存先のベクターが消えている（差分取り込みは記録を見て
         埋め込まない）ため、消し終えて clear() するまで drop_pending() が True を返し、次の取り込みが作り直す。
         """
-        self._conn.execute("INSERT OR IGNORE INTO dropping (collection) VALUES (?)", (collection,))
+        self._write("begin_drop", [("INSERT OR IGNORE INTO dropping (collection) VALUES (?)", [(collection,)])])
 
     def drop_pending(self, collection: str) -> bool:
         """前回の再構築・削除が、消している途中で止まったままか。"""

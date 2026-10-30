@@ -18,8 +18,8 @@ from _vector_db_fakes import FakeEmbeddingServer, FakeQdrant, make_config
 from src.vector_db import catalog as vcat
 from src.vector_db import collection_copy, embeddings, ingest, qdrant_store, search
 from src.vector_db.journal import open_journal
-from src.vector_db.keyword_index import open_keyword_index
-from src.vector_db.store import StoreError, StoreStopped, open_store
+from src.vector_db.keyword_index import KeywordIndex, open_keyword_index
+from src.vector_db.store import StoreError, StoreStopped, open_store, path_collection_name
 
 
 @pytest.fixture(autouse=True)
@@ -108,11 +108,10 @@ def test_file_with_many_chunks_is_written_in_parts(env, monkeypatch):
     appended: list[tuple[int, int]] = []
     real_append = ingest._Writer.append_chunks
 
-    def spy(self, job):
-        start = job.streamed
-        real_append(self, job)
-        if job.streamed > start:
-            appended.append((start, job.streamed))
+    def spy(self, prepared, start, chunks, vectors):
+        real_append(self, prepared, start, chunks, vectors)
+        if chunks:
+            appended.append((start, start + len(chunks)))
 
     monkeypatch.setattr(ingest._Writer, "append_chunks", spy)
     result = _ingest(env, _config(env, vector_db_ingest_workers=3))
@@ -232,12 +231,13 @@ def test_kill_before_the_catalog_commit_is_repaired(env, monkeypatch):
     """保存先へ書いた後・カタログのコミット前に落ちた小さいファイルも、次の取り込みで片付ける。"""
     for i in range(3):
         (env["docs"] / f"note{i}.md").write_text(f"手順{i}を守る。", encoding="utf-8")
-    def killed(self):
+
+    def killed(self, ops, **kwargs):
         raise _Killed()
 
     with monkeypatch.context() as m:
-        m.setattr(vcat.Catalog, "commit", killed)
-        m.setattr(vcat.Catalog, "end_batch", killed)
+        # 取り込みはカタログへの書き込みをためておき、コミットのときに apply_deferred でまとめて書く
+        m.setattr(vcat.Catalog, "apply_deferred", killed)
         with pytest.raises(_Killed):
             _ingest(env)
     with vcat.open_catalog(env["cfg"].vector_db_dir) as catalog:
@@ -297,6 +297,40 @@ def test_copy_of_a_file_with_many_chunks_is_read_in_pages(env, tmp_path, monkeyp
     assert _stored(env, path, dst, "copied") == _stored(env, path)
     with open_keyword_index(env["cfg"].vector_db_dir) as a, open_keyword_index(dst.vector_db_dir) as b:
         assert b.source_rows("copied", str(path)) == a.source_rows("docs", str(path))
+    with open_journal(dst.vector_db_dir) as journal:
+        assert journal.sources("copied") == []
+
+
+def test_copy_commits_in_the_middle_of_a_large_file(env, tmp_path, monkeypatch):
+    """コピーは SQLite へ書く分をためるが、多くなればファイルの途中でもコミットし、1ファイル分をため込まない。"""
+    monkeypatch.setattr(collection_copy, "_FLUSH_ROWS", 100)
+    path = env["docs"] / "big.md"
+    path.write_text(_text(300), encoding="utf-8")
+    (env["docs"] / "small.md").write_text("手順を守る。", encoding="utf-8")
+    assert _ingest(env).chunks == 301
+    dst = make_config(tmp_path / "dst", vector_db_backend=env["cfg"].vector_db_backend, vector_db_qdrant_collection_prefix="locohane_dst_")
+    # コミットごとにキーワード索引へ書いた行の数
+    applied: list[int] = []
+    real_apply = KeywordIndex.apply_deferred
+
+    def spy(self, ops, **kwargs):
+        applied.append(sum(len(op.args[2]) for op in ops if op.func.__name__ == "append_source_rows"))
+        real_apply(self, ops, **kwargs)
+
+    monkeypatch.setattr(KeywordIndex, "apply_deferred", spy)
+    t = env["qdrant"].transport
+    result = collection_copy.copy_collection(env["cfg"], "docs", dst, "copied", src_store_transport=t, dst_store_transport=t)
+    monkeypatch.undo()
+    assert (result["files"], result["chunks"]) == (2, 301)
+    # 1ファイルの300行の索引をまとめて書かず、数百件ずつに分けてコミットした
+    assert max(applied) <= collection_copy._KEYWORD_PAGE_ROWS and len([n for n in applied if n]) >= 2
+    for source in (path, env["docs"] / "small.md"):
+        assert _stored(env, source, dst, "copied") == _stored(env, source)
+    with open_keyword_index(env["cfg"].vector_db_dir) as a, open_keyword_index(dst.vector_db_dir) as b:
+        assert b.source_rows("copied", str(path)) == a.source_rows("docs", str(path))
+        assert b.source_rows(path_collection_name("copied"), str(path)) == a.source_rows(path_collection_name("docs"), str(path))
+    with vcat.open_catalog(dst.vector_db_dir) as catalog:
+        assert set(catalog.files("copied")) == {str(path), str(env["docs"] / "small.md")}
     with open_journal(dst.vector_db_dir) as journal:
         assert journal.sources("copied") == []
 

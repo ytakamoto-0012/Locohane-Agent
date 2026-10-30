@@ -132,6 +132,56 @@ def test_batches_of_one_large_file_are_sent_concurrently(env):
     assert hits[0].text.startswith("第7条") or "第7条" in hits[0].text
 
 
+def test_partial_batches_are_spread_over_free_slots(env):
+    """embedding_batch_size 件に満たないテキストも、待たずに空いている枠へ均等に分けて送る。"""
+    text = "\n\n".join(f"第{i}条 項目{i}の基準は{i}mmとする。" + "あ" * 150 for i in range(10))
+    (env["docs"] / "doc.md").write_text(text, encoding="utf-8")
+    cfg = _config(
+        env, vector_db_ingest_workers=1, vector_db_ingest_embed_requests=4, vector_db_embedding_batch_size=16,
+        vector_db_chunk_size=200, vector_db_chunk_overlap=0,
+    )
+    result = ingest.ingest_collection(cfg, "docs", **env["kwargs"])
+    sizes = [len(r["input"]) for r in env["embed"].requests]
+    # 本文のチャンク＋パス1件を、4つの枠に分けて送る（16件そろうのを待たない）
+    assert sum(sizes) == result.chunks + 1 > 4
+    assert len(sizes) == 4 and max(sizes) - min(sizes) <= 1
+
+
+def test_embedding_client_keeps_connections_for_the_concurrency(tmp_path):
+    """同時に送るリクエストの数だけ接続を閉じずに残す（閉じて作り直すと Windows でソケットが尽きる）。"""
+    client = embeddings.open_client(make_config(tmp_path), concurrency=50)
+    try:
+        assert client._transport._pool._max_keepalive_connections >= 50
+    finally:
+        client.close()
+
+
+def test_vectors_waiting_to_be_written_are_kept_compactly():
+    from array import array
+
+    from src.vector_db import qdrant_store
+    from src.vector_db.store import ChunkRecord
+
+    job = ingest._Job(ingest._Prepared(ingest.Path("a.md"), None, "text", "path_only", path_text="a.md"))
+    job.receive("text", 0, [0.1, 0.2, 0.3])
+    assert isinstance(job.text_vectors[0], array) and list(job.text_vectors[0]) == [0.1, 0.2, 0.3]
+    # Qdrant へは同じ値の list（JSON）で送る
+    ops = qdrant_store._upsert_operations("a.md", 0, [ChunkRecord("", "a")], [job.text_vectors[0]])
+    assert ops[0]["upsert"]["points"][0]["vector"] == [0.1, 0.2, 0.3]
+
+
+def test_ingest_stats_are_logged(env, monkeypatch, caplog):
+    monkeypatch.setattr(ingest, "_STATS_INTERVAL_SECONDS", 0.0)
+    for i in range(3):
+        (env["docs"] / f"note{i}.md").write_text(f"手順{i}を守る。", encoding="utf-8")
+    with caplog.at_level("INFO", logger="src.vector_db.ingest"):
+        ingest.ingest_collection(env["cfg"], "docs", **env["kwargs"])
+    lines = [r.getMessage() for r in caplog.records if r.getMessage().startswith("vector_db ingest stats:")]
+    assert lines and "collection=docs" in lines[0] and "in_flight avg=" in lines[0]
+    if sys.platform == "win32":
+        assert ingest._process_memory_mb() > 0
+
+
 def test_stop_while_waiting_for_embeddings_records_only_finished_files(env):
     for i in range(4):
         (env["docs"] / f"note{i}.md").write_text(f"手順{i}を守る。", encoding="utf-8")
@@ -202,7 +252,11 @@ def test_error_discards_uncommitted_writes(env, monkeypatch):
 def test_scan_source_files_returns_same_stat_as_path_stat(tmp_path):
     (tmp_path / "sub").mkdir()
     (tmp_path / "sub" / "a.md").write_text("a", encoding="utf-8")
-    [(path, st)] = ingest.scan_source_files(tmp_path, True, (".md",)).files
+    [(source, st)] = ingest.scan_source_files(tmp_path, True, (".md",)).files
+    # 大量のファイルを軽く持つため、パスは文字列、stat はサイズ・更新日時だけ（FileStat）で返す
+    assert isinstance(source, str) and isinstance(st, ingest.FileStat)
+    path = ingest.Path(source)
+    assert path == tmp_path / "sub" / "a.md"
     assert (st.st_size, st.st_mtime) == (path.stat().st_size, path.stat().st_mtime)
 
 

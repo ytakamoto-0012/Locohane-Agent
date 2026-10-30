@@ -299,7 +299,7 @@ def test_scan_does_not_loop_through_junctions(tmp_path):
     try:
         for workers in (1, 4):
             files = ingest.scan_source_files(root, True, (".md",), workers=workers).files
-            assert sorted(p.name for p, _ in files) == ["a.md", "b.md"]
+            assert sorted(Path(p).name for p, _ in files) == ["a.md", "b.md"]
     finally:
         for link in (root / "sub" / "back", root / "sub" / "up", root / "ext1", root / "ext2"):
             if os.path.lexists(link):

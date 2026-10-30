@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import itertools
 import logging
 import time
 
@@ -20,12 +21,17 @@ from .embeddings import embedding_model
 from .gc_pacer import GcPacer
 from .journal import open_journal
 from .keyword_index import open_keyword_index
+from .sqlite_batch import DeferredWrites, SqliteBatchMixin
 from .store import StoreStopped, open_store, path_collection_name, storage_collection_names
 
 logger = logging.getLogger(__name__)
 
 # 書き込みをまとめてコミットする間隔（ingest._Writer と同じ考え方。保存先 → キーワード索引 → カタログの順にコミットする）。
 _COMMIT_INTERVAL_SECONDS = 2.0
+# コミットの前にためるチャンク・キーワード索引の行の数の上限（超えたらファイルの途中でもコミットする）。
+_FLUSH_ROWS = 2048
+# キーワード索引の行をコピー元から読んで足す1回の行の数。
+_KEYWORD_PAGE_ROWS = 256
 
 
 class CopyError(Exception):
@@ -125,25 +131,46 @@ def copy_collection(
         journal = open_journal(dst_cfg.vector_db_dir)
         # 同じ名前の前のコレクションの削除が途中で止まった印が残っていても、今作ったコレクションには関係しない。
         journal.clear(dst_name)
-        parts = (dst_store, dst_keywords, dst_catalog)
+        # SQLite の DB（キーワード索引・カタログ・sqlite-vec）へはその場では書かず、コミットのときに短いトランザクションで
+        # まとめて書く（ingest._Writer と同じ。コピー元の読み出しや Qdrant への送信を待つ間に書き込みのロックを持たない）。
+        # Qdrant は自分で送る更新をためる（begin_batch）ため、そのまま使う。
+        store_part = DeferredWrites(dst_store, "store") if isinstance(dst_store, SqliteBatchMixin) else dst_store
+        keywords_part = DeferredWrites(dst_keywords, "keyword index")
+        catalog_part = DeferredWrites(dst_catalog, "catalog")
+        # コミットの順（保存先 → キーワード索引 → カタログ）。
+        parts = (store_part, keywords_part, catalog_part)
         ready: set[str] = set()
         # カタログへ記録したが、まだコミットしていないファイルと、そのチャンク数。
         recorded: list[str] = []
         recorded_chunks = 0
+        # 前回のコミットからためたチャンク・索引の行の数（_FLUSH_ROWS を超えたら、ファイルの途中でもコミットする）。
+        pending_rows = 0
         # Qdrant の応答（httpx）の循環参照のゴミがたまり続けないよう、間隔を空けて回収する（gc_pacer 参照）。
         pacer = GcPacer()
 
         def commit() -> None:
-            nonlocal recorded, recorded_chunks
+            nonlocal recorded, recorded_chunks, pending_rows, last_commit
             for part in parts:
-                part.commit()
+                if isinstance(part, DeferredWrites):
+                    part.apply()
+                else:
+                    part.commit()
             journal.discard(dst_name, recorded)
-            recorded, recorded_chunks = [], 0
-
-        try:
-            for part in parts:
-                part.begin_batch()
+            recorded, recorded_chunks, pending_rows = [], 0, 0
             last_commit = time.monotonic()
+
+        def added(rows: int) -> None:
+            """rows 件をためた。数十万チャンクの1ファイルでもメモリーにため込まないよう、多ければその場でコミットする
+            （書きかけのファイルは journal に記録してあるため、途中で止まってもコピー先の取り込みが片付ける）。"""
+            nonlocal pending_rows
+            pending_rows += rows
+            if pending_rows >= _FLUSH_ROWS:
+                commit()
+
+        last_commit = time.monotonic()
+        try:
+            if not isinstance(store_part, DeferredWrites):
+                store_part.begin_batch()
             for i, (source, record) in enumerate(sorted(records.items()), start=1):
                 if should_stop and should_stop():
                     result["stopped"] = True
@@ -158,31 +185,45 @@ def copy_collection(
                     for chunks, vectors in src_store.iter_source(src_storage, source):
                         pacer.tick()
                         if dst_storage not in ready:
-                            dst_store.ensure_collection(dst_storage, len(vectors[0]))
+                            store_part.ensure_collection(dst_storage, len(vectors[0]))
                             ready.add(dst_storage)
                         if start == 0:
-                            dst_store.delete_source(dst_storage, source)
-                        dst_store.append_source(dst_storage, source, start, chunks, vectors)
+                            store_part.delete_source(dst_storage, source)
+                        store_part.append_source(dst_storage, source, start, chunks, vectors)
                         start += len(chunks)
+                        added(len(chunks))
                     if src_storage == src_name:
                         chunk_count = start
                 for src_kw, dst_kw in ((src_name, dst_name), (path_collection_name(src_name), path_collection_name(dst_name))):
                     rows = src_keywords.iter_source_rows(src_kw, source)
-                    if rows is not None:
-                        dst_keywords.replace_source_rows(dst_kw, source, rows)
-                dst_catalog.upsert_file(dst_name, record)
+                    if rows is None:
+                        continue
+                    # 丸ごと入れ替える代わりに、消してから数百件ずつ足す（ためる行を抑えるため）。
+                    keywords_part.delete_source(dst_kw, source)
+                    first = True
+                    while True:
+                        batch = list(itertools.islice(rows, _KEYWORD_PAGE_ROWS))
+                        if batch or first:
+                            keywords_part.append_source_rows(dst_kw, source, batch)
+                            added(len(batch))
+                        first = False
+                        if len(batch) < _KEYWORD_PAGE_ROWS:
+                            break
+                catalog_part.upsert_file(dst_name, record)
                 recorded.append(source)
                 recorded_chunks += chunk_count
                 result["files"] += 1
                 result["chunks"] += chunk_count
                 if time.monotonic() - last_commit >= _COMMIT_INTERVAL_SECONDS:
                     commit()
-                    last_commit = time.monotonic()
-            for part in parts:
-                part.end_batch()
-            journal.discard(dst_name, recorded)
+            commit()
+            if not isinstance(store_part, DeferredWrites):
+                store_part.end_batch()
         except BaseException as exc:
             for part in parts:
+                if isinstance(part, DeferredWrites):
+                    part.discard()
+                    continue
                 try:
                     part.rollback()
                 except Exception:  # noqa: BLE001 - 元のエラーを優先する

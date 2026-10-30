@@ -14,7 +14,7 @@ from typing import Iterator
 
 import sqlite_vec
 
-from .sqlite_batch import SqliteBatchMixin, configure_connection
+from .sqlite_batch import SqliteBatchMixin, configure_connection, connect
 from .store import DISTANCE_METRICS, ChunkRecord, Hit, StoreError, distance_to_score
 
 VECTORS_FILENAME = "vectors.sqlite"
@@ -49,7 +49,7 @@ class SqliteVecStore(SqliteBatchMixin):
         self._distance = distance
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / VECTORS_FILENAME
-        self._conn = sqlite3.connect(str(self.path), timeout=30)
+        self._conn = connect(self.path)
         try:
             self._conn.enable_load_extension(True)
             sqlite_vec.load(self._conn)
@@ -62,7 +62,7 @@ class SqliteVecStore(SqliteBatchMixin):
         # 距離関数を選べるようになる前の DB（すべてコサイン距離で作っている）に列を足す。
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(vec_collections)")}
         if "distance" not in columns:
-            with self._conn:
+            with self._write():
                 self._conn.execute("ALTER TABLE vec_collections ADD COLUMN distance TEXT NOT NULL DEFAULT 'Cosine'")
 
     def close(self) -> None:
@@ -97,7 +97,7 @@ class SqliteVecStore(SqliteBatchMixin):
         if existing is None:
             return
         cid = existing[0]
-        with self._conn:
+        with self._write():
             self._conn.execute(f"DROP TABLE IF EXISTS vec_c{cid}")
             self._conn.execute("DELETE FROM chunks WHERE collection_id = ?", (cid,))
             self._conn.execute("DELETE FROM vec_collections WHERE id = ?", (cid,))

@@ -13,11 +13,10 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-import sqlite3
 from typing import Iterable, Iterator
 import unicodedata
 
-from .sqlite_batch import SqliteBatchMixin, configure_connection
+from .sqlite_batch import SqliteBatchMixin, configure_connection, connect
 from .store import ChunkRecord, Hit
 
 KEYWORDS_FILENAME = "keywords.sqlite"
@@ -79,11 +78,23 @@ def _match_query(query: str) -> str | None:
     return " OR ".join('"' + t.replace('"', '""') + '"' for t in unique)
 
 
+def iter_token_rows(chunks: list[ChunkRecord], *, index_texts: list[str] | None = None) -> Iterator[tuple[str, str, str]]:
+    """chunks を索引の行 (語, locator, text) にする（KeywordIndex.replace_source_rows に渡す形）。
+
+    index_texts を渡すと、語はチャンクの text ではなくこちら（chunks と同じ順）から作る。
+    取り込みは、書き込みのロックを取る前にこれで語に区切っておく（区切る間ロックを持たないため）。
+    """
+    texts = index_texts if index_texts is not None else [c.text for c in chunks]
+    if len(texts) != len(chunks):
+        raise ValueError(f"index_texts ({len(texts)}) and chunks ({len(chunks)}) differ in length")
+    return ((" ".join(_tokens(t)), c.locator, c.text) for c, t in zip(chunks, texts))
+
+
 class KeywordIndex(SqliteBatchMixin):
     def __init__(self, directory: Path):
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / KEYWORDS_FILENAME
-        self._conn = sqlite3.connect(str(self.path), timeout=30)
+        self._conn = connect(self.path)
         configure_connection(self._conn)
         self._conn.executescript(_SCHEMA)
 
@@ -115,17 +126,8 @@ class KeywordIndex(SqliteBatchMixin):
         index_texts を渡すと、索引の語はチャンクの text ではなくこちら（chunks と同じ順）から作る
         （検索結果の text はチャンクの text のまま）。
         """
-        texts = index_texts if index_texts is not None else [c.text for c in chunks]
-        if len(texts) != len(chunks):
-            raise ValueError(f"index_texts ({len(texts)}) and chunks ({len(chunks)}) differ in length")
-        with self._transaction():
-            self._delete_source(collection, source_path)
-            # 行はジェネレーターで渡し、チャンクの多いファイルでも全チャンクの語の一覧を一度にメモリーに作らない。
-            self._conn.executemany(
-                "INSERT INTO keyword_chunks (tokens, collection, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
-                ((" ".join(_tokens(t)), collection, source_path, c.locator, c.text) for c, t in zip(chunks, texts)),
-            )
-            self._conn.execute("INSERT INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
+        # 行はジェネレーターで渡し、チャンクの多いファイルでも全チャンクの語の一覧を一度にメモリーに作らない。
+        self.replace_source_rows(collection, source_path, iter_token_rows(chunks, index_texts=index_texts))
 
     def source_rows(self, collection: str, source_path: str) -> list[tuple[str, str, str]] | None:
         """source_path の索引の行 (tokens, locator, text) を入れた順に返す（索引に無ければ None。インスタンス間のコピー用）。"""
@@ -161,6 +163,18 @@ class KeywordIndex(SqliteBatchMixin):
             )
             self._conn.execute("INSERT INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
 
+    def append_source_rows(self, collection: str, source_path: str, rows: Iterable[tuple[str, str, str]]) -> None:
+        """source_path の索引に rows（source_rows() の形）を足す（rows が空でも索引済みとして記録する）。
+
+        replace_source_rows を数百件ずつに分けて書くためのもの（先に delete_source で消しておく。コピー用）。
+        """
+        with self._transaction():
+            self._conn.executemany(
+                "INSERT INTO keyword_chunks (tokens, collection, source_path, locator, text) VALUES (?, ?, ?, ?, ?)",
+                ((tokens, collection, source_path, locator, text) for tokens, locator, text in rows),
+            )
+            self._conn.execute("INSERT OR IGNORE INTO keyword_sources (collection, source_path) VALUES (?, ?)", (collection, source_path))
+
     def _delete_source(self, collection: str, source_path: str) -> None:
         self._conn.execute("DELETE FROM keyword_chunks WHERE collection = ? AND source_path = ?", (collection, source_path))
         self._conn.execute("DELETE FROM keyword_sources WHERE collection = ? AND source_path = ?", (collection, source_path))
@@ -170,7 +184,7 @@ class KeywordIndex(SqliteBatchMixin):
             self._delete_source(collection, source_path)
 
     def drop_collection(self, collection: str) -> None:
-        with self._conn:
+        with self._write():
             self._conn.execute("DELETE FROM keyword_chunks WHERE collection = ?", (collection,))
             self._conn.execute("DELETE FROM keyword_sources WHERE collection = ?", (collection,))
 

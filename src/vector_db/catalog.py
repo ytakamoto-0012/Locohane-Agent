@@ -12,7 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 
-from .sqlite_batch import SqliteBatchMixin, configure_connection
+from .sqlite_batch import SqliteBatchMixin, configure_connection, connect
 
 CATALOG_FILENAME = "catalog.sqlite"
 
@@ -97,7 +97,8 @@ class Collection:
         return self.source_folders[0]
 
 
-@dataclass(frozen=True)
+# 大規模な取り込みでは数十万件をメモリーに持つため、slots にして1件あたりのメモリーを減らす。
+@dataclass(frozen=True, slots=True)
 class FileRecord:
     """取り込み済みファイルの記録。mode は埋め込み方（"text"・"text+image"・"text+embedded"・"path"、ingest.file_mode()）。
 
@@ -200,23 +201,23 @@ class Catalog(SqliteBatchMixin):
     def __init__(self, directory: Path):
         directory.mkdir(parents=True, exist_ok=True)
         self.path = directory / CATALOG_FILENAME
-        self._conn = sqlite3.connect(str(self.path), timeout=30)
+        self._conn = connect(self.path)
         self._conn.row_factory = sqlite3.Row
         configure_connection(self._conn)
         self._conn.executescript(_SCHEMA)
         # mode 列の無い旧版の catalog.sqlite に列を足す（既存の記録はテキストとして取り込んだもの）。
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(files)")}
         if "mode" not in columns:
-            with self._conn:
+            with self._write():
                 self._conn.execute("ALTER TABLE files ADD COLUMN mode TEXT NOT NULL DEFAULT 'text'")
         # path_indexed 列の無い旧版の catalog.sqlite に列を足す（既存のファイルは次の取り込みでパスを埋め込む）。
         if "path_indexed" not in columns:
-            with self._conn:
+            with self._write():
                 self._conn.execute("ALTER TABLE files ADD COLUMN path_indexed INTEGER NOT NULL DEFAULT 0")
         # document_prefix 列の無い旧版の catalog.sqlite に列を足す（既存のコレクションは NULL ＝ 不明）。
         columns = {r["name"] for r in self._conn.execute("PRAGMA table_info(collections)")}
         if "document_prefix" not in columns:
-            with self._conn:
+            with self._write():
                 self._conn.execute("ALTER TABLE collections ADD COLUMN document_prefix TEXT")
         # 自動取り込みの列の無い旧版の catalog.sqlite に列を足す（既存のコレクションは自動取り込みなし）。
         for column, ddl in (
@@ -229,7 +230,7 @@ class Catalog(SqliteBatchMixin):
             ("include_keywords", "TEXT NOT NULL DEFAULT ''"),
         ):
             if column not in columns:
-                with self._conn:
+                with self._write():
                     self._conn.execute(f"ALTER TABLE collections ADD COLUMN {column} {ddl}")
 
     def close(self) -> None:
@@ -276,7 +277,7 @@ class Catalog(SqliteBatchMixin):
         if self._reference_row(name) is not None:
             raise CatalogError(f"A reference named {name} already exists.")
         try:
-            with self._conn:
+            with self._write():
                 self._conn.execute(
                     "INSERT INTO collections (name, description, source_folder, recursive, exclude_keywords, include_keywords, created_at)"
                     " VALUES (?, ?, ?, ?, ?, ?, ?)",
@@ -306,7 +307,7 @@ class Catalog(SqliteBatchMixin):
         if enabled and not times:
             raise CatalogError("Specify at least one time to enable scheduled ingestion.")
         folders = normalize_source_folders(source_folders) if source_folders is not None else None
-        with self._conn:
+        with self._write():
             if schedule_enabled is not None or schedule_times is not None or schedule_weekdays is not None:
                 self._conn.execute(
                     "UPDATE collections SET schedule_enabled = ?, schedule_times = ?, schedule_weekdays = ? WHERE name = ?",
@@ -327,7 +328,7 @@ class Catalog(SqliteBatchMixin):
         return self.get(name)
 
     def delete(self, name: str) -> None:
-        with self._conn:
+        with self._write():
             self._conn.execute("DELETE FROM files WHERE collection = ?", (name,))
             self._conn.execute("DELETE FROM collections WHERE name = ?", (name,))
 
@@ -338,12 +339,12 @@ class Catalog(SqliteBatchMixin):
             )
 
     def mark_ingested(self, name: str) -> None:
-        with self._conn:
+        with self._write():
             self._conn.execute("UPDATE collections SET last_ingested_at = ? WHERE name = ?", (_now(), name))
 
     def set_last_ingested(self, name: str, value: str | None) -> None:
         """最終取り込み日時をそのまま書く（インスタンス間のコピーでコピー元の日時を写す）。"""
-        with self._conn:
+        with self._write():
             self._conn.execute("UPDATE collections SET last_ingested_at = ? WHERE name = ?", (value, name))
 
     # --- 別のインスタンスのコレクションの参照 ---
@@ -367,7 +368,7 @@ class Catalog(SqliteBatchMixin):
         if self._conn.execute("SELECT 1 FROM collections WHERE name = ?", (name,)).fetchone():
             raise CatalogError(f"Collection {name} already exists.")
         try:
-            with self._conn:
+            with self._write():
                 self._conn.execute(
                     "INSERT INTO collection_refs (name, source_instance, source_collection, created_at) VALUES (?, ?, ?, ?)",
                     (name, source_instance, source_collection, _now()),
@@ -377,7 +378,7 @@ class Catalog(SqliteBatchMixin):
         return self.get_reference(name)
 
     def delete_reference(self, name: str) -> None:
-        with self._conn:
+        with self._write():
             self._conn.execute("DELETE FROM collection_refs WHERE name = ?", (name,))
 
     # --- 取り込み済みファイル ---
@@ -385,8 +386,12 @@ class Catalog(SqliteBatchMixin):
     def files(self, name: str) -> dict[str, FileRecord]:
         rows = self._conn.execute(
             "SELECT source_path, size, mtime, sha256, chunk_count, mode, path_indexed FROM files WHERE collection = ?", (name,)
-        ).fetchall()
-        return {r["source_path"]: FileRecord(**{**dict(r), "path_indexed": bool(r["path_indexed"])}) for r in rows}
+        )
+        # 全行をリストにしてから作らず1行ずつ作り、キーと記録で同じ文字列を使う（数十万件のコレクションでもメモリーを抑える）。
+        result: dict[str, FileRecord] = {}
+        for source, size, mtime, sha256, chunk_count, mode, path_indexed in rows:
+            result[source] = FileRecord(source, size, mtime, sha256, chunk_count, mode, bool(path_indexed))
+        return result
 
     def upsert_file(self, name: str, record: FileRecord) -> None:
         with self._transaction():
@@ -413,7 +418,7 @@ class Catalog(SqliteBatchMixin):
             self._conn.execute("DELETE FROM files WHERE collection = ? AND source_path = ?", (name, source_path))
 
     def clear_files(self, name: str) -> None:
-        with self._conn:
+        with self._write():
             self._conn.execute("DELETE FROM files WHERE collection = ?", (name,))
 
 

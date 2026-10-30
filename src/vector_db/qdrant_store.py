@@ -138,11 +138,14 @@ def _delete_operation(source_path: str) -> dict:
 
 
 def _upsert_operations(source_path: str, start: int, chunks: list[ChunkRecord], vectors: list[list[float]]) -> list[dict]:
-    """chunks を start 番目からのポイントにし、_UPSERT_BATCH 件ずつの upsert にする。"""
+    """chunks を start 番目からのポイントにし、_UPSERT_BATCH 件ずつの upsert にする。
+
+    vectors の各ベクターは list でなくてもよい（取り込みは array('d') で持つ。JSON にするため list にする）。
+    """
     points = [
         {
             "id": str(uuid.uuid5(_POINT_NAMESPACE, f"{source_path}#{i}")),
-            "vector": vector,
+            "vector": vector if isinstance(vector, list) else list(vector),
             "payload": {"source_path": source_path, "locator": chunk.locator, "text": chunk.text},
         }
         for i, (chunk, vector) in enumerate(zip(chunks, vectors, strict=True), start)
