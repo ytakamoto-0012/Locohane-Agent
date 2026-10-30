@@ -41,6 +41,16 @@ def test_defaults_are_disabled_sqlite_vec(tmp_path):
     assert not cfg.vector_db_dir.exists()
 
 
+def test_ingest_temp_dir_defaults_to_system_temp_and_resolves_paths(tmp_path, monkeypatch):
+    from src.config import PROJECT_ROOT
+
+    monkeypatch.delenv("VECTOR_DB_INGEST_TEMP_DIR", raising=False)
+    assert _load(tmp_path, {}).vector_db_ingest_temp_dir == ""
+    cfg = _load(tmp_path, {"ingest_temp_dir": "${common_data_dir}/ingest_tmp"})
+    assert cfg.vector_db_ingest_temp_dir == str(tmp_path / "data" / "inst1" / "ingest_tmp")
+    assert _load(tmp_path, {"ingest_temp_dir": "work/tmp"}).vector_db_ingest_temp_dir == str((PROJECT_ROOT / "work" / "tmp").resolve())
+
+
 def test_enabled_with_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("QDRANT_API_KEY", "secret")
     cfg = _load(

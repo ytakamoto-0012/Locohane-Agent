@@ -827,7 +827,8 @@ class _LoadOptions:
     embedded_images: bool = False
     embedded_image_min_px: int = 0
     office_timeout: float = 0.0
-    # ページ画像の PNG を書き出す一時フォルダ（取り込み1回ごとに作る。_ingest）。空ならシステムの一時フォルダ。
+    # ページ画像の PNG・Office から書き出した PDF を置く一時フォルダ（取り込み1回ごとに [vector_db].ingest_temp_dir の下に作る。
+    # _Ingester.run）。空ならシステムの一時フォルダ。
     pages_dir: str = ""
     # テキストとして読む拡張子（[vector_db].text_extensions）。
     text_extensions: tuple[str, ...] = ()
@@ -940,7 +941,10 @@ def _load_file(
         del data
         if mode == "text+image":
             page_dir = Path(tempfile.mkdtemp(prefix="file_", dir=options.pages_dir or None))
-            pages = render_pages(path, options.image_dpi, out_dir=page_dir, office_timeout=options.office_timeout or None)
+            pages = render_pages(
+                path, options.image_dpi, out_dir=page_dir, office_timeout=options.office_timeout or None,
+                temp_dir=options.pages_dir or None,
+            )
     except (OSError, ExtractError, zipfile.BadZipFile) as e:
         _remove_dir(page_dir)
         return _Prepared(path, record, mode, "failed", reason=str(e))
@@ -1404,7 +1408,11 @@ class _Pipeline:
         self.total = len(files)
         self.pending = iter(files)
         self.exhausted = False
-        pages_root = tempfile.mkdtemp(prefix="locohane_vdb_pages_")
+        # [vector_db].ingest_temp_dir が空ならシステムの一時フォルダの下に作る。
+        temp_dir = self.cfg.vector_db_ingest_temp_dir or None
+        if temp_dir is not None:
+            Path(temp_dir).mkdir(parents=True, exist_ok=True)
+        pages_root = tempfile.mkdtemp(prefix="locohane_vdb_pages_", dir=temp_dir)
         stop_file = Path(pages_root) / "STOP"
         self.options = replace(self.options, pages_dir=pages_root, stop_file=str(stop_file))
         self.load_pool = self._new_load_pool()

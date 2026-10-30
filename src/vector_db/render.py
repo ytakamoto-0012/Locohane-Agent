@@ -95,7 +95,9 @@ def _page_writer(out_dir: Path | None) -> _PageWriter:
     return write
 
 
-def render_pages(path: Path, dpi: int, *, out_dir: Path | None = None, office_timeout: float | None = None) -> list[PageImage]:
+def render_pages(
+    path: Path, dpi: int, *, out_dir: Path | None = None, office_timeout: float | None = None, temp_dir: str | None = None
+) -> list[PageImage]:
     """path の全ページを dpi の解像度で画像にする。
 
     Args:
@@ -104,6 +106,8 @@ def render_pages(path: Path, dpi: int, *, out_dir: Path | None = None, office_ti
             省略時は PageImage.png にそのまま持つ。
         office_timeout: Office ファイルを PDF に書き出す1回の上限秒数。超えたら（見えない確認画面で
             止まった等）そのアプリのプロセスを終了して ExtractError にする。None なら待ち続ける。
+        temp_dir: Office ファイルから書き出す PDF の一時フォルダを作る場所（取り込みは [vector_db].ingest_temp_dir の
+            下のフォルダを渡す）。None ならシステムの一時フォルダ。
 
     Raises:
         ExtractError: 画像化に対応していない拡張子、Office が使えない、
@@ -118,7 +122,7 @@ def render_pages(path: Path, dpi: int, *, out_dir: Path | None = None, office_ti
             return _render_pdf(path, dpi, _page_locator, write)
         if ext in IMAGE_FILE_EXTENSIONS:
             return _render_image_file(path, dpi, write)
-        with tempfile.TemporaryDirectory(prefix="locohane_vdb_") as tmp:
+        with tempfile.TemporaryDirectory(prefix="locohane_vdb_", dir=temp_dir) as tmp:
             pages: list[PageImage] = []
             for pdf_path, locate in _export_office_to_pdf(path, Path(tmp), office_timeout):
                 pages.extend(_render_pdf(pdf_path, dpi, locate, write))

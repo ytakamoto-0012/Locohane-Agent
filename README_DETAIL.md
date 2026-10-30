@@ -1294,7 +1294,7 @@ Office ファイルは本文・図形の文字・グラフのタイトル・コ�
   PDF のテキスト層から取ったそのページの文字（`chunk_size` 文字まで）を使う。
 - **保存先**: 本文と画像は類似度の出方が違う（検索語はテキストのため、画像との類似度は低めに出る）ので、ページ画像の
   ベクターは別のコレクション `<コレクション名>.image`（Qdrant では接頭辞付き）に入れる。ページ画像の PNG は取り込みの間だけ
-  一時フォルダ（`%TEMP%\locohane_vdb_pages_*`）に書き出し、埋め込むときに1枚ずつ読んで、ファイルを書き込んだら消す
+  一時フォルダ（`[vector_db] ingest_temp_dir`。既定は `%TEMP%`。その下の `locohane_vdb_pages_*`）に書き出し、埋め込むときに1枚ずつ読んで、ファイルを書き込んだら消す
   （400ページの PDF 等でも全ページの画像をメモリーに持たないため。停止・エラーで終わったときも取り込みの最後に消す）。
   出典は元のファイルとページ位置だけで、図表の中身を確かめるときは render 系スキル（`pdf-tools`・`docx-render` 等）で
   そのページを画像にしてから `analyze_image` で見る（画像ファイルは出典の `@N` をそのまま `analyze_image` に渡す）。
@@ -1757,6 +1757,7 @@ Claude Code から `/tune-prompt system_prompt` のように実行する。
 | `[vector_db]` | `embedded_image_min_px` | `embedded_images` で取り出す画像の幅・高さの下限（px、既定 128）。どちらかが下回る画像（アイコン等）は埋め込まない。0 なら大きさで除かない | `VECTOR_DB_EMBEDDED_IMAGE_MIN_PX` |
 | `[vector_db]` | `image_dpi` | `image_input = true` のときにページを画像にする解像度（DPI、既定100） | `VECTOR_DB_IMAGE_DPI` |
 | `[vector_db]` | `office_timeout_seconds` | `image_input = true` で Office ファイルを PDF に書き出す1回の上限秒数（既定180）。超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、そのファイルを失敗一覧に載せる。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_OFFICE_TIMEOUT_SECONDS` |
+| `[vector_db]` | `ingest_temp_dir` | 取り込みの間だけ使う一時ファイル（ページ画像の PNG・ファイルの中から取り出した画像・Office から書き出した PDF）を置くフォルダ。空（既定）ならシステムの一時フォルダ（`%TEMP%`）。相対パスはプロジェクトルート基準で、`${common_data_dir}`・`${instance}` も使える。無ければ作り、その下に取り込み1回ごとのフォルダ（`locohane_vdb_pages_*`）を作って終わったら消す。システムドライブの空きが少ないときに別のドライブを指定する | `VECTOR_DB_INGEST_TEMP_DIR` |
 | `[vector_db]` | `ingest_workers` | 取り込みの並列数（既定1）。並列に準備するファイル数（`ingest_processes` が1以上ならそちらの値）。同時に送る埋め込みのリクエスト数は `ingest_embed_requests`（「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる。設定ダッシュボードの取り込みは全インスタンス・全コレクションの合計でこの並列数まで） | `VECTOR_DB_INGEST_WORKERS` |
 | `[vector_db]` | `scan_workers` | 取り込み元フォルダの走査で同時に読むフォルダの数（スレッド数、既定8）。ファイルサーバー上のフォルダで効く。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_SCAN_WORKERS` |
 | `[vector_db]` | `max_files_per_collection` | 1コレクションで取り込む最大ファイル数（既定1000000）。超えた分は取り込まず、ナレッジ画面に警告を出す（取り込み済みのファイルを優先し、残りはパス順の先頭から選ぶ。「文書の取り込み」参照）。**全インスタンス共通**（インスタンス別に上書きできない。設定ダッシュボードの「管理者設定」で変えられる） | `VECTOR_DB_MAX_FILES_PER_COLLECTION` |

@@ -650,6 +650,8 @@ class Config:
         vector_db_image_dpi: 画像として取り込むときのページの解像度（DPI）。
         vector_db_office_timeout_seconds: image_input で Office ファイルを PDF に書き出す1回の上限秒数。
             超えたら（見えない確認画面で止まった等）その Office のプロセスを終了し、失敗一覧に載せる。管理者設定（全インスタンス共通）。
+        vector_db_ingest_temp_dir: 取り込みの間だけ使う一時ファイル（ページ画像の PNG・Office から書き出した PDF）を置くフォルダ
+            （絶対パスの文字列）。空ならシステムの一時フォルダ。この下に取り込み1回ごとのフォルダを作り、終わったら消す。
         vector_db_ingest_workers: 取り込みで並列に準備するファイル数（ingest_processes が 1 以上ならその数）。
         vector_db_ingest_processes: 取り込みで本文の抽出・ページの画像化を行う子プロセスの数。
             0 なら子プロセスを使わず、ワーカースレッドで行う。
@@ -1227,6 +1229,7 @@ class Config:
     vector_db_embedded_image_min_px: int
     vector_db_image_dpi: int
     vector_db_office_timeout_seconds: float
+    vector_db_ingest_temp_dir: str
     vector_db_ingest_workers: int
     vector_db_ingest_processes: int
     vector_db_ingest_embed_requests: int
@@ -1505,6 +1508,12 @@ def _resolve(base: Path, value: str) -> Path:
     """
     p = Path(value)
     return p if p.is_absolute() else (base / p).resolve()
+
+
+def _as_optional_dir(value: str) -> str:
+    """空でもよいフォルダの設定値を、空ならそのまま、そうでなければ PROJECT_ROOT 基準の絶対パスの文字列にする。"""
+    value = value.strip()
+    return str(_resolve(PROJECT_ROOT, value)) if value else ""
 
 
 # GetDriveTypeW の DRIVE_REMOTE（ネットワークドライブ）。
@@ -3470,6 +3479,11 @@ def load_config(
         vector_db_office_timeout_seconds=_positive_float(
             os.getenv("VECTOR_DB_OFFICE_TIMEOUT_SECONDS", vector_db.get("office_timeout_seconds", 180)),
             "[vector_db].office_timeout_seconds",
+        ),
+        vector_db_ingest_temp_dir=_as_optional_dir(
+            _sub_common_data_dir(
+                str(os.getenv("VECTOR_DB_INGEST_TEMP_DIR", vector_db.get("ingest_temp_dir", ""))), common_data_dir, resolved_instance_name
+            )
         ),
         vector_db_ingest_workers=_positive_int(
             os.getenv("VECTOR_DB_INGEST_WORKERS", vector_db.get("ingest_workers", 1)), "[vector_db].ingest_workers"

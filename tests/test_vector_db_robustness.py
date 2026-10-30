@@ -406,7 +406,7 @@ def test_office_timeout_becomes_a_failed_file(env, monkeypatch):
     cfg = _config(env, vector_db_image_input=True, vector_db_image_input_extensions=(".pdf", ".docx"), vector_db_office_timeout_seconds=7)
     seen = {}
 
-    def fake_render(path, dpi, *, out_dir=None, office_timeout=None):
+    def fake_render(path, dpi, *, out_dir=None, office_timeout=None, temp_dir=None):
         seen["timeout"] = office_timeout
         raise render.OfficeTimeout("Office の PDF への書き出しが 7 秒で終わらなかったため中止しました")
 
@@ -415,6 +415,27 @@ def test_office_timeout_becomes_a_failed_file(env, monkeypatch):
     result = ingest.ingest_collection(cfg, "docs", **env["kwargs"])
     assert seen["timeout"] == 7
     assert [(Path(p).name, "7 秒" in r) for p, r in result.failed] == [("stuck.docx", True)]
+
+
+def test_ingest_temp_dir_holds_page_images_and_office_pdfs(env, monkeypatch, tmp_path):
+    (env["docs"] / "a.docx").write_bytes(b"x")
+    temp_root = tmp_path / "ingest_tmp" / "nested"
+    cfg = _config(
+        env, vector_db_image_input=True, vector_db_image_input_extensions=(".docx",), vector_db_ingest_temp_dir=str(temp_root)
+    )
+    seen = {}
+
+    def fake_render(path, dpi, *, out_dir=None, office_timeout=None, temp_dir=None):
+        seen["out_dir"], seen["temp_dir"] = out_dir, temp_dir
+        return [render.PageImage("p.1", "", b"page")]
+
+    monkeypatch.setattr(ingest, "render_pages", fake_render)
+    monkeypatch.setattr(ingest, "_chunk_segments", lambda options, path, data=None: [])
+    ingest.ingest_collection(cfg, "docs", **env["kwargs"])
+    # 取り込み1回ごとのフォルダを ingest_temp_dir の下に作り（無ければ ingest_temp_dir も作る）、終わったら消す。
+    assert Path(seen["temp_dir"]).parent == temp_root
+    assert Path(seen["out_dir"]).parent == Path(seen["temp_dir"])
+    assert temp_root.is_dir() and not any(temp_root.iterdir())
 
 
 # --- 検索ツール -----------------------------------------------------------------------------
