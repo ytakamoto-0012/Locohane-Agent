@@ -14,7 +14,6 @@ from collections import deque
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, ThreadPoolExecutor, wait
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field, replace
-import functools
 import hashlib
 import heapq
 import itertools
@@ -23,7 +22,6 @@ import os
 import shutil
 import stat
 from pathlib import Path
-import queue
 import tempfile
 import threading
 import time
@@ -250,11 +248,6 @@ class IngestSlots:
             return self.processes or self.workers
         return self.requests or self.workers
 
-    def available(self, kind: str) -> int:
-        """kind の空いている枠の数（ほかの取り込みと共有するため、取れる保証は無い目安）。"""
-        with self._lock:
-            return max(0, self.capacity(kind) - len(self._used[kind]))
-
     def available_for(self, user: _SlotUser, kind: str) -> int:
         """user が kind の枠を均等な取り分の範囲で取れる数の目安（空きと、取り分の残りの少ない方）。
 
@@ -307,6 +300,17 @@ class IngestSlots:
                 changed |= user.hungry[kind] and not hungry
                 user.hungry[kind] = hungry
             if changed:
+                self._wake_hungry()
+
+    def pause(self, user: _SlotUser) -> None:
+        """user の空き待ち（hungry）を取り下げる（しばらく枠を取りに行けないとき。_Pipeline._pause_slot_wait）。
+
+        取りに行かない取り込みが空き待ちのまま残ると、それより多く枠を使っている取り込みは空いた枠を取らずに
+        待ち続け、枠が使われないまま空くため。次に枠を取れなかったとき（try_acquire）に、また空き待ちになる。
+        """
+        with self._lock:
+            if any(user.hungry.values()):
+                user.hungry = dict.fromkeys(SLOT_KINDS, False)
                 self._wake_hungry()
 
     def try_acquire(self, user: _SlotUser, kind: str, detail: str) -> int | None:
@@ -1157,13 +1161,16 @@ class _Writer:
 
     def __init__(
         self, cfg: Config, catalog: Catalog, store, keywords: KeywordIndex, journal: IngestJournal, name: str, dim, model: str,
-        result: IngestResult,
+        result: IngestResult, should_stop: Callable[[], bool] | None = None,
     ):
         self.cfg, self.journal = cfg, journal
-        # Qdrant は自分で送る更新をためる（begin_batch）ため、そのまま使う。
-        self.store = DeferredWrites(store, "store") if isinstance(store, SqliteBatchMixin) else store
-        self.keywords = DeferredWrites(keywords, "keyword index")
-        self.catalog = DeferredWrites(catalog, "catalog")
+        # 別のプロセスのロックを待つ間に停止を求められたら、待つのをやめる（StoreStopped。retry_locked 参照）。
+        self.should_stop = should_stop
+        # Qdrant は自分で送る更新をためる（begin_batch）ため、そのまま使う。DeferredWrites も同じ形
+        # （begin_batch・commit・rollback・end_batch）で使える。
+        self.store = DeferredWrites(store, "store", should_stop=should_stop) if isinstance(store, SqliteBatchMixin) else store
+        self.keywords = DeferredWrites(keywords, "keyword index", should_stop=should_stop)
+        self.catalog = DeferredWrites(catalog, "catalog", should_stop=should_stop)
         self.name, self.dim, self.model, self.result = name, dim, model, result
         self.image_collection_ready = False
         self.path_collection_ready = False
@@ -1180,25 +1187,20 @@ class _Writer:
         return (self.store, self.keywords, self.catalog)
 
     def begin(self) -> None:
-        if not isinstance(self.store, DeferredWrites):
-            self.store.begin_batch()
+        self.store.begin_batch()
 
     def finish(self) -> None:
         self._commit()
-        if not isinstance(self.store, DeferredWrites):
-            self.store.end_batch()
+        self.store.end_batch()
 
     def _discard_recorded(self) -> None:
         if self._recorded:
-            self.journal.discard(self.name, self._recorded)
+            self.journal.discard(self.name, self._recorded, should_stop=self.should_stop)
             self._recorded = []
 
     def abort(self) -> None:
         """コミットしていない書き込みを捨てる（エラーで止めるとき。journal の記録は次の取り込みで片付けるため残す）。"""
         for part in self._parts():
-            if isinstance(part, DeferredWrites):
-                part.discard()
-                continue
             try:
                 part.rollback()
             except Exception:  # noqa: BLE001 - 元のエラーを優先する
@@ -1214,10 +1216,7 @@ class _Writer:
 
     def _commit(self) -> None:
         for part in self._parts():
-            if isinstance(part, DeferredWrites):
-                part.apply()
-            else:
-                part.commit()
+            part.commit()
         self._discard_recorded()
         self._uncommitted = 0
         self._last_commit = time.monotonic()
@@ -1239,9 +1238,30 @@ class _Writer:
             self._commit()
 
     def _replace_keywords(self, collection: str, source: str, chunks: list[ChunkRecord], index_texts: list[str] | None = None) -> None:
-        """キーワード索引の source を入れ替える。語への区切りはここで（書き込みのロックを取る前に）済ませる。"""
-        rows = list(iter_token_rows(chunks, index_texts=index_texts))
-        self.keywords.replace_source_rows(collection, source, rows)
+        """キーワード索引の source を入れ替える。語への区切りはここで（書き込みのロックを取る前に）済ませる。
+
+        ためた書き込みは値をそのまま持つため、チャンクの多いファイル（_STREAM_MIN_CHUNKS 件超）は、消してから
+        _KEYWORD_PAGE_ROWS 行ずつ足し、_KEYWORD_FLUSH_ROWS 行ためるごとにファイルの途中でもコミットする（全チャンクの
+        語の一覧を一度にメモリーに作らないため。書きかけのファイルは journal に記録してあり、カタログへの記録は最後のため、
+        途中で止まっても次の取り込みが取り込み直す）。
+        """
+        if len(chunks) <= _STREAM_MIN_CHUNKS:
+            self.keywords.replace_source_rows(collection, source, list(iter_token_rows(chunks, index_texts=index_texts)))
+            return
+        # 変わっていないファイルの索引の作り直し（_Prepared.keyword_chunks）でも、途中のコミットの後に止まると索引が
+        # 書きかけのまま「索引済み」になるため、journal に記録してから書く（次の取り込みが取り込み直す）。
+        self.journal.add(self.name, source, should_stop=self.should_stop)
+        rows = iter_token_rows(chunks, index_texts=index_texts)
+        self.keywords.delete_source(collection, source)
+        pending = 0
+        while page := list(itertools.islice(rows, _KEYWORD_PAGE_ROWS)):
+            self.keywords.append_source_rows(collection, source, page)
+            pending += len(page)
+            if pending >= _KEYWORD_FLUSH_ROWS:
+                self._commit()
+                pending = 0
+        # 書き終えたら（このファイルの残りの書き込みと一緒に）コミットしたときに journal から消す。
+        self._recorded.append(source)
 
     def _ensure_dim(self, vector: Sequence[float]) -> None:
         """最初の埋め込みで次元を決め、本文の保存先のコレクションを作ってモデルを記録する（作成済みなら何もしない）。"""
@@ -1393,8 +1413,24 @@ class _Writer:
         self._maybe_commit()
 
 
-# _WriterThread のキューにためる書き込みの数の上限（超えたらメインスレッドは空くのを待つ）。
+# _WriterThread のキューにためる書き込みの数と、ためるベクターの値の数（float。array('d') で 8 バイトずつ）の上限
+# （どちらかを超えたらメインスレッドは空くのを待つ。キューが空なら、上限を超える1件でも入れる）。
 _WRITE_QUEUE_LIMIT = 256
+_WRITE_QUEUE_MAX_FLOATS = 32 * 1024 * 1024
+
+
+def _task_floats(kind: str, args: tuple) -> int:
+    """書き込みのキューの1件が持つベクターの値の数（_WRITE_QUEUE_MAX_FLOATS で数える分）。"""
+    if kind == "write":
+        prepared = args[0]
+        vectors = [*(prepared.vectors or ()), *(prepared.image_vectors or ())]
+        if prepared.path_vector is not None:
+            vectors.append(prepared.path_vector)
+    elif kind == "append":
+        vectors = args[3]
+    else:
+        return 0
+    return sum(len(v) for v in vectors if v is not None)
 
 
 class _WriterThread:
@@ -1404,8 +1440,11 @@ class _WriterThread:
     保存先への書き込みの順序は変わらない）。Qdrant への送信やコミットを待つ間も、メインスレッドは次の埋め込みを送れる。
     コミットの期限（_Writer.seconds_until_commit）が来たら、次の書き込みを待たずにコミットする。
 
-    キューにためるのは _WRITE_QUEUE_LIMIT 件まで。書き込みが追いつかないときは、メインスレッドが空くのを待つ
-    （埋め込み済みのベクターをメモリーにため続けないため）。
+    キューにためるのは _WRITE_QUEUE_LIMIT 件・ベクターの値で _WRITE_QUEUE_MAX_FLOATS 個まで。書き込みが追いつかない
+    ときは、メインスレッドが空くのを待つ（埋め込み済みのベクターをメモリーにため続けないため）。待ち始めるときに
+    on_block を呼ぶ（_Pipeline は並列数の枠の空き待ちを取り下げる。IngestSlots.pause）。待っている間に停止を
+    求められたら（should_stop）、その書き込みとそれ以降の書き込み（finish 以外）は入れずに捨てる（記録されなかった
+    ファイルは次回の取り込みで処理する。分けて書き込むファイルの途中が抜けないよう、一度捨てたら以降もすべて捨てる）。
 
     書き込みのスレッドでエラーになったら、残りの書き込みはせずにコミットしていない分を捨て（_Writer.abort）、
     メインスレッドの次の呼び出し（check()・write() 等）で同じ例外を投げる。failed はそのとき完了する Future
@@ -1413,13 +1452,20 @@ class _WriterThread:
     on_written は1ファイルを書き終えるごとに、書き込みのスレッドで呼ぶ（_Pipeline._written）。
     """
 
-    def __init__(self, writer: _Writer):
+    def __init__(self, writer: _Writer, should_stop: Callable[[], bool] | None = None):
         self.writer = writer
         self.name = writer.name
         self.keyword_sources = writer.keyword_sources
+        self.should_stop = should_stop
         self.on_written: Callable[[_Prepared], None] | None = None
+        self.on_block: Callable[[], None] | None = None
         self.failed: Future = Future()
-        self._queue: queue.Queue = queue.Queue(maxsize=_WRITE_QUEUE_LIMIT)
+        # 書き込みのキュー（(kind, args, ベクターの値の数)）と、たまっているベクターの値の数。
+        self._tasks: deque[tuple[str, tuple, int]] = deque()
+        self._floats = 0
+        self._cond = threading.Condition()
+        # 停止を求められて書き込みを捨て始めたか（_put）。
+        self.dropping = False
         self._error: BaseException | None = None
         self._aborting = False
         self._thread = threading.Thread(target=self._run, name=f"vector_db_write_{writer.name}", daemon=True)
@@ -1427,41 +1473,77 @@ class _WriterThread:
 
     def backlog(self) -> int:
         """キューにたまっている書き込みの数。"""
-        return self._queue.qsize()
+        with self._cond:
+            return len(self._tasks)
 
     def check(self) -> None:
         """書き込みのスレッドがエラーで止まっていたら、その例外を投げる。"""
         if self._error is not None:
             raise self._error
 
-    def _put(self, task: tuple[str, tuple]) -> None:
+    def _full(self, floats: int) -> bool:
+        if not self._tasks:
+            return False
+        return len(self._tasks) >= _WRITE_QUEUE_LIMIT or self._floats + floats > _WRITE_QUEUE_MAX_FLOATS
+
+    def _put(self, kind: str, args: tuple, *, droppable: bool = True) -> None:
+        floats = _task_floats(kind, args)
+        blocked = False
         while True:
             self.check()
-            try:
-                self._queue.put(task, timeout=_STOP_POLL_SECONDS)
+            if droppable and self.dropping:
                 return
-            except queue.Full:
+            with self._cond:
+                if not self._full(floats):
+                    self._tasks.append((kind, args, floats))
+                    self._floats += floats
+                    self._cond.notify_all()
+                    return
+                if blocked:
+                    self._cond.wait(_STOP_POLL_SECONDS)
+            if not blocked:
+                # 枠のロックを取るため、キューのロックの外で呼ぶ。
+                blocked = True
+                if self.on_block is not None:
+                    self.on_block()
                 continue
+            if droppable and self.should_stop is not None and self.should_stop():
+                logger.info("vector_db ingest: collection=%s stop requested while the write queue is full; dropping the remaining writes", self.name)
+                self.dropping = True
+                return
 
     def write(self, prepared: _Prepared) -> None:
-        self._put(("write", (prepared,)))
+        self._put("write", (prepared,))
 
     def append_chunks(self, prepared: _Prepared, start: int, chunks: list[ChunkRecord], vectors: list[Sequence[float]]) -> None:
-        self._put(("append", (prepared, start, chunks, vectors)))
+        self._put("append", (prepared, start, chunks, vectors))
 
     def remove(self, source: str) -> None:
-        self._put(("remove", (source,)))
+        self._put("remove", (source,))
 
     def finish(self) -> None:
         """キューの書き込みを全部終えてコミットし、書き込みのスレッドを終える。"""
-        self._put(("finish", ()))
+        self._put("finish", (), droppable=False)
         self._thread.join()
         self.check()
 
     def abort(self) -> None:
         """キューの残りを書かずに書き込みのスレッドを止め、コミットしていない書き込みを捨てる。"""
         self._aborting = True
+        with self._cond:
+            self._cond.notify_all()
         self._thread.join()
+
+    def _get(self, timeout: float) -> tuple[str, tuple] | None:
+        with self._cond:
+            if not self._tasks:
+                self._cond.wait(timeout)
+            if not self._tasks:
+                return None
+            kind, args, floats = self._tasks.popleft()
+            self._floats -= floats
+            self._cond.notify_all()
+            return kind, args
 
     def _run(self) -> None:
         writer = self.writer
@@ -1471,11 +1553,11 @@ class _WriterThread:
                     writer.abort()
                     return
                 timeout = writer.seconds_until_commit()
-                try:
-                    kind, args = self._queue.get(timeout=_STOP_POLL_SECONDS if timeout is None else min(timeout, _STOP_POLL_SECONDS))
-                except queue.Empty:
+                task = self._get(_STOP_POLL_SECONDS if timeout is None else min(timeout, _STOP_POLL_SECONDS))
+                if task is None:
                     writer.commit_if_due()
                     continue
+                kind, args = task
                 if kind == "finish":
                     writer.finish()
                     return
@@ -1502,7 +1584,16 @@ class _WriterThread:
 
 # 本文のチャンクがこの件数を超えるファイルは、ベクターをためずに分けて書き込む（_Job.stream）。
 # 超えないファイルは従来どおり全部そろってから1回で入れ替える（検索に書きかけのファイルが出ない）。
-_STREAM_MIN_CHUNKS = 256
+_STREAM_MIN_CHUNKS = 1024
+# 変わっていないファイルを続けて片付けている時間がこの秒数を超えたら、枠の空き待ちを取り下げる（_Pipeline._start_loads）。
+_UNCHANGED_PAUSE_SECONDS = 0.2
+# _STREAM_MIN_CHUNKS 件を超えるファイルのキーワード索引を書くとき、1回に足す行数と、ファイルの途中でもコミットする行数
+# （_Writer._replace_keywords）。
+_KEYWORD_PAGE_ROWS = 256
+_KEYWORD_FLUSH_ROWS = 2048
+# 件数のそろわないテキストを、ほかの準備・リクエストが進んでいるときに送る1リクエストの最小の件数の割合
+# （embedding_batch_size に対する。_Pipeline._partial_batch_size）。
+_PARTIAL_BATCH_MIN_RATIO = 0.25
 # stream のファイルで、書き込み済みの位置より先に送ってよい本文のチャンク数（_Pipeline._texts_held）。
 # 番号順にそろわず書き込めないベクターは、1ファイルあたりおおむねこの件数までしかためない。
 _STREAM_WINDOW = 1024
@@ -1511,6 +1602,7 @@ _STREAM_WINDOW = 1024
 class _Job:
     """埋め込みを待っている1ファイル。texts_to_embed()・pages の各埋め込みが返るたびに埋め、全部そろったら書き込む。
 
+    seq: 準備が終わった順の番号（_Pipeline._start_embeds は、本文と画像のうち、この番号の小さいファイルの方から送る）。
     requests: このファイルの分を含む、送信中の埋め込みのリクエストの数。
     changed_at: 最後に進んだ（送信中のリクエストが無い状態から送り始めた・リクエストが返った）時刻（time.monotonic()）。
         送信中なのに長く進まないファイルを、設定ダッシュボードで詰まっているものとして見せるため。送る順番を待っていた
@@ -1520,8 +1612,9 @@ class _Job:
         （業務データの数十万チャンクの1ファイルでも、ベクターでメモリーを使い切らないため）。
     """
 
-    def __init__(self, prepared: _Prepared):
+    def __init__(self, prepared: _Prepared, seq: int = 0):
         self.prepared = prepared
+        self.seq = seq
         self.texts = prepared.texts_to_embed()
         self.text_vectors: list[Sequence[float] | None] = [None] * len(self.texts)
         self.image_vectors: list[Sequence[float] | None] = [None] * len(prepared.pages)
@@ -1600,6 +1693,7 @@ class _Pipeline:
     ):
         self.cfg, self.folders, self.known, self.writer = cfg, folders, known, writer
         writer.on_written = self._written
+        writer.on_block = self._pause_slot_wait
         self.embedding_client, self.should_stop, self.progress = embedding_client, should_stop, progress
         self.progress_bytes = progress_bytes
         self.options = _LoadOptions.from_config(cfg)
@@ -1624,6 +1718,10 @@ class _Pipeline:
         self.completed_bytes = 0
         # 最後に読み始めたファイル（progress の path。記録が終わったときの通知でも、表示中のファイルを変えない）。
         self.current_source = ""
+        # 進捗の通知（_report・_written）は、メインスレッドと書き込みのスレッドの両方から呼ぶため、順番に並べる。
+        self._progress_lock = threading.Lock()
+        # 準備が終わったファイルに振る番号（_Job.seq）。
+        self._job_seq = itertools.count()
         self.stopped = False
         self.load_pool = None
         self.instance = instance
@@ -1658,6 +1756,12 @@ class _Pipeline:
     def _acquire(self, kind: str, detail: str) -> int | None:
         return self.slots.try_acquire(self.slot_user, kind, detail)
 
+    def _pause_slot_wait(self) -> None:
+        """しばらく枠を取りに行けない（書き込みの空きを待つ・変わっていないファイルを続けて片付ける）間は、空き待ちを
+        取り下げる（空き待ちのままだと、ほかの取り込みが空いた枠を取らずに待ち、枠が使われないまま空くため）。"""
+        if self.slot_user is not None:
+            self.slots.pause(self.slot_user)
+
     def _track(self, future: Future, kind: str, index: int) -> None:
         # 完了（キャンセル・例外を含む）したら枠を返す。ほかの取り込みがすぐ使えるよう、ワーカースレッドで返す。
         future.add_done_callback(lambda _f: self.slots.release(kind, index))
@@ -1687,7 +1791,7 @@ class _Pipeline:
         self.slot_user.embedding_files = self.embedding_files
         try:
             while True:
-                if not self.stopped and self.should_stop is not None and self.should_stop():
+                if not self.stopped and (self.writer.dropping or (self.should_stop is not None and self.should_stop())):
                     self.stopped = True
                 if self.stopped:
                     # 準備中・埋め込み中のファイルの終わりを待たずに止める（巨大なファイルの本文の抽出・画像化を待つと、
@@ -1796,12 +1900,14 @@ class _Pipeline:
             if not self.loads and not self.stopped and self._submit_load(pool, _load, self.isolate[0], True):
                 self.isolate.popleft()
             return
+        started = time.monotonic()
+        paused = False
         while not self.stopped and not self.exhausted and len(self.loads) < self.load_limit and self.waiting < self._max_waiting:
             item, self._held_item = self._held_item or next(self.pending, None), None
             if item is None:
                 self.exhausted = True
                 return
-            if self.should_stop is not None and self.should_stop():
+            if self.writer.dropping or (self.should_stop is not None and self.should_stop()):
                 self.stopped = True
                 return
             source, st = item
@@ -1814,6 +1920,10 @@ class _Pipeline:
                 mode = _file_mode(self.options, path)
                 path_text = relative_path_text(source_root(self.folders, path), path)
                 self._loaded(_Prepared(path, record, mode, "unchanged", path_text=path_text))
+                if not paused and time.monotonic() - started >= _UNCHANGED_PAUSE_SECONDS:
+                    # 変わっていないファイルが続いて枠を取りに行けない間は、前の回の空き待ちを取り下げる。
+                    paused = True
+                    self._pause_slot_wait()
                 continue
             args = (self.options, source_root(self.folders, path), path, st, record, needs_keywords)
             if not self._submit_load(pool, _load if self.processes else _load_in_thread, args, False):
@@ -1822,14 +1932,18 @@ class _Pipeline:
             self._report(source)
 
     def _report(self, source: str | None = None) -> None:
-        """記録まで終わった件数を progress へ通知する（source はこれから読み始めるファイル。省略時は直前のまま）。"""
-        if source is not None:
-            self.current_source = source
-        if self.progress is not None:
-            self.progress(self.completed, self.total, self.current_source)
+        """記録まで終わった件数を progress へ通知する（source はこれから読み始めるファイル。省略時は直前のまま）。
+
+        メインスレッド（読み始め）と書き込みのスレッド（_written）の両方から呼ぶため、_progress_lock の中で通知する。
+        """
+        with self._progress_lock:
+            if source is not None:
+                self.current_source = source
+            if self.progress is not None:
+                self.progress(self.completed, self.total, self.current_source)
 
     def _loaded(self, prepared: _Prepared) -> None:
-        job = _Job(prepared)
+        job = _Job(prepared, next(self._job_seq))
         if not job.remaining:
             self._write(job)
             return
@@ -1851,28 +1965,43 @@ class _Pipeline:
         return job.stream and index - job.streamed >= _STREAM_WINDOW
 
     def _start_embeds(self, pool) -> None:
+        """埋め込みのリクエストを枠の空く限り送る。
+
+        本文（text_queue）と画像（image_queue）は、それぞれの先頭のうち先に準備が終わったファイル（_Job.seq の小さい方）
+        から送る（同じファイルなら本文から）。本文が1バッチ分たまっていれば常に本文から送ると、後から準備が終わった
+        ファイルの本文が、先に本文を送り終えて画像だけが残ったファイルを追い越し続け、そのファイルが後回しになるため。
+        """
         while not self.stopped and len(self.embeds) < self.embed_limit:
-            held = self._texts_held()
-            if not held and len(self.text_queue) >= self.batch_size:
-                started = self._submit_texts(pool, self.batch_size)
-            elif self.image_queue:
+            count = 0
+            if self.text_queue and not self._texts_held():
+                count = self.batch_size if len(self.text_queue) >= self.batch_size else self._partial_batch_size()
+            if self.image_queue and (not count or self.image_queue[0][0].seq < self.text_queue[0][0].seq):
                 started = self._submit_image(pool)
-            elif not held and self.text_queue:
-                started = self._submit_texts(pool, self._partial_batch_size())
+            elif count:
+                started = self._submit_texts(pool, count)
             else:
                 return
             if not started:
                 return
 
     def _partial_batch_size(self) -> int:
-        """embedding_batch_size 件に満たないテキストを、空いている枠で分けて送るときの1リクエストの件数。
+        """embedding_batch_size 件に満たないテキストを、空いている枠で分けて送るときの1リクエストの件数（0 なら今は送らない）。
 
         件数がそろうのを待たずに、空いている枠（この取り込みの残りと、共有の枠のうちこの取り込みの取り分
         （IngestSlots.available_for）の少ない方）へ均等に分けて送る（埋め込みサーバーを遊ばせないため）。
         サーバーが追いつかず枠が埋まっているときほど、キューにたまってまとまったバッチになる。
+        ただし準備中のファイル（この後テキストが増える）と送信中のリクエストの両方があるときは、1リクエストを
+        embedding_batch_size の _PARTIAL_BATCH_MIN_RATIO 以上にし、それに満たなければ待つ（小さいファイルの数件ずつの
+        リクエストを多数送って、リクエストのオーバーヘッドでかえって遅くならないため）。
         """
         free = min(self.embed_limit - len(self.embeds), self.slots.available_for(self.slot_user, "embed"))
-        return min(self.batch_size, max(1, -(-len(self.text_queue) // max(free, 1))))
+        size = min(self.batch_size, max(1, -(-len(self.text_queue) // max(free, 1))))
+        if self.loads and self.embeds:
+            minimum = min(self.batch_size, max(1, int(self.batch_size * _PARTIAL_BATCH_MIN_RATIO)))
+            if len(self.text_queue) < minimum:
+                return 0
+            size = max(size, minimum)
+        return size
 
     def _submit_embed(self, pool, kind: str, items: list[tuple[_Job, int]], detail: str, func, /, *args, **kwargs) -> bool:
         index = self._acquire("embed", detail)
@@ -1949,15 +2078,17 @@ class _Pipeline:
 
     def _written(self, prepared: _Prepared) -> None:
         """prepared を記録まで書き終えた（書き込みのスレッドで呼ばれる）。"""
-        self.completed += 1
-        # 読み始めたときだけ通知すると、準備の枠が埋まっている間や最後のファイルの準備が終わった後は、
-        # 記録が進んでも進捗（バー・○ / ○ ファイル）が止まったままになり、一覧の文書の件数とずれる。
-        self._report()
-        # stat が無いのは、変わっていない・取り込めなかったファイル（_load）。
-        if prepared.stat is not None:
-            self.completed_bytes += prepared.stat.st_size
-            if self.progress_bytes is not None:
-                self.progress_bytes(self.completed_bytes)
+        with self._progress_lock:
+            self.completed += 1
+            # 読み始めたときだけ通知すると、準備の枠が埋まっている間や最後のファイルの準備が終わった後は、
+            # 記録が進んでも進捗（バー・○ / ○ ファイル）が止まったままになり、一覧の文書の件数とずれる。
+            if self.progress is not None:
+                self.progress(self.completed, self.total, self.current_source)
+            # stat が無いのは、変わっていない・取り込めなかったファイル（_load）。
+            if prepared.stat is not None:
+                self.completed_bytes += prepared.stat.st_size
+                if self.progress_bytes is not None:
+                    self.progress_bytes(self.completed_bytes)
 
 
 def _jobs_of(items: list[tuple[_Job, int]]) -> list[_Job]:
@@ -2029,9 +2160,9 @@ def _ingest(
     )
     if scan.over_limit:
         logger.warning("vector_db ingest: collection=%s %s", name, _over_limit_hint(result))
-    plain_writer = _Writer(cfg, catalog, store, keywords, journal, name, dim, model, result)
+    plain_writer = _Writer(cfg, catalog, store, keywords, journal, name, dim, model, result, should_stop)
     plain_writer.begin()
-    writer = _WriterThread(plain_writer)
+    writer = _WriterThread(plain_writer, should_stop)
     try:
         pipeline = _Pipeline(cfg, folders, known, writer, embedding_client, should_stop, progress, slots, instance, progress_bytes)
         pipeline.run(files)

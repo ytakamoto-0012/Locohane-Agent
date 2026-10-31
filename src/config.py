@@ -1518,6 +1518,27 @@ def _as_optional_dir(value: str) -> str:
     return str(_resolve(PROJECT_ROOT, value)) if value else ""
 
 
+def _as_ingest_temp_dir(value: str) -> str:
+    """[vector_db].ingest_temp_dir（全インスタンス共通）を _as_optional_dir で絶対パスにする。
+
+    ${common_data_dir}・${instance} 等の ${…} はインスタンスごとに変わるため置換しない。書かれていたら、その文字列
+    どおりの名前のフォルダをプロジェクトルートの下に作ってしまうため、警告してシステムの一時フォルダを使う（空にする）。
+    既存のファイルを指す値も同じく使わない（設定ダッシュボードの「管理者設定」はどちらも保存させない）。
+    """
+    value = value.strip()
+    if "${" in value:
+        logger.warning(
+            "[vector_db].ingest_temp_dir = %r: ${...} cannot be used in this setting (it is shared by all instances), "
+            "so the system temporary folder is used instead.", value,
+        )
+        return ""
+    resolved = _as_optional_dir(value)
+    if resolved and Path(resolved).is_file():
+        logger.warning("[vector_db].ingest_temp_dir = %r is an existing file, so the system temporary folder is used instead.", value)
+        return ""
+    return resolved
+
+
 # GetDriveTypeW の DRIVE_REMOTE（ネットワークドライブ）。
 _DRIVE_REMOTE = 4
 
@@ -3483,7 +3504,7 @@ def load_config(
             "[vector_db].office_timeout_seconds",
         ),
         # 全インスタンス共通の設定のため、インスタンスごとに変わる ${common_data_dir}・${instance} は置換しない。
-        vector_db_ingest_temp_dir=_as_optional_dir(str(os.getenv("VECTOR_DB_INGEST_TEMP_DIR", vector_db.get("ingest_temp_dir", "")))),
+        vector_db_ingest_temp_dir=_as_ingest_temp_dir(str(os.getenv("VECTOR_DB_INGEST_TEMP_DIR", vector_db.get("ingest_temp_dir", "")))),
         vector_db_ingest_workers=_positive_int(
             os.getenv("VECTOR_DB_INGEST_WORKERS", vector_db.get("ingest_workers", 1)), "[vector_db].ingest_workers"
         ),

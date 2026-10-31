@@ -483,6 +483,140 @@ def test_slots_are_shared_evenly_between_ingestions():
     assert sorted(s["collection"] for s in slots.snapshot()["embed"]) == ["a", "a", "b", "b"]
 
 
+def test_paused_ingestion_does_not_keep_freed_slots_idle():
+    """枠を取りに行けない間（書き込みの空き待ち等）に空き待ちを取り下げれば、ほかの取り込みが空いた枠を使える。"""
+    slots = ingest.IngestSlots(1, 0, 2)
+    first, second = slots.join("inst1", "a"), slots.join("inst1", "b")
+    assert _round(slots, first, "a") == [0, 1]
+    assert _round(slots, second, "b") == [] and second.hungry["embed"]
+    slots.release("embed", 0)
+    # 空き待ちのままの second を優先するため、first は取れない。
+    assert _round(slots, first, "a") == []
+    slots.pause(second)
+    assert not second.hungry["embed"] and first.wakeup.done()
+    assert _round(slots, first, "a") == [0]
+    # second がまた取りに来て取れなければ、また空き待ちになる。
+    assert _round(slots, second, "b") == [] and second.hungry["embed"]
+
+
+def _bare_pipeline(slots, *, batch_size=2, embed_limit=3):
+    """_start_embeds・_partial_batch_size だけを試すための _Pipeline（送信は記録するだけ）。"""
+    pipeline = ingest._Pipeline.__new__(ingest._Pipeline)
+    pipeline.stopped = False
+    pipeline.embeds, pipeline.loads = {}, {}
+    pipeline.batch_size, pipeline.embed_limit = batch_size, embed_limit
+    pipeline.text_queue, pipeline.image_queue = ingest.deque(), ingest.deque()
+    pipeline.slots, pipeline.slot_user = slots, slots.join("inst1", "a")
+    pipeline.sent = []
+
+    def submit_image(pool):
+        job, _ = pipeline.image_queue.popleft()
+        pipeline.sent.append(("image", job.seq))
+        pipeline.embeds[object()] = None
+        return True
+
+    def submit_texts(pool, count):
+        items = [pipeline.text_queue.popleft() for _ in range(count)]
+        pipeline.sent.append(("text", [job.seq for job, _ in items]))
+        pipeline.embeds[object()] = None
+        return True
+
+    pipeline._submit_image, pipeline._submit_texts = submit_image, submit_texts
+    return pipeline
+
+
+def _job(seq):
+    return types.SimpleNamespace(seq=seq, stream=False, streamed=0)
+
+
+def test_older_files_are_embedded_before_newer_ones():
+    """本文が1バッチ分たまっていても、先に準備が終わったファイルの残りの画像を先に送る（新しいファイルに追い越されない）。"""
+    pipeline = _bare_pipeline(ingest.IngestSlots(1, 0, 3))
+    old, new = _job(0), _job(1)
+    pipeline.image_queue.extend([(old, 0), (old, 1)])
+    pipeline.text_queue.extend([(new, 0), (new, 1), (new, 2)])
+    pipeline._start_embeds(None)
+    assert pipeline.sent == [("image", 0), ("image", 0), ("text", [1, 1])]
+    # 同じファイルなら本文から送る。
+    pipeline = _bare_pipeline(ingest.IngestSlots(1, 0, 3))
+    pipeline.text_queue.extend([(old, 0), (old, 1)])
+    pipeline.image_queue.extend([(old, 0)])
+    pipeline._start_embeds(None)
+    assert pipeline.sent == [("text", [0, 0]), ("image", 0)]
+
+
+def test_partial_batches_wait_for_more_texts_while_files_are_loading():
+    """準備中のファイルと送信中のリクエストがあるときは、数件だけのリクエストを送らずにテキストがたまるのを待つ。"""
+    pipeline = _bare_pipeline(ingest.IngestSlots(1, 0, 4), batch_size=8, embed_limit=4)
+    job = _job(0)
+    pipeline.text_queue.append((job, 0))
+    assert pipeline._partial_batch_size() == 1
+    pipeline.loads[object()] = None
+    pipeline.embeds[object()] = None
+    assert pipeline._partial_batch_size() == 0
+    pipeline.text_queue.extend((job, i) for i in range(1, 6))
+    # 6 件・空き 3 なら 2 件ずつだが、最小の件数（8 × 0.25 = 2）以上にする。
+    assert pipeline._partial_batch_size() == 2
+    pipeline.loads.clear()
+    pipeline.text_queue.popleft()
+    assert pipeline._partial_batch_size() == 2
+
+
+class _BlockingWriter:
+    name = "docs"
+    keyword_sources: set = set()
+
+    def __init__(self):
+        self.gate = threading.Event()
+        self.written = []
+
+    def seconds_until_commit(self):
+        return None
+
+    def commit_if_due(self):
+        pass
+
+    def write(self, prepared):
+        self.gate.wait(5)
+        self.written.append(prepared.name)
+
+    def finish(self):
+        pass
+
+    def abort(self):
+        pass
+
+
+def _prepared(name, floats=0):
+    return types.SimpleNamespace(name=name, vectors=[ingest.array("d", [0.0] * floats)] if floats else [], image_vectors=[], path_vector=None, page_dir=None)
+
+
+def test_write_queue_is_limited_by_vectors_and_drops_writes_on_stop(monkeypatch):
+    """書き込みのキューはベクターの値の数でも上限を持ち、空きを待つ間に停止を求められたら以降の書き込みを捨てる。"""
+    monkeypatch.setattr(ingest, "_WRITE_QUEUE_MAX_FLOATS", 10)
+    monkeypatch.setattr(ingest, "_STOP_POLL_SECONDS", 0.02)
+    plain = _BlockingWriter()
+    stop = threading.Event()
+    writer = ingest._WriterThread(plain, stop.is_set)
+    blocked = []
+    writer.on_block = lambda: blocked.append(True)
+    writer.write(_prepared("first"))
+    deadline = time.monotonic() + 5
+    while writer.backlog() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    # キューが空なら、上限を超える1件でも入れる。
+    writer.write(_prepared("big", 100))
+    assert writer.backlog() == 1 and not blocked
+    threading.Timer(0.1, stop.set).start()
+    writer.write(_prepared("dropped", 8))
+    assert blocked and writer.dropping
+    # 一度捨て始めたら、空いても以降の書き込みは捨てる（分けて書き込むファイルの途中が抜けないため）。
+    plain.gate.set()
+    writer.write(_prepared("after"))
+    writer.finish()
+    assert plain.written == ["first", "big"]
+
+
 def test_slots_available_for_is_the_even_share():
     """available_for は、空きと、その種類の枠を使っている・空きを待っている取り込みで均等に分けた取り分の残りの少ない方。"""
     slots = ingest.IngestSlots(1, 0, 4)

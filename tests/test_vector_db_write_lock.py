@@ -19,7 +19,9 @@ import pytest
 from _vector_db_fakes import FakeEmbeddingServer, FakeQdrant, make_config
 from src.vector_db import catalog as vcat
 from src.vector_db import collection_copy, embeddings, ingest, qdrant_store, sqlite_batch
+from src.vector_db.journal import open_journal
 from src.vector_db.keyword_index import KEYWORDS_FILENAME
+from src.vector_db.store import StoreStopped
 
 
 @pytest.fixture(autouse=True)
@@ -77,6 +79,91 @@ def test_retry_locked_gives_up_after_the_deadline(monkeypatch):
 
     with pytest.raises(sqlite3.OperationalError, match="locked"):
         sqlite_batch.retry_locked(locked, what="test", seconds=0)
+
+
+def test_retry_locked_stops_when_a_stop_is_requested(monkeypatch):
+    """should_stop を渡すと、ロックのやり直しを待つ間に停止を求められたら StoreStopped を投げる（停止が何分も止まらない）。"""
+    monkeypatch.setattr(sqlite_batch.time, "sleep", lambda seconds: None)
+    calls = {"n": 0}
+
+    def locked():
+        calls["n"] += 1
+        raise sqlite3.OperationalError("database is locked")
+
+    with pytest.raises(StoreStopped):
+        sqlite_batch.retry_locked(locked, what="test", should_stop=lambda: calls["n"] >= 2)
+    assert calls["n"] == 2
+
+
+def test_apply_deferred_stops_while_another_process_holds_the_lock(tmp_path, monkeypatch):
+    """停止を求められたら、ほかのプロセスのロックが外れるのを待たずに StoreStopped を投げ、何も書かない。"""
+    monkeypatch.setattr(sqlite_batch, "_STOPPABLE_BUSY_TIMEOUT_SECONDS", 0.05)
+    directory = tmp_path / "vector_db"
+    with vcat.open_catalog(directory) as catalog:
+        catalog.create("docs", str(tmp_path))
+        other = sqlite3.connect(str(directory / vcat.CATALOG_FILENAME), timeout=1)
+        other.execute("BEGIN IMMEDIATE")
+        stop = threading.Event()
+        threading.Timer(0.3, stop.set).start()
+        started = time.monotonic()
+        try:
+            with pytest.raises(StoreStopped):
+                catalog.apply_deferred([lambda: catalog.set_model("docs", "m", 3)], should_stop=stop.is_set)
+        finally:
+            other.rollback()
+            other.close()
+        assert time.monotonic() - started < 5
+        assert catalog.get("docs").model is None
+        # busy timeout は元に戻っている。
+        assert catalog._conn.execute("PRAGMA busy_timeout").fetchone()[0] == int(sqlite_batch.SQLITE_TIMEOUT_SECONDS * 1000)
+
+
+def test_deferred_writes_only_defer_write_methods(tmp_path):
+    """読み取りや、その場でコミットするメソッドはためられない（ためると None が返り、まとめ書きの途中でコミットされる）。"""
+    with vcat.open_catalog(tmp_path / "vector_db") as catalog:
+        catalog.create("docs", str(tmp_path))
+        deferred = sqlite_batch.DeferredWrites(catalog, "catalog")
+        for name in ("files", "get", "mark_ingested", "clear_files"):
+            with pytest.raises(AttributeError, match="cannot defer"):
+                getattr(deferred, name)
+        assert bool(deferred) and deferred.pending == 0
+        deferred.set_model("docs", "m", 3)
+        assert deferred.pending == 1 and catalog.get("docs").model is None
+        # rollback はためた書き込みを捨て、commit はまとめて書く（Qdrant の保存先と同じ形で使える）。
+        deferred.rollback()
+        deferred.commit()
+        assert catalog.get("docs").model is None
+        deferred.begin_batch()
+        deferred.set_model("docs", "m", 3)
+        deferred.end_batch()
+        assert catalog.get("docs").model == "m" and deferred.pending == 0
+
+
+def test_journal_rolls_back_when_commit_fails(tmp_path, monkeypatch):
+    """COMMIT がロックで失敗しても、トランザクションを開いたままにせず巻き戻してやり直す。"""
+    monkeypatch.setattr(sqlite_batch.time, "sleep", lambda seconds: None)
+    journal = open_journal(tmp_path / "vector_db")
+    real_conn = journal._conn
+    failures = {"n": 1}
+
+    class _Conn:
+        def __getattr__(self, name):
+            return getattr(real_conn, name)
+
+        def execute(self, sql, *args):
+            if sql == "COMMIT" and failures["n"]:
+                failures["n"] -= 1
+                raise sqlite3.OperationalError("database is locked")
+            return real_conn.execute(sql, *args)
+
+    journal._conn = _Conn()
+    try:
+        journal.add("docs", "a.md")
+        assert not real_conn.in_transaction
+        assert journal.sources("docs") == ["a.md"]
+    finally:
+        journal._conn = real_conn
+        journal.close()
 
 
 def test_instance_write_lock_is_shared_per_directory(tmp_path):

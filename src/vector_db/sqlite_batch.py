@@ -23,6 +23,8 @@ import threading
 import time
 from typing import Callable, TypeVar
 
+from .store import StoreStopped
+
 logger = logging.getLogger(__name__)
 
 # 接続の busy timeout（秒）。ほかの接続の書き込みのロックが外れるのを、この秒数まで待つ。
@@ -33,6 +35,9 @@ _WAL_SWITCH_TIMEOUT_SECONDS = SQLITE_TIMEOUT_SECONDS
 _RETRY_LOCKED_SECONDS = 600.0
 _RETRY_FIRST_DELAY_SECONDS = 0.5
 _RETRY_MAX_DELAY_SECONDS = 10.0
+# retry_locked() に should_stop を渡したとき、停止を確かめる間隔（秒）と、1回の試行の busy timeout（秒。busy_timeout_for）。
+_STOP_POLL_SECONDS = 0.5
+_STOPPABLE_BUSY_TIMEOUT_SECONDS = 2.0
 
 _T = TypeVar("_T")
 
@@ -71,11 +76,19 @@ def is_locked_error(error: BaseException) -> bool:
     return "locked" in message or "busy" in message
 
 
-def retry_locked(func: Callable[[], _T], *, what: str, seconds: float | None = None) -> _T:
+def _stop_requested(should_stop: Callable[[], bool] | None) -> bool:
+    return should_stop is not None and bool(should_stop())
+
+
+def retry_locked(
+    func: Callable[[], _T], *, what: str, seconds: float | None = None, should_stop: Callable[[], bool] | None = None
+) -> _T:
     """func() を呼び、ほかの接続のロックで失敗したら間隔を空けて（指数的に延ばし、揺らぎを加えて）やり直す。
 
     func は失敗したら書きかけを巻き戻し、何度呼んでも同じ結果になるものにする。seconds 秒
     （省略時は _RETRY_LOCKED_SECONDS）たっても失敗するなら、最後のエラーをそのまま投げる。
+    should_stop を渡すと、やり直しを待つ間に _STOP_POLL_SECONDS 秒ごとに確かめ、True を返したら
+    StoreStopped を投げる（取り込み・コピーの「停止」が、ロックの待ちで何分も止まらないようにするため）。
     """
     deadline = time.monotonic() + (_RETRY_LOCKED_SECONDS if seconds is None else seconds)
     delay = _RETRY_FIRST_DELAY_SECONDS
@@ -87,10 +100,33 @@ def retry_locked(func: Callable[[], _T], *, what: str, seconds: float | None = N
             attempt += 1
             if not is_locked_error(e) or time.monotonic() >= deadline:
                 raise
+            if _stop_requested(should_stop):
+                raise StoreStopped(f"Stopped waiting for the database lock ({what}) because a stop was requested.") from e
             wait = min(delay, _RETRY_MAX_DELAY_SECONDS) * random.uniform(0.5, 1.0)
             logger.warning("vector_db: %s failed because the database is locked (%s). Retrying in %.1fs (attempt %d).", what, e, wait, attempt)
-            time.sleep(wait)
+            until = time.monotonic() + wait
+            while (left := until - time.monotonic()) > 0:
+                time.sleep(min(left, _STOP_POLL_SECONDS))
+                if _stop_requested(should_stop):
+                    raise StoreStopped(f"Stopped waiting for the database lock ({what}) because a stop was requested.") from e
             delay *= 2
+
+
+@contextmanager
+def busy_timeout_for(conn: sqlite3.Connection, should_stop: Callable[[], bool] | None):
+    """should_stop があれば、その間だけ conn の busy timeout を _STOPPABLE_BUSY_TIMEOUT_SECONDS 秒に縮める。
+
+    busy timeout の待ちの中では停止を確かめられないため、短く待って失敗させ、retry_locked のやり直しの間に
+    停止を確かめる（やり直しを続ける上限は retry_locked の seconds のまま）。
+    """
+    if should_stop is None:
+        yield
+        return
+    conn.execute(f"PRAGMA busy_timeout = {int(_STOPPABLE_BUSY_TIMEOUT_SECONDS * 1000)}")
+    try:
+        yield
+    finally:
+        conn.execute(f"PRAGMA busy_timeout = {int(SQLITE_TIMEOUT_SECONDS * 1000)}")
 
 
 def configure_connection(conn: sqlite3.Connection) -> None:
@@ -143,18 +179,21 @@ class SqliteBatchMixin:
         with self._write():
             yield
 
-    def apply_deferred(self, ops: list[Callable[[], None]], *, what: str = "write") -> None:
+    def apply_deferred(
+        self, ops: list[Callable[[], None]], *, what: str = "write", should_stop: Callable[[], bool] | None = None
+    ) -> None:
         """ops（このオブジェクトへの書き込みのメソッドの呼び出し）を、1つのトランザクションで順に行ってコミットする。
 
         インスタンスの書き込みロックを取り、最初に書き込みのロック（BEGIN IMMEDIATE）を取ってから書くため、
         ロックを持つのは書いている間だけ。ほかのプロセスのロックで失敗したら巻き戻し、間隔を空けて最初から
         やり直す（retry_locked。ops は何度呼んでも同じ結果になるよう、ためた値で書くものにする）。
+        should_stop が True を返したら、やり直しをやめて StoreStopped を投げる（ops は書かない）。
         """
         if not ops:
             return
 
         def attempt() -> None:
-            with instance_write_lock(self.path.parent):
+            with instance_write_lock(self.path.parent), busy_timeout_for(self._conn, should_stop):
                 if not self._conn.in_transaction:
                     self._conn.execute("BEGIN IMMEDIATE")
                 self._batching = True
@@ -163,12 +202,13 @@ class SqliteBatchMixin:
                         op()
                     self._conn.commit()
                 except BaseException:
-                    self._conn.rollback()
+                    if self._conn.in_transaction:
+                        self._conn.rollback()
                     raise
                 finally:
                     self._batching = False
 
-        retry_locked(attempt, what=f"{what} ({self.path.name})")
+        retry_locked(attempt, what=f"{what} ({self.path.name})", should_stop=should_stop)
 
     # --- collection_copy 用（begin_batch() から commit() までのトランザクションを開いたままにする） ---
 
@@ -186,20 +226,39 @@ class SqliteBatchMixin:
         self._batching = False
 
 
-class DeferredWrites:
-    """SqliteBatchMixin の DB への書き込みをためておき、apply() でまとめて書く（取り込み・コピー用）。
+# DeferredWrites でためられる書き込みのメソッド（`with self._transaction():` で書き、apply_deferred のトランザクションに
+# まとめられるもの）。読み取りや、`with self._write():` でその場でコミットするメソッド（drop_collection・mark_ingested 等）は
+# ためられない（ためると読み取りが None を返し、まとめ書きの途中でコミットされてしまうため）。
+DEFERRABLE_METHODS = frozenset({
+    # 保存先（sqlite_vec_store.SqliteVecStore）
+    "ensure_collection", "replace_source", "append_source", "delete_source",
+    # カタログ（catalog.Catalog）
+    "set_model", "upsert_file", "mark_path_indexed", "delete_file",
+    # キーワード索引（keyword_index.KeywordIndex。delete_source は保存先と同じ名前）
+    "replace_source_rows", "append_source_rows",
+})
 
-    書き込みのメソッドを呼ぶと、その場では書かずに呼び出しを記録する。apply() は記録した呼び出しを
-    1つの短いトランザクションで順に行う（SqliteBatchMixin.apply_deferred）。Qdrant への送信や
+
+class DeferredWrites:
+    """SqliteBatchMixin の DB への書き込みをためておき、commit()（apply()）でまとめて書く（取り込み・コピー用）。
+
+    書き込みのメソッド（DEFERRABLE_METHODS）を呼ぶと、その場では書かずに呼び出しを記録する。commit() は記録した
+    呼び出しを1つの短いトランザクションで順に行う（SqliteBatchMixin.apply_deferred）。Qdrant への送信や
     コピー元の読み出しを待つ間に書き込みのロックを持たないため。ロック競合でやり直すことがあるため、
     渡す値は後から変えないもの（リストはその場で作ったもの）にする。
+
+    Qdrant の保存先と同じ形（begin_batch・commit・rollback・end_batch）で使えるようにしてある
+    （begin_batch・end_batch は何もしない。rollback() はためた書き込みを捨てる）。
+    should_stop を渡すと、ロックの待ちの間に停止を求められたら StoreStopped を投げる（retry_locked）。
     """
 
-    def __init__(self, target: SqliteBatchMixin, what: str):
-        self.target, self.what = target, what
+    def __init__(self, target: SqliteBatchMixin, what: str, *, should_stop: Callable[[], bool] | None = None):
+        self.target, self.what, self.should_stop = target, what, should_stop
         self.ops: list[Callable[[], None]] = []
 
     def __getattr__(self, name: str):
+        if name not in DEFERRABLE_METHODS:
+            raise AttributeError(f"DeferredWrites cannot defer {type(self.target).__name__}.{name} (not a deferrable write method)")
         method = getattr(self.target, name)
 
         def defer(*args, **kwargs) -> None:
@@ -207,13 +266,24 @@ class DeferredWrites:
 
         return defer
 
-    def __len__(self) -> int:
+    @property
+    def pending(self) -> int:
         """ためている書き込みの数。"""
         return len(self.ops)
 
-    def apply(self) -> None:
-        self.target.apply_deferred(self.ops, what=self.what)
+    def begin_batch(self) -> None:
+        pass
+
+    def end_batch(self) -> None:
+        self.commit()
+
+    def commit(self) -> None:
+        self.target.apply_deferred(self.ops, what=self.what, should_stop=self.should_stop)
         self.ops = []
 
-    def discard(self) -> None:
+    apply = commit
+
+    def rollback(self) -> None:
         self.ops = []
+
+    discard = rollback

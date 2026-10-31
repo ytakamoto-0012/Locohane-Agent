@@ -55,6 +55,19 @@ def test_ingest_temp_dir_defaults_to_system_temp_and_resolves_paths(tmp_path, mo
     assert _load(tmp_path, {}).vector_db_ingest_temp_dir == str(tmp_path / "env_tmp")
 
 
+def test_ingest_temp_dir_rejects_placeholders_and_files(tmp_path, monkeypatch, caplog):
+    """${…} は置換しない設定のため、その文字列どおりのフォルダを作らずシステムの一時フォルダにする（既存のファイルも同じ）。"""
+    monkeypatch.setenv("ADMIN_SETTINGS_PATH", str(tmp_path / "admin_settings.json"))
+    monkeypatch.setenv("VECTOR_DB_INGEST_TEMP_DIR", "${common_data_dir}/tmp")
+    with caplog.at_level("WARNING", logger="src.config"):
+        assert _load(tmp_path, {}).vector_db_ingest_temp_dir == ""
+    assert "cannot be used" in caplog.text
+    a_file = tmp_path / "a_file.txt"
+    a_file.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("VECTOR_DB_INGEST_TEMP_DIR", str(a_file))
+    assert _load(tmp_path, {}).vector_db_ingest_temp_dir == ""
+
+
 def test_enabled_with_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("QDRANT_API_KEY", "secret")
     cfg = _load(

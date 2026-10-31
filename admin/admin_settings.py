@@ -70,6 +70,7 @@ SPECS: tuple[SettingSpec, ...] = (
     SettingSpec("admin", "assistant_embedding_instance", "ADMIN_ASSISTANT_EMBEDDING_INSTANCE", "instance"),
 )
 assert {(s.section, s.key) for s in SPECS} == set(ADMIN_SETTING_KEYS)
+_SPEC_BY_KEY = {(s.section, s.key): s for s in SPECS}
 
 
 def current_admin_config(config_ini_path: Path) -> Config:
@@ -228,7 +229,7 @@ def build_router(
             ("vector_db", "office_timeout_seconds"): _format_float(effective.vector_db_office_timeout_seconds),
             # 解決した絶対パスではなく、書いたとおりの値を出す（相対パスのまま保存し直せるように）。
             ("vector_db", "ingest_temp_dir"): os.environ.get(
-                "VECTOR_DB_INGEST_TEMP_DIR",
+                _SPEC_BY_KEY[("vector_db", "ingest_temp_dir")].env,
                 saved.get("vector_db", {}).get("ingest_temp_dir", defaults.get(("vector_db", "ingest_temp_dir"), "")),
             ).strip(),
             ("vector_db", "qdrant_max_retries"): str(effective.vector_db_qdrant_max_retries),

@@ -1519,11 +1519,14 @@ function sourceOptions(source, ctx = {}) {
   return null;
 }
 
+// 手入力の欄は、1文字ごとに set(v, { typing: true })、入力を確定したとき（フォーカスが外れた・Enter）に set(v) を呼ぶ
+// （入力途中の値で、ほかの欄を作り直さないため。buildSchemaTuple 参照）。box.isManual() は手入力の欄になっているか。
 function buildSourceField(current, options, set, placeholder) {
   const box = document.createElement("span");
   box.className = "le-source";
   let value = current ?? "";
   let manual = false;
+  box.isManual = () => manual;
   const render = () => {
     box.innerHTML = "";
     if (manual) {
@@ -1532,6 +1535,10 @@ function buildSourceField(current, options, set, placeholder) {
       input.placeholder = placeholder || "";
       input.value = value;
       input.addEventListener("input", () => {
+        value = input.value;
+        set(value, { typing: true });
+      });
+      input.addEventListener("change", () => {
         value = input.value;
         set(value);
       });
@@ -1760,11 +1767,16 @@ function buildSchemaTuple(arr, schema, set) {
   // [スキル名, スクリプトファイル名] は、選んだスキルの scripts/*.py をスクリプト欄の候補にする
   const skillIdx = schema.items.findIndex((it) => it.schema.source === "skill");
   const ctx = skillIdx >= 0 ? { skill: () => arr[skillIdx] } : {};
-  const scriptFields = []; // [idx, 作り直す関数]
+  const scriptFields = []; // [idx, 作り直す関数, 今の欄を返す関数]
+  // スキル名を確定したとき（一覧から選んだ・手入力を確定した）に呼ぶ。手入力の途中では呼ばない（入力途中の名前が
+  // 既知のスキルと一致した時点で、スクリプト名を消して欄を作り直さないため）。
   const refreshScripts = () => {
     const skill = configCandidates && configCandidates.skills.find((s) => s.name === arr[skillIdx]);
-    for (const [idx, rerender] of scriptFields) {
-      // 認識しているスキルに無いスクリプト名は消す（1つしか無ければそれを選ぶ）。手入力中の未知のスキルでは触らない
+    for (const [idx, rerender, current] of scriptFields) {
+      // 手入力したスクリプト名（"_" で始まる等、一覧に出ないもの）は、そのまま残す
+      const field = current();
+      if (field.isManual && field.isManual()) continue;
+      // 認識しているスキルに無いスクリプト名は消す（1つしか無ければそれを選ぶ）。未知のスキルでは触らない
       if (skill && !skill.scripts.includes(arr[idx])) arr[idx] = skill.scripts.length === 1 ? skill.scripts[0] : "";
       rerender();
     }
@@ -1779,9 +1791,9 @@ function buildSchemaTuple(arr, schema, set) {
       buildSchemaEditor(
         arr[idx],
         it.schema,
-        (v) => {
+        (v, opts) => {
           arr[idx] = v;
-          if (idx === skillIdx) refreshScripts();
+          if (idx === skillIdx && !(opts && opts.typing)) refreshScripts();
           set(arr);
         },
         false,
@@ -1796,6 +1808,7 @@ function buildSchemaTuple(arr, schema, set) {
           editor.replaceWith(next);
           editor = next;
         },
+        () => editor,
       ]);
     }
     fieldEl.append(label, editor);

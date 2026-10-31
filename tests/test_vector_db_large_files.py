@@ -133,10 +133,28 @@ def test_file_with_many_chunks_is_written_in_parts(env, monkeypatch):
 
     # 内容を変えて取り込み直すと、古いチャンクは残らない
     path.write_text(_text(10, "改"), encoding="utf-8")
+    keyword_commits = {"n": 0}
+    real_apply = KeywordIndex.apply_deferred
+
+    def count_commits(self, ops, **kwargs):
+        if ops:
+            keyword_commits["n"] += 1
+        return real_apply(self, ops, **kwargs)
+
+    # キーワード索引は、チャンクの多いファイルなら数行ずつ足し、ためた行が多ければファイルの途中でもコミットする。
+    monkeypatch.setattr(ingest, "_KEYWORD_PAGE_ROWS", 3)
+    monkeypatch.setattr(ingest, "_KEYWORD_FLUSH_ROWS", 3)
+    monkeypatch.setattr(KeywordIndex, "apply_deferred", count_commits)
     again = _ingest(env)
     assert again.updated == 1
     chunks, _ = _stored(env, path)
     assert len(chunks) == 10 and all("改" in c.text for c in chunks)
+    # 10 行を 3 行ずつコミットしたうえで、最後のコミットで残りとカタログを書く。
+    assert keyword_commits["n"] >= 4
+    with open_keyword_index(env["cfg"].vector_db_dir) as keywords:
+        rows = keywords.source_rows("docs", str(path))
+    assert len(rows) == 10 and all("改" in text for _, _, text in rows)
+    assert _journal(env) == []
 
 
 def test_vectors_waiting_for_earlier_numbers_are_bounded(env, monkeypatch):

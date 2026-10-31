@@ -17,9 +17,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
-from .sqlite_batch import configure_connection, connect, instance_write_lock, retry_locked
+from .sqlite_batch import busy_timeout_for, configure_connection, connect, instance_write_lock, retry_locked
 
 JOURNAL_FILENAME = "ingest_journal.sqlite"
 
@@ -54,35 +54,39 @@ class IngestJournal:
     def __exit__(self, *exc) -> None:
         self.close()
 
-    def _write(self, what: str, statements: list[tuple[str, list[tuple]]]) -> None:
+    def _write(self, what: str, statements: list[tuple[str, list[tuple]]], should_stop: Callable[[], bool] | None = None) -> None:
         """statements（SQL とそのパラメーターの一覧）を1つのトランザクションでその場でコミットする。
 
         インスタンスの書き込みロック（instance_write_lock）の中で書き、ほかのプロセスのロックで失敗したら
-        巻き戻して間隔を空けてやり直す（retry_locked）。
+        巻き戻して間隔を空けてやり直す（retry_locked。should_stop が True を返したら StoreStopped を投げる）。
+        COMMIT が失敗したときも巻き戻す（トランザクションを開いたままにすると、やり直しの BEGIN が失敗するため）。
         """
 
         def attempt() -> None:
-            with instance_write_lock(self.path.parent):
+            with instance_write_lock(self.path.parent), busy_timeout_for(self._conn, should_stop):
                 self._conn.execute("BEGIN IMMEDIATE")
                 try:
                     for sql, params in statements:
                         self._conn.executemany(sql, params)
+                    self._conn.execute("COMMIT")
                 except BaseException:
-                    self._conn.execute("ROLLBACK")
+                    if self._conn.in_transaction:
+                        self._conn.execute("ROLLBACK")
                     raise
-                self._conn.execute("COMMIT")
 
-        retry_locked(attempt, what=f"journal {what}")
+        retry_locked(attempt, what=f"journal {what}", should_stop=should_stop)
 
-    def add(self, collection: str, source_path: str) -> None:
+    def add(self, collection: str, source_path: str, *, should_stop: Callable[[], bool] | None = None) -> None:
         """source_path を保存先へ書き始める（その場でコミットする）。"""
-        self._write("add", [("INSERT OR IGNORE INTO writing (collection, source_path) VALUES (?, ?)", [(collection, source_path)])])
+        self._write(
+            "add", [("INSERT OR IGNORE INTO writing (collection, source_path) VALUES (?, ?)", [(collection, source_path)])], should_stop
+        )
 
-    def discard(self, collection: str, source_paths: Iterable[str]) -> None:
+    def discard(self, collection: str, source_paths: Iterable[str], *, should_stop: Callable[[], bool] | None = None) -> None:
         """カタログへの記録までコミットしたファイルを消す（まとめて1回でコミットする）。"""
         params = [(collection, s) for s in source_paths]
         if params:
-            self._write("discard", [("DELETE FROM writing WHERE collection = ? AND source_path = ?", params)])
+            self._write("discard", [("DELETE FROM writing WHERE collection = ? AND source_path = ?", params)], should_stop)
 
     def clear(self, collection: str) -> None:
         """collection の記録をすべて消す（再構築・コレクションの削除で、保存先・カタログまで消し終えたとき）。"""

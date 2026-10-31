@@ -12,6 +12,8 @@ import functools
 import json
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 from src.config import PROJECT_ROOT, Config
@@ -127,10 +129,60 @@ def subagent_tool_names() -> tuple[str, ...]:
     return _registry_tool_names("_SUBAGENT_TOOLS")
 
 
-@functools.lru_cache(maxsize=1)
-def main_agent_tool_names() -> tuple[str, ...]:
-    """メインエージェントのビルトインツール名（[main_agent_tool_guard] allow_entries に書けるもの。MCP の動的ツールは含まない）。"""
-    return _registry_tool_names("_BASE_TOOLS")
+# main_agent_tool_names の結果（別プロセスで求めるため、一度求めたら使い回す）。失敗は _TOOL_NAMES_RETRY_SECONDS 秒の間
+# 覚えておき、その間は求め直さずに同じエラーにする（設定画面を開く・保存するたびに最大 120 秒の別プロセスを待たないため）。
+_TOOL_NAMES_RETRY_SECONDS = 300.0
+_main_tool_names: tuple[str, ...] | None = None
+_main_tool_names_error: tuple[float, Exception] | None = None
+_main_tool_names_lock = threading.Lock()
+_main_tool_names_done = threading.Event()
+_main_tool_names_running = False
+
+
+def _compute_main_agent_tool_names() -> None:
+    global _main_tool_names, _main_tool_names_error, _main_tool_names_running
+    try:
+        names = _registry_tool_names("_BASE_TOOLS")
+    except Exception as exc:  # noqa: BLE001 - 呼び出し側で投げ直す
+        with _main_tool_names_lock:
+            _main_tool_names_error = (time.monotonic(), exc)
+    else:
+        with _main_tool_names_lock:
+            _main_tool_names, _main_tool_names_error = names, None
+    finally:
+        with _main_tool_names_lock:
+            _main_tool_names_running = False
+        _main_tool_names_done.set()
+
+
+def prefetch_main_agent_tool_names() -> None:
+    """main_agent_tool_names をバックグラウンドで求め始める（管理ツールの起動時。求め済み・求めている途中なら何もしない）。"""
+    global _main_tool_names_running
+    with _main_tool_names_lock:
+        if _main_tool_names is not None or _main_tool_names_running:
+            return
+        if _main_tool_names_error is not None and time.monotonic() - _main_tool_names_error[0] < _TOOL_NAMES_RETRY_SECONDS:
+            return
+        _main_tool_names_running = True
+        _main_tool_names_done.clear()
+    threading.Thread(target=_compute_main_agent_tool_names, name="main_agent_tool_names", daemon=True).start()
+
+
+def main_agent_tool_names(timeout: float | None = None) -> tuple[str, ...] | None:
+    """メインエージェントのビルトインツール名（[main_agent_tool_guard] allow_entries に書けるもの。MCP の動的ツールは含まない）。
+
+    timeout 秒（None なら終わるまで）待っても求め終わらなければ None（求めるのはバックグラウンドで続ける）。
+    求められなかったときは RuntimeError（_TOOL_NAMES_RETRY_SECONDS 秒の間は求め直さずに同じエラー）。
+    """
+    prefetch_main_agent_tool_names()
+    if not _main_tool_names_done.wait(timeout):
+        return None
+    with _main_tool_names_lock:
+        if _main_tool_names is not None:
+            return _main_tool_names
+        if _main_tool_names_error is not None:
+            raise RuntimeError(str(_main_tool_names_error[1])) from _main_tool_names_error[1]
+    return None
 
 
 def _registry_tool_names(attr: str) -> tuple[str, ...]:

@@ -133,10 +133,11 @@ def copy_collection(
         journal.clear(dst_name)
         # SQLite の DB（キーワード索引・カタログ・sqlite-vec）へはその場では書かず、コミットのときに短いトランザクションで
         # まとめて書く（ingest._Writer と同じ。コピー元の読み出しや Qdrant への送信を待つ間に書き込みのロックを持たない）。
-        # Qdrant は自分で送る更新をためる（begin_batch）ため、そのまま使う。
-        store_part = DeferredWrites(dst_store, "store") if isinstance(dst_store, SqliteBatchMixin) else dst_store
-        keywords_part = DeferredWrites(dst_keywords, "keyword index")
-        catalog_part = DeferredWrites(dst_catalog, "catalog")
+        # Qdrant は自分で送る更新をためる（begin_batch）ため、そのまま使う。DeferredWrites も同じ形
+        # （begin_batch・commit・rollback・end_batch）で使える。別のプロセスのロックを待つ間も「停止」に応じる。
+        store_part = DeferredWrites(dst_store, "store", should_stop=should_stop) if isinstance(dst_store, SqliteBatchMixin) else dst_store
+        keywords_part = DeferredWrites(dst_keywords, "keyword index", should_stop=should_stop)
+        catalog_part = DeferredWrites(dst_catalog, "catalog", should_stop=should_stop)
         # コミットの順（保存先 → キーワード索引 → カタログ）。
         parts = (store_part, keywords_part, catalog_part)
         ready: set[str] = set()
@@ -151,13 +152,12 @@ def copy_collection(
         def commit() -> None:
             nonlocal recorded, recorded_chunks, pending_rows, last_commit
             for part in parts:
-                if isinstance(part, DeferredWrites):
-                    part.apply()
-                else:
-                    part.commit()
-            journal.discard(dst_name, recorded)
-            recorded, recorded_chunks, pending_rows = [], 0, 0
+                part.commit()
+            # カタログまでコミットした。journal から消す前に止まっても（StoreStopped）、コピーした件数からは引かない
+            # （journal に残ったファイルは、コピー先の次の取り込みが取り込み直す）。
+            committed, recorded, recorded_chunks, pending_rows = recorded, [], 0, 0
             last_commit = time.monotonic()
+            journal.discard(dst_name, committed, should_stop=should_stop)
 
         def added(rows: int) -> None:
             """rows 件をためた。数十万チャンクの1ファイルでもメモリーにため込まないよう、多ければその場でコミットする
@@ -169,15 +169,14 @@ def copy_collection(
 
         last_commit = time.monotonic()
         try:
-            if not isinstance(store_part, DeferredWrites):
-                store_part.begin_batch()
+            store_part.begin_batch()
             for i, (source, record) in enumerate(sorted(records.items()), start=1):
                 if should_stop and should_stop():
                     result["stopped"] = True
                     break
                 if progress:
                     progress(i - 1, len(records), source)
-                journal.add(dst_name, source)
+                journal.add(dst_name, source, should_stop=should_stop)
                 chunk_count = 0
                 for src_storage, dst_storage in zip(storage_collection_names(src_name), storage_collection_names(dst_name), strict=True):
                     # 数十万チャンクの1ファイルでもメモリーを使い切らないよう、数百件ずつ読んで足す。
@@ -217,13 +216,9 @@ def copy_collection(
                 if time.monotonic() - last_commit >= _COMMIT_INTERVAL_SECONDS:
                     commit()
             commit()
-            if not isinstance(store_part, DeferredWrites):
-                store_part.end_batch()
+            store_part.end_batch()
         except BaseException as exc:
             for part in parts:
-                if isinstance(part, DeferredWrites):
-                    part.discard()
-                    continue
                 try:
                     part.rollback()
                 except Exception:  # noqa: BLE001 - 元のエラーを優先する

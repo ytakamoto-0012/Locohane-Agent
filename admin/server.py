@@ -109,6 +109,8 @@ async def _lifespan(_app: FastAPI):
                 logger.warning("autostart: failed to start instance %r: %s", name, exc)
     _knowledge_router.ingest_scheduler.start()
     _data_backup_router.backup_scheduler.start()
+    # 設定画面のツール名の候補は別プロセスで求めるため、最初に開くときに待たないよう先に求め始める。
+    skill_lab_sources.prefetch_main_agent_tool_names()
     yield
     _data_backup_router.backup_scheduler.stop()
     _knowledge_router.ingest_scheduler.stop()
@@ -509,6 +511,10 @@ def get_instance_config(name: str, user: str = Depends(require_login)):
     return _config_key_view(name, meta.kind)
 
 
+# 設定画面の候補（get_instance_config_candidates）で、メインエージェントのツール名を求め終わるのを待つ上限（秒）。
+_TOOL_NAMES_WAIT_SECONDS = 3.0
+
+
 @app.get("/api/instances/{name}/config/candidates")
 def get_instance_config_candidates(name: str, user: str = Depends(require_login)):
     """スキル名・スクリプト名・agent_type・ツール名を選ぶ欄の候補（保存済みの設定でこのインスタンスが認識するもの）。
@@ -516,15 +522,17 @@ def get_instance_config_candidates(name: str, user: str = Depends(require_login)
     同梱の skills/・agents/ に加え、[paths] project_locohane_dir とインスタンス専用の拡張ディレクトリを走査する。
     ツール名はメインエージェントのビルトインツール（MCP の動的ツールは接続しないと分からないため含まない）。
     設定が読めない場合は error を返し、画面は手入力の欄にする。
+    ツール名は別プロセスで求める（管理ツールの起動時に求め始める）。_TOOL_NAMES_WAIT_SECONDS 秒で求め終わらなければ
+    ツール名は空にして返す（設定画面の表示を待たせないため。ツール名の欄は手入力になり、次に開いたときに出る）。
     """
     _require_instance(name)
     try:
-        tools = list(skill_lab_sources.main_agent_tool_names())
+        tools = list(skill_lab_sources.main_agent_tool_names(timeout=_TOOL_NAMES_WAIT_SECONDS) or ())
     except Exception as exc:  # noqa: BLE001 - ツール名が取れなくてもスキル等の候補は出す（ツール名の欄は手入力になる）
         logger.warning("Cannot list built-in tool names: %s", exc)
         tools = []
     try:
-        cfg = load_config(config_path=CONFIG_INI_PATH, overrides_path=inst.overrides_path(INSTANCES_ROOT, name), instance_name=name)
+        cfg = monitor.instance_config(INSTANCES_ROOT, CONFIG_INI_PATH, name)
         return {**skill_lab_sources.config_candidates(cfg), "tools": tools, "error": None}
     except Exception as exc:  # noqa: BLE001 - 候補が出せなくても設定画面自体は使えるようにする
         logger.warning("Cannot list skill/agent candidates for %s: %s", name, exc)
